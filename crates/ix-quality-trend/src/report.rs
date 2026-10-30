@@ -10,7 +10,7 @@ use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::{
-    ChatbotQaSnapshot, EmbeddingsSnapshot, SnapshotSet, VoicingAnalysisSnapshot,
+    ChatbotQaSnapshot, DatedSnapshot, EmbeddingsSnapshot, SnapshotSet, VoicingAnalysisSnapshot,
 };
 use crate::trend::{compute_trend, MetricSeries, MetricTrend, TrendDirection};
 
@@ -18,20 +18,125 @@ use crate::trend::{compute_trend, MetricSeries, MetricTrend, TrendDirection};
 /// Order here is the order shown in the report.
 const PARTITIONS: &[&str] = &["STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL"];
 
+const EMBEDDINGS: &str = "embeddings";
+const VOICING: &str = "voicing-analysis";
+const CHATBOT: &str = "chatbot-qa";
+
 /// Structured quality summary that can be consumed by governance or telemetry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualityTrendSummary {
     pub embedding_trends: Vec<MetricTrend>,
     pub voicing_trends: Vec<MetricTrend>,
     pub chatbot_trends: Vec<MetricTrend>,
+    /// Categories whose newest snapshot was measured over a different
+    /// population than earlier snapshots and that do not yet have
+    /// [`REBASELINE_MIN_COMPARABLE`] comparable snapshots (see
+    /// [`PopulationRebaseline`]).
+    #[serde(default)]
+    pub rebaselines: Vec<PopulationRebaseline>,
+    /// Corpus sizes that shrank within a declared population (see
+    /// [`CorpusShrink`]).
+    #[serde(default)]
+    pub corpus_shrinks: Vec<CorpusShrink>,
+}
+
+/// Comparable snapshots a rebaselined category needs before the rebaseline
+/// alert clears: drift detection (`trend::drift_flag`, Page-Hinkley
+/// `min_samples`) cannot run on fewer than 5 points. From the 5th comparable
+/// snapshot on, the category gets the same regression/drift verdicts as a
+/// fresh series of those snapshots would. That is not full sensitivity: the
+/// Page-Hinkley baseline is the first `min(7, n)` points, so a collapse inside
+/// the first 7 comparable snapshots sits in the baseline and is only caught
+/// once enough later points accumulate (same as for any new series).
+pub const REBASELINE_MIN_COMPARABLE: usize = 5;
+
+/// A corpus size that shrank within a declared population, measured against
+/// the largest value of the comparable window rather than the previous
+/// snapshot, so a staircase of small drops still adds up (ix#342 re-review).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorpusShrink {
+    /// Snapshot category directory: `embeddings`, `voicing-analysis` or `chatbot-qa`.
+    pub category: String,
+    /// Alert name, e.g. `Voicing · corpus size`.
+    pub metric: String,
+    pub peak: u64,
+    pub peak_date: NaiveDate,
+    pub latest: u64,
+    pub shrink_pct: f64,
+}
+
+impl CorpusShrink {
+    fn is_critical(&self) -> bool {
+        self.latest == 0 || self.shrink_pct >= CRITICAL_CORPUS_SHRINK_PCT
+    }
+
+    fn note(&self) -> String {
+        format!(
+            "corpus shrink: {} is {} vs a peak of {} on {} ({:.1}% lost) within the same population",
+            self.metric, self.latest, self.peak, self.peak_date, self.shrink_pct
+        )
+    }
+}
+
+/// A snapshot category whose newest snapshot declares a `population_id`
+/// (which input corpus the producer measured) that earlier snapshots do not
+/// share. Trends in that category use only snapshots with the same id;
+/// snapshots with another id, or with none (legacy), are excluded.
+///
+/// Observed 2026-09-14 (every scheduled GA Nightly Quality run since
+/// 2026-05-05): CI measures cross-instrument consistency over the tracked
+/// 500-voicing guitar fixture (39%), while the committed history was measured
+/// over the full 667k-voicing dump (98%). Page-Hinkley read the population
+/// change as a drift and the gate went critical on every run.
+///
+/// The id names the source, not a count or content hash (ix#342 review): a
+/// corpus that shrinks or changes within the same source is a real change
+/// and must still regress, drift, or raise a corpus-shrink alert.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PopulationRebaseline {
+    /// Snapshot category directory: `embeddings`, `voicing-analysis` or `chatbot-qa`.
+    pub category: String,
+    /// Population id of the newest snapshot.
+    pub population_id: String,
+    /// Date of the first snapshot measured over this population.
+    pub since: NaiveDate,
+    /// Snapshots sharing the newest population (the ones trends use).
+    pub comparable_snapshots: usize,
+    /// Snapshots left out of trend, regression and drift computation.
+    pub excluded_snapshots: usize,
+}
+
+impl PopulationRebaseline {
+    fn note(&self) -> String {
+        format!(
+            "population rebaseline: {} is measured over `{}` since {}; {} snapshot(s) of \
+             other or undeclared populations are excluded, and only {} of the {} comparable \
+             snapshot(s) needed for regression and drift detection exist yet",
+            self.category,
+            self.population_id,
+            self.since,
+            self.excluded_snapshots,
+            self.comparable_snapshots,
+            REBASELINE_MIN_COMPARABLE
+        )
+    }
 }
 
 impl QualityTrendSummary {
     pub fn all_trends(&self) -> impl Iterator<Item = &MetricTrend> {
+        self.trends_by_category().map(|(_, trend)| trend)
+    }
+
+    fn trends_by_category(&self) -> impl Iterator<Item = (&'static str, &MetricTrend)> {
         self.embedding_trends
             .iter()
-            .chain(self.voicing_trends.iter())
-            .chain(self.chatbot_trends.iter())
+            .map(|t| (EMBEDDINGS, t))
+            .chain(self.voicing_trends.iter().map(|t| (VOICING, t)))
+            .chain(self.chatbot_trends.iter().map(|t| (CHATBOT, t)))
+    }
+
+    fn rebaseline_for(&self, category: &str) -> Option<&PopulationRebaseline> {
+        self.rebaselines.iter().find(|r| r.category == category)
     }
 }
 
@@ -56,7 +161,21 @@ pub struct QualityAlert {
     /// `Warning` — a dead sensor must not masquerade as a live regression.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale: Option<String>,
+    /// Set while the metric's category has fewer than
+    /// [`REBASELINE_MIN_COMPARABLE`] snapshots of its newest population:
+    /// the trend has too little comparable history to detect anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebaseline: Option<String>,
+    /// Set when the corpus shrank within the same population, vs the peak of
+    /// the comparable window. Critical when the corpus is empty or lost at
+    /// least [`CRITICAL_CORPUS_SHRINK_PCT`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_shrink: Option<String>,
 }
+
+/// Corpus shrink (vs the peak of the comparable window) that makes a
+/// `corpus_shrink` alert critical rather than a warning.
+pub const CRITICAL_CORPUS_SHRINK_PCT: f64 = 50.0;
 
 /// A feed whose newest snapshot is older than this many days is reported as
 /// stale instead of letting its last value drive regression/drift verdicts
@@ -81,11 +200,137 @@ pub struct QualityHealthArtifact {
 }
 
 pub fn summarize(set: &SnapshotSet, regression_threshold_pct: f64) -> QualityTrendSummary {
-    QualityTrendSummary {
-        embedding_trends: embedding_metrics(&set.embeddings, regression_threshold_pct),
-        voicing_trends: voicing_metrics(&set.voicing, regression_threshold_pct),
-        chatbot_trends: chatbot_metrics(&set.chatbot, regression_threshold_pct),
+    let mut rebaselines = Vec::new();
+    let mut corpus_shrinks = Vec::new();
+
+    let (embeddings, declared) = comparable_population(
+        EMBEDDINGS,
+        &set.embeddings,
+        &mut rebaselines,
+        |s| s.population_id.as_deref(),
+        |s| s.seeded_baseline.is_some(),
+    );
+    if declared {
+        corpus_shrinks.extend(corpus_shrink(
+            EMBEDDINGS,
+            "Embeddings · corpus size",
+            &embeddings,
+            regression_threshold_pct,
+            |s| s.corpus.as_ref().and_then(|c| c.count),
+        ));
     }
+    let (voicing, declared) = comparable_population(
+        VOICING,
+        &set.voicing,
+        &mut rebaselines,
+        |s| s.population_id.as_deref(),
+        |s| s.seeded_baseline.is_some(),
+    );
+    if declared {
+        corpus_shrinks.extend(corpus_shrink(
+            VOICING,
+            "Voicing · corpus size",
+            &voicing,
+            regression_threshold_pct,
+            |s| s.corpus.as_ref().and_then(|c| c.total),
+        ));
+    }
+    let (chatbot, declared) = comparable_population(
+        CHATBOT,
+        &set.chatbot,
+        &mut rebaselines,
+        |s| s.population_id.as_deref(),
+        |s| s.seeded_baseline.is_some(),
+    );
+    if declared {
+        corpus_shrinks.extend(corpus_shrink(
+            CHATBOT,
+            "Chatbot · prompt count",
+            &chatbot,
+            regression_threshold_pct,
+            |s| (!s.is_degraded()).then_some(s.total_prompts).flatten(),
+        ));
+    }
+
+    QualityTrendSummary {
+        embedding_trends: embedding_metrics(&embeddings, regression_threshold_pct),
+        voicing_trends: voicing_metrics(&voicing, regression_threshold_pct),
+        chatbot_trends: chatbot_metrics(&chatbot, regression_threshold_pct),
+        rebaselines,
+        corpus_shrinks,
+    }
+}
+
+/// Snapshots measured over the same population as the newest snapshot, and
+/// whether that population is declared.
+///
+/// When the newest snapshot declares no `population_id` (legacy and external
+/// producers), the whole series is kept, as before population ids existed.
+/// Otherwise only real measurements with that exact id are kept, wherever
+/// they sit in the series: an `A…A B A` flip-flop keeps every `A`, a legacy
+/// snapshot never joins a declared population, and `_seeded_baseline` clones
+/// (copies of one measurement dated back to fake a history) are excluded, so
+/// they cannot pose as comparable history or flatten the drift baseline.
+/// Records a [`PopulationRebaseline`] while snapshots were excluded and fewer
+/// than [`REBASELINE_MIN_COMPARABLE`] comparable ones exist.
+fn comparable_population<T: Clone>(
+    category: &str,
+    series: &[DatedSnapshot<T>],
+    rebaselines: &mut Vec<PopulationRebaseline>,
+    population_id: impl Fn(&T) -> Option<&str>,
+    is_seeded_clone: impl Fn(&T) -> bool,
+) -> (Vec<DatedSnapshot<T>>, bool) {
+    let Some(current) = series.last().and_then(|s| population_id(&s.data)) else {
+        return (series.to_vec(), false);
+    };
+    let comparable: Vec<DatedSnapshot<T>> = series
+        .iter()
+        .filter(|s| population_id(&s.data) == Some(current) && !is_seeded_clone(&s.data))
+        .cloned()
+        .collect();
+    let excluded = series.len() - comparable.len();
+    if excluded > 0 && comparable.len() < REBASELINE_MIN_COMPARABLE {
+        rebaselines.push(PopulationRebaseline {
+            category: category.to_string(),
+            population_id: current.to_string(),
+            since: comparable
+                .first()
+                .map_or(series[series.len() - 1].date, |s| s.date),
+            comparable_snapshots: comparable.len(),
+            excluded_snapshots: excluded,
+        });
+    }
+    (comparable, true)
+}
+
+/// A [`CorpusShrink`] when the newest size is at least `threshold_pct` below
+/// the largest size in the comparable window, or zero.
+fn corpus_shrink<T>(
+    category: &str,
+    metric: &str,
+    comparable: &[DatedSnapshot<T>],
+    threshold_pct: f64,
+    size: impl Fn(&T) -> Option<u64>,
+) -> Option<CorpusShrink> {
+    let sized: Vec<(NaiveDate, u64)> = comparable
+        .iter()
+        .filter_map(|s| size(&s.data).map(|n| (s.date, n)))
+        .collect();
+    let &(_, latest) = sized.last()?;
+    let &(peak_date, peak) = sized.iter().max_by_key(|(_, n)| *n)?;
+    let shrink_pct = if peak == 0 {
+        0.0
+    } else {
+        (peak - latest) as f64 / peak as f64 * 100.0
+    };
+    (latest == 0 || shrink_pct >= threshold_pct).then(|| CorpusShrink {
+        category: category.to_string(),
+        metric: metric.to_string(),
+        peak,
+        peak_date,
+        latest,
+        shrink_pct,
+    })
 }
 
 pub fn build_health_artifact(
@@ -133,14 +378,21 @@ pub fn build_health_artifact_as_of(
     };
 
     let all_alerts: Vec<QualityAlert> = summary
-        .all_trends()
-        .filter_map(|trend| {
+        .trends_by_category()
+        .filter_map(|(category, trend)| {
             let stale = stale_note(trend);
+            let rebaseline = summary
+                .rebaseline_for(category)
+                .filter(|_| trend.latest.is_some())
+                .map(PopulationRebaseline::note);
             let has_signal = trend.regression.is_some() || trend.drift.is_some();
             // A stale KEY-metric feed alerts even without regression/drift:
             // sensor death on a key metric is itself a warning condition.
-            let dead_key_feed = stale.is_some() && is_key_metric_name(&trend.name);
-            if !has_signal && !dead_key_feed {
+            // Likewise a rebaselined key metric: it has no comparable history,
+            // so the gate is blind on it until history accumulates.
+            let blind_key_feed =
+                (stale.is_some() || rebaseline.is_some()) && is_key_metric_name(&trend.name);
+            if !has_signal && !blind_key_feed {
                 return None;
             }
 
@@ -159,8 +411,24 @@ pub fn build_health_artifact_as_of(
                 drift: trend.drift.as_ref().map(|d| d.description.clone()),
                 drift_since: trend.drift.as_ref().map(|d| d.since),
                 stale,
+                rebaseline,
+                corpus_shrink: None,
             })
         })
+        .chain(summary.corpus_shrinks.iter().map(|shrink| QualityAlert {
+            metric: shrink.metric.clone(),
+            status: if shrink.is_critical() {
+                QualityHealthStatus::Critical
+            } else {
+                QualityHealthStatus::Warning
+            },
+            regression: None,
+            drift: None,
+            drift_since: None,
+            stale: None,
+            rebaseline: None,
+            corpus_shrink: Some(shrink.note()),
+        }))
         .collect();
     let key_metric_alerts: Vec<QualityAlert> = all_alerts
         .iter()
@@ -168,7 +436,8 @@ pub fn build_health_artifact_as_of(
         .cloned()
         .collect();
 
-    let status = if key_metric_alerts
+    // Only key-metric drift and a critical corpus shrink can be critical.
+    let status = if all_alerts
         .iter()
         .any(|alert| alert.status == QualityHealthStatus::Critical)
     {
@@ -242,6 +511,8 @@ pub fn render(set: &SnapshotSet, snapshots_dir: &Path, regression_threshold_pct:
         chatbot_trends,
         today,
     );
+    render_rebaselines(&mut out, &summary.rebaselines);
+    render_corpus_shrinks(&mut out, &summary.corpus_shrinks);
     render_regressions(&mut out, embedding_trends, voicing_trends, chatbot_trends);
     render_drift(&mut out, embedding_trends, voicing_trends, chatbot_trends);
 
@@ -605,6 +876,62 @@ fn render_stale_feeds(
                 .unwrap();
             }
         }
+    }
+    writeln!(out).unwrap();
+}
+
+fn render_rebaselines(out: &mut String, rebaselines: &[PopulationRebaseline]) {
+    if rebaselines.is_empty() {
+        return;
+    }
+
+    writeln!(out, "## Population rebaselines").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "_The newest snapshots in these categories declare a population (the input corpus \
+         they measured, for example the CI fixture instead of the full GA dump) that other \
+         snapshots do not share. Only snapshots of the newest population feed the trends \
+         below, and until {REBASELINE_MIN_COMPARABLE} of them exist regressions and drifts \
+         are not detectable._"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    for r in rebaselines {
+        writeln!(
+            out,
+            "- **{}** — `{}` since {}; {}/{} comparable snapshot(s), {} excluded",
+            r.category,
+            r.population_id,
+            r.since,
+            r.comparable_snapshots,
+            REBASELINE_MIN_COMPARABLE,
+            r.excluded_snapshots,
+        )
+        .unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
+fn render_corpus_shrinks(out: &mut String, shrinks: &[CorpusShrink]) {
+    if shrinks.is_empty() {
+        return;
+    }
+
+    writeln!(out, "## Corpus shrinks").unwrap();
+    writeln!(out).unwrap();
+    for s in shrinks {
+        writeln!(
+            out,
+            "- **{}** — {} vs a peak of {} on {} ({:.1}% lost){}",
+            s.metric,
+            s.latest,
+            s.peak,
+            s.peak_date,
+            s.shrink_pct,
+            if s.is_critical() { " — critical" } else { "" },
+        )
+        .unwrap();
     }
     writeln!(out).unwrap();
 }
@@ -1145,6 +1472,298 @@ mod tests {
         assert_ne!(artifact.status, QualityHealthStatus::Critical);
     }
 
+    // ------------------------------------------------------------------
+    // Population ids (ix#342): only snapshots measured over the same input
+    // corpus are compared. Scenarios from the adversarial review.
+    // ------------------------------------------------------------------
+
+    const FULL_DUMP: &str =
+        "voicings:guitar=raw/guitar.jsonl,bass=raw/bass.jsonl,ukulele=raw/ukulele.jsonl";
+    const CI_FIXTURE: &str =
+        "voicings:guitar=guitar-corpus.json,bass=bass-corpus.json,ukulele=ukulele-corpus.json";
+    const CHATBOT_FIXTURE: &str = "chatbot-qa:deterministic-fixture-ci";
+    const CONSISTENCY: &str = "Voicing · cross-instrument consistency";
+
+    fn day(n: i64) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 4, 1).unwrap() + chrono::Duration::days(n)
+    }
+
+    fn population_field(key: &str, population: Option<&str>) -> String {
+        population.map_or(String::new(), |p| format!(r#","{key}":"{p}""#))
+    }
+
+    fn voicing_snap(
+        n: i64,
+        population: Option<&str>,
+        total: u64,
+        pct: f64,
+    ) -> DatedSnapshot<VoicingAnalysisSnapshot> {
+        let population = population_field("PopulationId", population);
+        DatedSnapshot {
+            date: day(n),
+            path: format!("/tmp/voicing-{n}.json").into(),
+            data: serde_json::from_str(&format!(
+                r#"{{"Corpus":{{"Total":{total}}},"CrossInstrumentConsistency":{{"Pct":{pct}}}{population}}}"#
+            ))
+            .unwrap(),
+        }
+    }
+
+    fn chatbot_snap(
+        n: i64,
+        population: Option<&str>,
+        prompts: u64,
+        pass_pct: f64,
+    ) -> DatedSnapshot<ChatbotQaSnapshot> {
+        let population = population_field("population_id", population);
+        DatedSnapshot {
+            date: day(n),
+            path: format!("/tmp/chatbot-{n}.json").into(),
+            data: serde_json::from_str(&format!(
+                r#"{{"total_prompts":{prompts},"pass_pct":{pass_pct}{population}}}"#
+            ))
+            .unwrap(),
+        }
+    }
+
+    /// 14 committed full-dump snapshots at 688,351 voicings / 98.49%, as in
+    /// state/quality-snapshots/voicing-analysis.
+    fn full_dump_history(set: &mut SnapshotSet) {
+        for n in 0..14 {
+            set.voicing
+                .push(voicing_snap(n, Some(FULL_DUMP), 688_351, 98.49));
+        }
+    }
+
+    fn health_on(set: &SnapshotSet) -> (QualityTrendSummary, QualityHealthArtifact) {
+        let summary = summarize(set, 5.0);
+        let as_of = set
+            .voicing
+            .iter()
+            .map(|s| s.date)
+            .chain(set.chatbot.iter().map(|s| s.date))
+            .max()
+            .unwrap();
+        let artifact = build_health_artifact_as_of(&summary, 5.0, as_of, DEFAULT_STALE_AFTER_DAYS);
+        (summary, artifact)
+    }
+
+    fn alert<'a>(artifact: &'a QualityHealthArtifact, metric: &str) -> &'a QualityAlert {
+        artifact
+            .all_alerts
+            .iter()
+            .find(|a| a.metric == metric)
+            .unwrap_or_else(|| panic!("no alert for {metric}: {:?}", artifact.all_alerts))
+    }
+
+    #[test]
+    fn ci_fixture_after_full_dump_history_is_a_rebaseline_warning() {
+        // The scheduled GA Nightly Quality condition.
+        let mut set = SnapshotSet::default();
+        full_dump_history(&mut set);
+        set.voicing
+            .push(voicing_snap(14, Some(CI_FIXTURE), 21_726, 39.18));
+
+        let (summary, artifact) = health_on(&set);
+        assert_eq!(
+            summary.rebaselines,
+            vec![PopulationRebaseline {
+                category: "voicing-analysis".into(),
+                population_id: CI_FIXTURE.into(),
+                since: day(14),
+                comparable_snapshots: 1,
+                excluded_snapshots: 14,
+            }]
+        );
+        let trend = find(&summary.voicing_trends, CONSISTENCY).unwrap();
+        assert_eq!(trend.n_points, 1);
+        assert!(trend.drift.is_none() && trend.regression.is_none());
+        // Not green: the gate has no comparable history on this metric.
+        assert_eq!(artifact.status, QualityHealthStatus::Warning);
+        let note = alert(&artifact, CONSISTENCY).rebaseline.as_deref();
+        assert!(note.is_some_and(|n| n.contains(CI_FIXTURE) && n.contains("1 of the 5")));
+        assert!(render(&set, Path::new("/tmp"), 5.0).contains("## Population rebaselines"));
+    }
+
+    #[test]
+    fn legacy_series_without_population_ids_keeps_todays_critical_drift() {
+        let mut set = SnapshotSet::default();
+        for n in 0..14 {
+            set.voicing.push(voicing_snap(n, None, 688_351, 98.49));
+        }
+        set.voicing.push(voicing_snap(14, None, 21_726, 39.18));
+
+        let (summary, artifact) = health_on(&set);
+        assert!(summary.rebaselines.is_empty());
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    #[test]
+    fn corpus_count_change_within_population_still_drifts_critical() {
+        // Review P0: a producer bug that halves the corpus, or adds one
+        // voicing, while consistency collapses must stay critical.
+        for total in [344_175, 688_352] {
+            let mut set = SnapshotSet::default();
+            full_dump_history(&mut set);
+            set.voicing
+                .push(voicing_snap(14, Some(FULL_DUMP), total, 39.18));
+
+            let (summary, artifact) = health_on(&set);
+            assert!(summary.rebaselines.is_empty(), "total={total}");
+            assert!(find(&summary.voicing_trends, CONSISTENCY)
+                .unwrap()
+                .drift
+                .is_some());
+            assert_eq!(
+                artifact.status,
+                QualityHealthStatus::Critical,
+                "total={total}"
+            );
+            assert_eq!(
+                alert(&artifact, CONSISTENCY).status,
+                QualityHealthStatus::Critical
+            );
+        }
+    }
+
+    #[test]
+    fn chatbot_prompt_addition_with_pass_rate_collapse_is_critical() {
+        // Review P0: adding a prompt (77 -> 78) is not a new population.
+        let mut set = SnapshotSet::default();
+        for n in 0..14 {
+            set.chatbot
+                .push(chatbot_snap(n, Some(CHATBOT_FIXTURE), 77, 90.0));
+        }
+        set.chatbot
+            .push(chatbot_snap(14, Some(CHATBOT_FIXTURE), 78, 10.0));
+
+        let (summary, artifact) = health_on(&set);
+        assert!(summary.rebaselines.is_empty());
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+        assert_eq!(
+            alert(&artifact, "Chatbot · overall pass rate").status,
+            QualityHealthStatus::Critical
+        );
+    }
+
+    #[test]
+    fn corpus_shrink_within_population_is_its_own_alert() {
+        // Consistency stays flat, so only the shrink can raise the alert.
+        for (total, expected) in [
+            (688_351, None),
+            (600_000, Some(QualityHealthStatus::Warning)),
+            (300_000, Some(QualityHealthStatus::Critical)),
+            (0, Some(QualityHealthStatus::Critical)),
+        ] {
+            let mut set = SnapshotSet::default();
+            full_dump_history(&mut set);
+            set.voicing
+                .push(voicing_snap(14, Some(FULL_DUMP), total, 98.49));
+
+            let (_, artifact) = health_on(&set);
+            let shrink = artifact
+                .all_alerts
+                .iter()
+                .find(|a| a.corpus_shrink.is_some());
+            assert_eq!(shrink.map(|a| a.status), expected, "total={total}");
+            assert_eq!(
+                artifact.status,
+                expected.unwrap_or(QualityHealthStatus::Healthy),
+                "total={total}"
+            );
+        }
+    }
+
+    #[test]
+    fn rebaseline_warning_expires_after_min_comparable_snapshots() {
+        // Review P1: after REBASELINE_MIN_COMPARABLE comparable snapshots the
+        // rebaseline alert clears, even at a flat level that differs from the
+        // old population; normal regression/drift verdicts take over.
+        for comparable in 1..=REBASELINE_MIN_COMPARABLE + 1 {
+            let mut set = SnapshotSet::default();
+            full_dump_history(&mut set);
+            for n in 0..comparable as i64 {
+                set.voicing
+                    .push(voicing_snap(14 + n, Some(CI_FIXTURE), 21_726, 39.18));
+            }
+
+            let (summary, artifact) = health_on(&set);
+            if comparable < REBASELINE_MIN_COMPARABLE {
+                assert_eq!(summary.rebaselines.len(), 1, "comparable={comparable}");
+                assert_eq!(artifact.status, QualityHealthStatus::Warning);
+            } else {
+                assert!(summary.rebaselines.is_empty(), "comparable={comparable}");
+                assert_eq!(
+                    artifact.status,
+                    QualityHealthStatus::Healthy,
+                    "comparable={comparable}: {:?}",
+                    artifact.all_alerts
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn drift_within_new_population_is_still_critical() {
+        let mut set = SnapshotSet::default();
+        full_dump_history(&mut set);
+        for n in 14..20 {
+            set.voicing
+                .push(voicing_snap(n, Some(CI_FIXTURE), 21_726, 95.0));
+        }
+        for n in 20..26 {
+            set.voicing
+                .push(voicing_snap(n, Some(CI_FIXTURE), 21_726, 40.0));
+        }
+
+        let (summary, artifact) = health_on(&set);
+        let trend = find(&summary.voicing_trends, CONSISTENCY).unwrap();
+        assert_eq!(trend.n_points, 12);
+        assert!(trend.drift.is_some());
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    #[test]
+    fn flip_flop_keeps_every_snapshot_of_the_current_population() {
+        // Review P1: A…A B A must compare the last A with every earlier A.
+        let mut set = SnapshotSet::default();
+        for n in 0..10 {
+            set.voicing
+                .push(voicing_snap(n, Some(FULL_DUMP), 688_351, 98.49));
+        }
+        set.voicing
+            .push(voicing_snap(10, Some(CI_FIXTURE), 21_726, 39.18));
+        set.voicing
+            .push(voicing_snap(11, Some(FULL_DUMP), 688_351, 50.0));
+
+        let (summary, artifact) = health_on(&set);
+        assert!(summary.rebaselines.is_empty());
+        let trend = find(&summary.voicing_trends, CONSISTENCY).unwrap();
+        assert_eq!(trend.n_points, 11);
+        assert!(trend.drift.is_some());
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    #[test]
+    fn legacy_snapshot_between_populations_does_not_join_the_new_one() {
+        // Review P3.
+        let mut set = SnapshotSet::default();
+        for n in 0..10 {
+            set.voicing
+                .push(voicing_snap(n, Some(FULL_DUMP), 688_351, 98.49));
+        }
+        set.voicing.push(voicing_snap(10, None, 688_351, 98.0));
+        set.voicing
+            .push(voicing_snap(11, Some(CI_FIXTURE), 21_726, 39.18));
+
+        let (summary, _) = health_on(&set);
+        assert_eq!(summary.rebaselines[0].excluded_snapshots, 11);
+        assert_eq!(
+            find(&summary.voicing_trends, CONSISTENCY).unwrap().n_points,
+            1
+        );
+    }
+
     #[test]
     fn stale_key_metric_without_signal_still_warns() {
         // A key-metric feed that died while healthy (no regression, no drift)
@@ -1168,5 +1787,180 @@ mod tests {
             .expect("dead key-metric feed alerts without regression/drift");
         assert!(alert.stale.is_some());
         assert!(alert.regression.is_none() && alert.drift.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // ix#342 re-review probes: staged corpus shrink, embeddings / chatbot
+    // corpus sizes, seeded clones, and the expiry doc claim.
+    // ------------------------------------------------------------------
+
+    fn embeddings_snap(
+        n: i64,
+        population: Option<&str>,
+        count: u64,
+    ) -> DatedSnapshot<EmbeddingsSnapshot> {
+        let population = population_field("population_id", population);
+        DatedSnapshot {
+            date: day(n),
+            path: format!("/tmp/embeddings-{n}.json").into(),
+            data: serde_json::from_str(&format!(r#"{{"corpus":{{"count":{count}}}{population}}}"#))
+                .unwrap(),
+        }
+    }
+
+    fn seeded(mut snap: DatedSnapshot<ChatbotQaSnapshot>) -> DatedSnapshot<ChatbotQaSnapshot> {
+        snap.data.seeded_baseline = Some(serde_json::json!({"source_date": "2026-04-25"}));
+        snap
+    }
+
+    fn shrink_alert<'a>(
+        artifact: &'a QualityHealthArtifact,
+        metric: &str,
+    ) -> Option<&'a QualityAlert> {
+        artifact
+            .all_alerts
+            .iter()
+            .find(|a| a.metric == metric && a.corpus_shrink.is_some())
+    }
+
+    #[test]
+    fn staged_corpus_shrink_is_measured_against_the_window_peak() {
+        // 14 steps of -4.9% (688,351 -> 340,672, -50.5%) and two steps of
+        // -49% (-74%) both slipped past a previous-snapshot comparison.
+        let staircase: Vec<u64> = (0..15)
+            .map(|step| (688_351.0 * 0.951_f64.powi(step)).round() as u64)
+            .collect();
+        let mut two_steps = vec![688_351; 14];
+        two_steps.extend([351_059, 179_040]);
+
+        for totals in [staircase, two_steps] {
+            let mut set = SnapshotSet::default();
+            for (n, total) in totals.iter().enumerate() {
+                set.voicing
+                    .push(voicing_snap(n as i64, Some(FULL_DUMP), *total, 98.49));
+            }
+            let (summary, artifact) = health_on(&set);
+            let shrink = &summary.corpus_shrinks[0];
+            assert_eq!(shrink.peak, 688_351);
+            assert!(shrink.shrink_pct > 50.0, "{shrink:?}");
+            assert_eq!(
+                shrink_alert(&artifact, "Voicing · corpus size").map(|a| a.status),
+                Some(QualityHealthStatus::Critical)
+            );
+            assert_eq!(artifact.status, QualityHealthStatus::Critical);
+            assert!(render(&set, Path::new("/tmp"), 5.0).contains("## Corpus shrinks"));
+        }
+
+        // Growth is not a shrink.
+        let mut set = SnapshotSet::default();
+        full_dump_history(&mut set);
+        set.voicing
+            .push(voicing_snap(14, Some(FULL_DUMP), 2_000_000, 98.49));
+        let (summary, artifact) = health_on(&set);
+        assert!(summary.corpus_shrinks.is_empty());
+        assert_eq!(artifact.status, QualityHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn embeddings_and_chatbot_corpus_sizes_shrink_alert_too() {
+        let mut set = SnapshotSet::default();
+        for n in 0..6 {
+            set.embeddings
+                .push(embeddings_snap(n, Some(FULL_DUMP), 688_351));
+            set.chatbot
+                .push(chatbot_snap(n, Some(CHATBOT_FIXTURE), 83, 25.3));
+        }
+        set.embeddings
+            .push(embeddings_snap(6, Some(FULL_DUMP), 600_000));
+        // A QA run that died part-way: same harness, fewer graded prompts.
+        set.chatbot
+            .push(chatbot_snap(6, Some(CHATBOT_FIXTURE), 30, 25.3));
+
+        let (_, artifact) = health_on(&set);
+        assert_eq!(
+            shrink_alert(&artifact, "Embeddings · corpus size").map(|a| a.status),
+            Some(QualityHealthStatus::Warning)
+        );
+        assert_eq!(
+            shrink_alert(&artifact, "Chatbot · prompt count").map(|a| a.status),
+            Some(QualityHealthStatus::Critical)
+        );
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    #[test]
+    fn legacy_series_gets_no_corpus_shrink_alert() {
+        // Shrink alerts are a population concept; external feeds without ids
+        // keep today's behaviour.
+        let mut set = SnapshotSet::default();
+        for n in 0..6 {
+            set.chatbot.push(chatbot_snap(n, None, 83, 25.3));
+        }
+        set.chatbot.push(chatbot_snap(6, None, 10, 25.3));
+        let (summary, _) = health_on(&set);
+        assert!(summary.corpus_shrinks.is_empty());
+    }
+
+    #[test]
+    fn seeded_baseline_clones_are_not_comparable_history() {
+        // Re-review P2: 1 real April measurement plus 13 `_seeded_baseline`
+        // clones read as 14 comparable points, and a real drop from 25.3% to
+        // 14.25% was healthy. The clones are not measurements.
+        let mut set = SnapshotSet::default();
+        for n in 0..13 {
+            set.chatbot
+                .push(seeded(chatbot_snap(n, Some(CHATBOT_FIXTURE), 83, 25.3)));
+        }
+        set.chatbot
+            .push(chatbot_snap(13, Some(CHATBOT_FIXTURE), 83, 25.3));
+        set.chatbot
+            .push(chatbot_snap(14, Some(CHATBOT_FIXTURE), 83, 14.25));
+
+        let (summary, artifact) = health_on(&set);
+        assert_eq!(
+            summary.rebaselines,
+            vec![PopulationRebaseline {
+                category: "chatbot-qa".into(),
+                population_id: CHATBOT_FIXTURE.into(),
+                since: day(13),
+                comparable_snapshots: 2,
+                excluded_snapshots: 13,
+            }]
+        );
+        assert_eq!(find_chatbot_overall(&set).n_points, 2);
+        assert_ne!(artifact.status, QualityHealthStatus::Healthy);
+        let chatbot = alert(&artifact, "Chatbot · overall pass rate");
+        assert!(chatbot.rebaseline.is_some());
+        assert!(
+            chatbot.regression.is_some(),
+            "the 2-point drop still regresses"
+        );
+    }
+
+    #[test]
+    fn expiry_gives_the_same_verdicts_as_a_fresh_series() {
+        // Re-review P3: after expiry the category is exactly as sensitive as a
+        // series that only ever held the new population (no extra masking,
+        // but no more than that either: the drift baseline is the first 7).
+        for collapse_at in 1..=8 {
+            for len in REBASELINE_MIN_COMPARABLE..=12 {
+                let values: Vec<f64> = (0..len)
+                    .map(|i| if i < collapse_at { 95.0 } else { 40.0 })
+                    .collect();
+                let mut rebaselined = SnapshotSet::default();
+                full_dump_history(&mut rebaselined);
+                let mut fresh = SnapshotSet::default();
+                for (i, v) in values.iter().enumerate() {
+                    let snap = voicing_snap(14 + i as i64, Some(CI_FIXTURE), 21_726, *v);
+                    rebaselined.voicing.push(snap.clone());
+                    fresh.voicing.push(snap);
+                }
+                assert_eq!(
+                    health_on(&rebaselined).1.status,
+                    health_on(&fresh).1.status,
+                    "collapse_at={collapse_at} len={len}"
+                );
+            }
+        }
     }
 }

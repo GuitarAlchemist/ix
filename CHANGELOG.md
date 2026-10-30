@@ -6,6 +6,66 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Security — auto-approved MCP tools confine caller paths (2026-09-16)
+
+- Every Tier 1 / Tier 2 registry tool that takes a path now refuses one outside the
+  workspace root: `..`, absolute paths elsewhere, and symlinks or junctions leading out.
+  Missing and outside paths get the same message, and nothing is read before the check.
+  The root is `IX_ROOT`, else the ix checkout holding the server executable, else the ix
+  checkout holding the current directory; never the bare current directory or an inherited
+  `CARGO_MANIFEST_DIR`. When no root is found, or it is a volume root or the home
+  directory, every confined argument is refused. Tools receive the canonical path.
+- On Windows, UNC, device (`\\.\`), verbatim (`\\?\`), drive-relative (`C:x`) and
+  driveless rooted paths are refused by their shape before any filesystem call, so the
+  check never opens a network share or a pipe. NUL is refused everywhere. Newly confined:
+  `ix_code_analyze` `path`, `ix_context_walk` `workspace_root`, `ix_governance_graph` /
+  `ix_governance_graph_rescan` `root`, `ix_ml_pipeline` `source.path`, `ix_trace_ingest`
+  `dir`, `ix_tars_bridge` `trace_dir`, `ix_session_flywheel_export` `session_log` and
+  `trace_dir`. Relative paths resolve against the workspace root, not the process cwd.
+- `IX_EXTRA_ROOTS` (OS path list; relative entries resolve against the workspace root)
+  admits further directories, e.g. a sibling checkout. The trace directories read by
+  `ix_trace_ingest` / `ix_tars_bridge` also admit `~/.ga/traces` and the `traces/`
+  directory beside the installed session log, so `ix_triage_session`'s export-then-ingest
+  loop keeps working. The `ix_session_flywheel_export` destination `trace_dir` admits only
+  those two trace locations (relative paths resolve against `~/.ga/traces`), and a
+  destination through a dangling link is refused.
+- `ix_context_walk` without `workspace_root` indexes the workspace root instead of the
+  process cwd.
+- `ix_governance_persona` refuses a `persona` containing a path separator, `:`, `..` or a
+  control character.
+- `.mcp.json` sets `IX_ROOT` for the `ix` server.
+- `confine` moved from `skills/assumption_graph.rs` to `crates/ix-agent/src/path_confine.rs`.
+
+### Fixed — `ix_session_flywheel_export` confines its destination (2026-09-16)
+
+- `trace_id` must be a plain file name: an absolute path, `..`, a separator, `:`, a leading
+  dot, a trailing dot or space, a control character or a reserved device name (`CON`,
+  `COM1`, ...) is refused before anything is created. Previously the id was joined onto
+  `trace_dir` verbatim, so a path-shaped id wrote `<id>.json` outside `trace_dir`.
+- **Breaking:** `trace_dir` must lie inside `~/.ga/traces` or the `traces/` directory beside
+  the installed session log (`IX_SESSION_LOG`); relative paths resolve against `~/.ga/traces`.
+  `..`, NUL and, on Windows, UNC, device, verbatim and drive-relative paths are refused
+  before anything is resolved. Without `HOME`/`USERPROFILE` there is no `~/.ga/traces` root.
+- `session_log` must be an existing file; a missing log is no longer created.
+- The export writes a temporary file beside the destination and renames it over
+  `<trace_dir>/<trace_id>.json`, so a failed export keeps the previous trace and a symlink or
+  hard link there is replaced, not written through. A directory, symlink, junction or
+  read-only file at the destination is refused.
+- With no `trace_id`, a log stem that is not a valid id (for example `.run.jsonl`) exports as
+  `session-<sanitized stem>` instead of failing.
+
+### Changed — governance checks no longer read "no match" as approval (2026-09-14)
+
+- **Breaking for scripts:** `ix check action` exits `2` (verdict `U`) instead of `0` (`T`)
+  when no rule matches, and adds a `note` saying no match is not evidence of compliance.
+  It now also applies `Constitution::check_action` rules (verdict `D` when one fires) and
+  reports `basis` and `warnings`.
+- `ix_governance_check` (MCP) adds `verdict` (`D`/`P`/`U`), `basis` and `note`; `compliant`
+  is unchanged. New constitution rules for force-push / history rewrite (Article 3),
+  acting without human approval (6), removing audit records (7), `--no-verify` (9).
+- `ix_cargo_deps` keeps only root `[workspace]` members (reports skipped directories in
+  `non_members`) and parses `[dependencies.<name>]` and target-specific dependency tables.
+
 ### Added — `dark-features` doctor check (2026-09-08)
 
 - `ix doctor` gains a `dark-features` check (`crates/ix-skill/src/doctor/dark_features.rs`,

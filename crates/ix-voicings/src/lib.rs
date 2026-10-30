@@ -263,12 +263,34 @@ pub fn ga_cli_path() -> PathBuf {
             return PathBuf::from(v);
         }
     }
-    // Default: sibling `ga` repo's debug build. The smoke test overrides
-    // this via env var when running in a sandbox that doesn't have ga/
-    // next door.
-    PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\Demos\Music Theory\FretboardVoicingsCLI\bin\Debug\net10.0\FretboardVoicingsCLI.exe",
-    )
+    // Default: the sibling `ga` repo's debug build, `../ga` beside the ix
+    // workspace. The workspace is found at runtime by walking up from the
+    // current directory (the convention `state_root` already relies on), so a
+    // binary copied to another machine still looks beside the checkout it
+    // runs in; the compile-time location is the last resort. The smoke test
+    // overrides this via env var when running in a sandbox that doesn't have
+    // ga/ next door.
+    let workspace = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| ix_workspace_root_above(&cwd))
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    workspace.join(GA_CLI_RELATIVE_TO_WORKSPACE_PARENT)
+}
+
+/// The GA CLI debug build, relative to the directory that holds both `ix` and `ga`.
+const GA_CLI_RELATIVE_TO_WORKSPACE_PARENT: &str =
+    "../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Debug/net10.0/FretboardVoicingsCLI.exe";
+
+/// The ix workspace root at or above `start`: the first ancestor holding a
+/// `Cargo.toml` and this very crate at `crates/ix-voicings/Cargo.toml`, so an
+/// unrelated workspace that also has a `crates/` directory is not mistaken for ix.
+fn ix_workspace_root_above(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|d| {
+            d.join("Cargo.toml").is_file() && d.join("crates/ix-voicings/Cargo.toml").is_file()
+        })
+        .map(|d| d.to_path_buf())
 }
 
 /// Artifacts written by [`enumerate`].
@@ -602,6 +624,7 @@ pub fn load_features(
 
 /// Silhouette score for a clustering. Returns a value in [-1, 1].
 /// Higher is better; above 0.15 is our threshold for accepting the clustering.
+/// A point alone in its cluster scores 0 (Rousseeuw 1987, as in scikit-learn).
 ///
 /// For `n > SILHOUETTE_FULL_THRESHOLD` (10k) the exact O(n²) computation is
 /// replaced by a seeded random subsample of `SILHOUETTE_SAMPLE_SIZE` (5k)
@@ -661,11 +684,12 @@ fn silhouette_score_exact(data: &Array2<f64>, labels: &[usize]) -> f64 {
                 entry.1 += 1;
             }
         }
-        let a = if a_count > 0 {
-            a_sum / a_count as f64
-        } else {
-            0.0
-        };
+        if a_count == 0 {
+            // Alone in its cluster: s(i) = 0 by definition (Rousseeuw 1987,
+            // scikit-learn), not 1 as a(i) = 0 would give.
+            continue;
+        }
+        let a = a_sum / a_count as f64;
         let b = cluster_sums
             .values()
             .map(|(s, c)| s / *c as f64)
@@ -1696,6 +1720,42 @@ pub fn build_pipeline(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_ix_workspace_is_found_above_this_crate_and_not_in_a_lookalike() {
+        use std::path::Path;
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = super::ix_workspace_root_above(here).expect("ix workspace above this crate");
+        assert!(root.join("crates/ix-voicings/Cargo.toml").is_file());
+
+        // A workspace that also has `Cargo.toml` + `crates/` but is not ix.
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let scratch_path = std::env::temp_dir().join(format!(
+            "ix-voicings-lookalike-{}-{nanos}",
+            std::process::id()
+        ));
+        // Checked before the guard is armed, so a collision never deletes
+        // someone else's directory.
+        assert!(
+            !scratch_path.exists(),
+            "scratch name collided: {}",
+            scratch_path.display()
+        );
+        let lookalike = Scratch(scratch_path);
+        std::fs::create_dir_all(lookalike.0.join("crates/other")).unwrap();
+        std::fs::write(lookalike.0.join("Cargo.toml"), "[workspace]\n").unwrap();
+        let found = super::ix_workspace_root_above(&lookalike.0.join("crates/other"));
+        assert_eq!(found, None, "a workspace without ix-voicings is not ix");
+    }
+
     use super::*;
 
     fn sample_row() -> VoicingRow {
@@ -1890,6 +1950,19 @@ mod tests {
         let labels = vec![0];
         let sil = silhouette_score(&data, &labels);
         assert_eq!(sil, 0.0);
+    }
+
+    #[test]
+    fn silhouette_singleton_cluster_scores_zero() {
+        // Rousseeuw (1987) and scikit-learn set s(i) = 0 for a point alone in
+        // its cluster. [0, 1 | 10]: s = 0.9, 8/9 and 0, mean 0.5963.
+        let data = Array2::from_shape_vec((3, 1), vec![0.0, 1.0, 10.0]).unwrap();
+        let sil = silhouette_score(&data, &[0, 0, 1]);
+        let expected = (0.9 + 8.0 / 9.0 + 0.0) / 3.0;
+        assert!(
+            (sil - expected).abs() < 1e-12,
+            "expected {expected}, got {sil}"
+        );
     }
 
     #[test]

@@ -1,0 +1,81 @@
+{
+  "workspaces": [
+    {
+      "id": "id-1",
+      "title": "text-1",
+      "isActive": false,
+      "cwd": "<home>\\proj-1",
+      "shell": "pwsh.exe"
+    },
+    {
+      "id": "id-2",
+      "title": "text-2",
+      "isActive": true,
+      "cwd": "<home>\\proj-2",
+      "shell": ""
+    },
+    {
+      "id": "id-3",
+      "title": "text-3",
+      "isActive": false,
+      "cwd": "<home>\\proj-3",
+      "shell": ""
+    },
+    {
+      "id": "id-4",
+      "title": "text-4",
+      "isActive": false,
+      "cwd": "<home>\\proj-4",
+      "shell": ""
+    },
+    {
+      "id": "id-5",
+      "title": "text-5",
+      "isActive": false,
+      "cwd": "<home>\\proj-5",
+      "shell": ""
+    },
+    {
+      "id": "id-6",
+      "title": "text-6",
+      "isActive": false,
+      "cwd": "<home>\\proj-6",
+      "shell": ""
+    },
+    {
+      "id": "id-7",
+      "title": "text-7",
+      "isActive": false,
+      "cwd": "<home>\\proj-7",
+      "shell": "pwsh.exe"
+    },
+    {
+      "id": "id-8",
+      "title": "text-8",
+      "isActive": false,
+      "cwd": "<home>\\proj-8",
+      "shell": ""
+    },
+    {
+      "id": "id-9",
+      "title": "text-9",
+      "isActive": false,
+      "cwd": "<home>\\proj-9",
+      "shell": ""
+    },
+    {
+      "id": "id-10",
+      "title": "text-10",
+      "isActive": false,
+      "cwd": "<home>\\proj-10",
+      "shell": ""
+    },
+    {
+      "id": "id-11",
+      "title": "text-11",
+      "isActive": false,
+      "cwd": "<home>\\proj-11",
+      "shell": ""
+    }
+  ]
+}

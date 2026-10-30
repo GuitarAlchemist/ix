@@ -20,7 +20,10 @@ description = "In-process DuckDB analyst bench over IX telemetry, with IX algori
 # toolchain than the workspace MSRV (1.80). That is acceptable because these
 # features are opt-in and never built by the default/CI path — but we pin so the
 # feature can't silently float onto a release needing an even newer rustc.
-duckdb = { version = "=1.10503.1", default-features = false, optional = true }
+# 1.10506.1 is the first release whose libduckdb-sys builds with zip ^9: every
+# earlier one needs zip ^6, and zip 6.0.0, its only release, is yanked, so a
+# fresh resolution of the workspace fails on them. ix-duck-ext pins the same.
+duckdb = { version = "=1.10506.1", default-features = false, optional = true }
 ix-math = { workspace = true, optional = true }
 ix-unsupervised = { workspace = true, optional = true }
 ix-supervised = { workspace = true, optional = true }
@@ -32,6 +35,7 @@ ix-probabilistic = { workspace = true, optional = true }
 ix-code = { workspace = true, optional = true }
 ix-fractal = { workspace = true, optional = true }
 ix-chaos = { workspace = true, optional = true }
+ix-petri = { workspace = true, optional = true }
 ix-types = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 # Chatbot flight recorder (Slice A/B): the regression gate serializes a JSON contract.
@@ -45,7 +49,7 @@ chrono = { workspace = true, optional = true }
 # functions), so no bundled engine is pulled — this is the feature the loadable
 # C-API extension (ix-duck-ext) depends on. ix-unsupervised (PCA) + serde_json
 # (JSON params) are needed by the table functions.
-udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ix-supervised", "dep:ix-bracelet", "dep:ix-ktheory", "dep:ix-graph", "dep:ix-signal", "dep:ix-probabilistic", "dep:ix-code", "dep:ix-types", "dep:ix-fractal", "dep:ix-chaos", "dep:ndarray", "dep:serde_json"]
+udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ix-supervised", "dep:ix-bracelet", "dep:ix-ktheory", "dep:ix-graph", "dep:ix-signal", "dep:ix-probabilistic", "dep:ix-code", "dep:ix-types", "dep:ix-fractal", "dep:ix-chaos", "dep:ix-petri", "dep:ndarray", "dep:serde_json"]
 # Tier B code analysis: adds tree-sitter AST queries + semantic metrics
 # (ix_ast_query, ix_semantic_metrics) by enabling ix-code's `semantic` feature.
 # Separate because it pulls C-compiled tree-sitter grammars; Tier A

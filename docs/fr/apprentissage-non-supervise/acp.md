@@ -60,7 +60,8 @@ Et ainsi de suite. En général, les 2-3 premières composantes capturent 80-95 
 
 ```rust
 use ndarray::array;
-use ix_unsupervised::{PCA, DimensionReducer};
+use ix_unsupervised::pca::PCA;
+use ix_unsupervised::traits::DimensionReducer;
 
 // 6 clients avec 4 caractéristiques
 let data = array![
@@ -98,7 +99,9 @@ if let Some(components) = pca.components() {
 Un schéma classique — réduire les dimensions d'abord, puis appliquer le clustering :
 
 ```rust
-use ix_unsupervised::{PCA, DimensionReducer, KMeans, Clusterer};
+use ix_unsupervised::kmeans::KMeans;
+use ix_unsupervised::pca::PCA;
+use ix_unsupervised::traits::{Clusterer, DimensionReducer};
 
 // Données de haute dimension
 let data = /* ... jeu de données à 50 caractéristiques ... */;

@@ -58,13 +58,22 @@
 //! (ISO/IEC 15909-2), so a net authored in another tool can be analysed here.
 //! IX does not *write* PNML; [`pnml`] documents that choice, the subset that is
 //! read, and what an emitter would have to satisfy first.
+//!
+//! ## Reaching it from outside Rust
+//!
+//! [`json::analyze_json`] takes a net as JSON and returns the same
+//! [`Analysis`]. `ix-duck` exposes it as the DuckDB scalar
+//! `ix_petri_analyze(net VARCHAR, max_states BIGINT) -> VARCHAR`, which the
+//! loadable `ix.duckdb_extension` carries to any DuckDB host.
 
 pub mod analysis;
+pub mod json;
 pub mod models;
 pub mod net;
 pub mod pnml;
 pub mod xml;
 
-pub use analysis::{analyze, Analysis, Limits, Verdict};
+pub use analysis::{analyze, Analysis, Limits, Truncation, Verdict};
+pub use json::{analyze_json, JsonNetError, NetSpec};
 pub use net::{Marking, PetriError, PetriNet, PetriNetBuilder, Place, Transition};
 pub use pnml::{read_pnml, PnmlError, PnmlNet};

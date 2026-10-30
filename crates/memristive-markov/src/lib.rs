@@ -6,6 +6,7 @@ pub mod sampler;
 pub mod serde_state;
 pub mod tensor;
 pub mod vlmm;
+pub mod work_history;
 
 #[cfg(feature = "reservoir")]
 pub mod reservoir;

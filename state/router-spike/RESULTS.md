@@ -64,3 +64,246 @@ Graduated as **shadow mode** (default OFF, zero behavior change). New GA code (u
 - `state/router/learned-head.json` (deployable head), `head-eval.json` (head metrics), `production-baseline-heldout.json` (C# production baseline on TEST)
 - code: `crates/ix-router-spike/` ; embed: `state/router-spike/embed.ps1`
 - GA edit (uncommitted, backward-compatible): `RoutingEvalHarness.cs` `GA_EVAL_DATA_PATH` override.
+
+## Jev arm — pre-registration (2026-09-22, written before any Jev call)
+
+**Question:** can TypeSafe Jev (`jev-1.13.0`, pinned), asked zero-shot with one Choice question per prompt, route the SAME held-out TEST at least as well as production — and how close does it come to the learned head?
+
+**Design (Stage 0, offline, shipped):** `crates/ix-router-spike/src/bin/jev_router.rs` (`plan | mock | score`).
+- One request per prompt, state = `{"user_message": <raw prompt>}` (one prompt per state — no shared-state indirection), one Choice question over 17 options: the 16 intents + `__none__`.
+- Option text = GA `RoutingEvalHarness.BuildIntentRegistry` descriptions, verbatim, authored 2026-05-10 (ga `db702ce9`), i.e. **before** TEST existed. `__none__` was written without reading TEST. No TEST prompt or error pattern informed the options. See `jev/options.json`.
+- `jev/plan.json` pins every request SHA-256; `score` refuses a receipt whose digests differ.
+- Fail-closed: missing/malformed/wrong-model responses count as failures (never as a correct OOS decline, never as zero cost).
+
+**Primary metrics (pre-registered):** in-scope accuracy with `__none__` as the ONLY decline, OOS-decline rate, macro-F1 over 16 intents (used by the verdict); min per-intent F1 and Brier over 17 options are reported, not decisive. Confidence thresholds are reported as exploratory only — none is tuned on TEST.
+
+**Comparators (same TEST):** production 0.755 / OOS 0.375 / macro-F1 0.745; learned head iteration-1 (clean) 0.818 / 0.688 / 0.817.
+
+**Decision rule (fixed before any call; revised the same day after an independent review found gaps — still pre-result).** Counts over 110 in-scope / 16 OOS; implemented as `verdict()` in `jev_router.rs`:
+- **KILL** iff > 2 invalid responses, OR any response reports a model other than `jev-1.13.0`, OR in-scope < 83/110 (production's own 83), OR OOS-declined < 6/16 (production's 6).
+- **COMPETITIVE_WITH_HEAD** iff in-scope ≥ 87/110 (head 90 − 3) AND OOS-declined ≥ 11/16 (head 11) AND macro-F1 ≥ 0.787 (head 0.817 − 0.03).
+- **BEATS_PRODUCTION** iff in-scope ≥ 87/110 (production + 4 ≈ +3pp) AND macro-F1 ≥ 0.745.
+- Otherwise **INCONCLUSIVE** (83–86/110 is a tie band, not a win).
+- A 3-prompt margin at n = 110 is within noise: an exact paired McNemar test against production's per-prompt results is reported next to the verdict; the verdict makes no significance claim.
+- Validator tolerance: probabilities must sum to 1 within 1e-3 (provider rounding is a format quirk, not a routing failure); integer-valued float token counts are accepted. Duplicate receipt ids abort scoring (retries are forbidden).
+- Even a win does NOT justify replacing the router: a hosted call per query vs a local dot product. The questions a win opens are (a) Jev as an escalation for low-margin head decisions, (b) Jev as an independent labeler for real-traffic shadow logs. Both are separate experiments.
+
+**Stage 1 budget + guards (operator approved spend under $1 total on 2026-09-22; runner `jev/run-live.ps1`):** exactly 126 calls, no retries; key from env only, never printed; explicit approval env var; no cross-origin redirect; receipts out of git; stop after any response once cumulative *reported* input tokens × rate card exceed $0.05. Planned body size 194,410 UTF-8 bytes (proxy $0.0082 — bytes are not billed tokens). Counts against the operator's $1 all-Jev ceiling (≈ $0.001 already used by the learn journal, per session learn-e3).
+
+**Known limits:** TEST is model-authored (Gemini), not real traffic; ~4 TEST labels are known-ambiguous (e.g. h-7); English only; option order is fixed (alphabetical, canonical JSON — `__none__` sorts FIRST, a possible position bias); the TEST was Gemini-authored and may echo these same intent descriptions, which could favour a reader of them — an option-order-reversal arm is a candidate second pass, not part of this verdict.
+
+## Jev arm — results (2026-09-23, Stage 1 live, scored against the rule above)
+
+126/126 calls, 0 invalid, every response `jev-1.13.0`; reported usage 94,974 input / 26,176 output tokens = **$0.0040** at the reviewed rate card (not an account charge); latency mean 264 ms, max 399 ms. Receipt kept out of git (`jev/live.receipt.jsonl`); scored report committed as `jev/jev-eval.json`.
+
+| Metric (same TEST) | Production | Learned head (iter-1, clean) | **Jev zero-shot** |
+|---|---|---|---|
+| In-scope accuracy | 0.755 (83/110) | 0.818 (90/110) | **0.964 (106/110)** |
+| OOS-decline | 0.375 (6/16) | 0.688 (11/16) | **1.000 (16/16)** |
+| Macro-F1 (16 intents) | 0.745 | 0.817 | **0.967** |
+| Min per-intent F1 | 0.429 | 0.571 | 0.909 (whatcanyoudo) |
+| Brier (17 options) | — | — | 0.044 |
+
+**Verdict: COMPETITIVE_WITH_HEAD** (the highest pre-registered band; it clears every threshold with margin). Paired vs production: Jev right / prod wrong 36, prod right / Jev wrong 3, exact McNemar p = 3.6e-8.
+
+The 4 misses are boundary cases, not systematic: h-7 "notes for A minor" (chordinfo→scaleinfo — the known-ambiguous label), h-46 "make progression sound jazzy" (progressionmood→genreessentials, conf 0.38), h-75 "features" (whatcanyoudo→__none__), h-101 "does F G Am belong to C major?" (keyidentification→diatonicchords, conf 0.97 — the one confident error). Confidence is 1.0 on 109/126; exploratory τ only lowers accuracy (τ=0.9 → 0.85), so no threshold is warranted.
+
+**What this does and does not show.** Shown: on this model-authored TEST, a zero-shot typed classifier fed only the one-line intent descriptions beats both the production router and the trained head, by a paired-significant margin, for well under a cent. Not shown: (1) real-traffic behaviour — TEST is Gemini-authored and may echo the same descriptions (unproven, flagged pre-result); (2) that a hosted call per query is acceptable in GA's latency/cost/privacy envelope; (3) French/Spanish prompts. Per the pre-registration, a win does not justify replacing the router. Next candidates: Jev as the **labeler** for the real-traffic shadow log (path 0a), and Jev as the **escalation** for low-margin head decisions — each its own pre-registered experiment.
+
+## Jev arm — Stage 2 robustness pre-registration (2026-09-23, written before any Stage 2 call)
+
+**Why:** Stage 1 found Jev far ahead (106/110, 16/16) on a single, model-authored TEST. The Gemini authoring prompt (`_heldout-authoring-prompt.txt`) glossed each intent in words close to the option descriptions Jev reads, so an **echo effect** is plausible. Stage 2 tests whether the result survives three perturbations. Same model (`jev-1.13.0`), same options text, same instructions, one prompt per state, same fail-closed scorer (`jev-router --arm <name>`). Each arm has its own plan with request SHA-256 values and a pinned corpus hash (`ARMS` in `jev_router.rs`).
+
+| Arm | Corpus | Calls | Body bytes (cost proxy) | ROBUST iff | DEGRADED iff | else |
+|---|---|---|---|---|---|---|
+| **reversed** | same 126 TEST, option keys in reverse order (`__none__` last) | 126 | 194,410 ($0.0082) | ≥ 102/110 and OOS ≥ 14/16 | ≥ 90/110 | FAIL |
+| **fr** | the 126 TEST prompts translated to French (Claude translation, register, typos and ambiguity kept; ids and labels unchanged) | 126 | 195,261 ($0.0082) | ≥ 99/110 and OOS ≥ 13/16 | ≥ 90/110 | FAIL |
+| **es** | same, Spanish | 126 | 195,020 ($0.0082) | ≥ 99/110 and OOS ≥ 13/16 | ≥ 90/110 | FAIL |
+| **fresh** | 128 new prompts (7 × 16 + 16 OOS), written by a Claude subagent that saw **only the intent IDs**, read no file, and was told to avoid menu vocabulary. Frozen unedited, labels included | 128 | 200,113 ($0.0084) | ≥ 101/112 and OOS ≥ 13/16 | ≥ 92/112 | FAIL |
+
+Any arm with > 2 invalid responses or a model other than `jev-1.13.0` is **KILL**. The DEGRADED floors are the learned head's Stage 1 level (90/110 ≈ 0.818, and ≈ 0.82 × 112 for fresh). DEGRADED therefore means "still at least head-level".
+
+**Reading the verdicts (fixed now):**
+- **fresh = FAIL or DEGRADED** means an echo effect is supported: the Stage 1 margin over the head does not generalise to independently worded prompts.
+- **reversed ≠ ROBUST** means order sensitivity, and a GA integration would need to fix the option order. Per-prompt flips vs Stage 1 are reported, not decisive.
+- **fr / es ≠ ROBUST** means a language gap (English is Jev's documented strongest language); the options stay in English as in GA.
+- The **head is measured on `fresh` too** (nomic-embed via local Ollama plus `state/router/learned-head.json`, τ from the head file), so Jev and head can be compared on a corpus neither was designed around. This comparison is reported, not part of the verdict.
+- Production cannot be measured on the new corpora without the GA C# harness, so no McNemar test is run for them.
+
+**Budget:** 506 calls, 784,804 body bytes (proxy $0.033; Stage 1 actual tokens were ≈ 0.49 × bytes, so ≈ $0.016 expected). The per-arm runner stops at $0.05 of *reported* usage and makes no retries. Cumulative before Stage 2, all Jev work: 143 calls, ≈ $0.0050 computed (tracked by the orchestrator session for the learn course), against the operator's $1 ceiling.
+
+**Integrity notes:** the fresh-set author is from the same model family as the operator's assistant (Claude), which is independent of Gemini (TEST author), Codex (TRAIN author) and Jev. Its labels are frozen as delivered, and no label will be changed after results. Translation quality was checked only for ids and labels (verified identical) and completeness; a mistranslation counts against Jev, which makes the test conservative.
+
+## Jev arm — Stage 2 results (2026-09-23, scored against the Stage 2 pre-registration)
+
+506 calls to `jev-1.13.0`: 381,914 reported input tokens, **$0.0160** at the rate card (computed, not an invoice). One call timed out at 30 s (fr h-126); its usage is unknown and it was not retried.
+
+| Arm | **Registered verdict** | In-scope | OOS | Macro-F1 | Brier | Invalid |
+|---|---|---|---|---|---|---|
+| reversed | **ROBUST** | 106/110 | 16/16 | 0.971 | 0.040 | 1 |
+| fr | **KILL** | 100/110 | 15/16 | 0.928 | 0.065 | 4 |
+| es | **ROBUST** | 103/110 | 16/16 | 0.947 | 0.078 | 1 |
+| fresh | **ROBUST** | 110/112 | 16/16 | 0.986 | 0.022 | 1 |
+| *learned head on fresh (reported)* | — | *80/112* | *12/16* | — | — | — |
+
+**Echo hypothesis: not supported.** On the blind `fresh` corpus Jev scores *higher* than on TEST (110/112), while the head falls from 90/110 to 80/112. Paired on fresh: Jev right / head wrong 34, head right / Jev wrong 0, exact McNemar p ≈ 1.2e-10. The head script reproduces the head's Stage 1 numbers exactly (90/110, 10/16) before it is applied to fresh.
+
+**Order: robust.** Reversing the option order changes one routing decision (h-46, the 0.38-confidence Stage 1 miss, which becomes correct). The only other difference is h-2, rejected for rounding with the same choice.
+
+**French: KILL under the registered rule, not because of routing.** Of the 4 invalid responses, 3 are **probability vectors that sum to 0.99** (Jev reports 2-decimal probabilities, so 17 rounded values can miss 1 by 0.01) and 1 is the timeout. All 6 invalid responses across the arms have that same 0.99 sum. The 1e-3 tolerance chosen in Stage 1 was too tight for 2-decimal rounding; the Stage 1 independent review had flagged exactly this risk. **Post-hoc (not the verdict):** with a tolerance consistent with 2-decimal rounding, fr would be 101/110, 15/16 (inside the ROBUST band), with 1 invalid (the timeout). The registered verdict stays KILL.
+
+**Remaining misses** are boundary cases again: fresh f-77 (chordsubstitution → progressionmood); es h-40 (beginnerchords → __none__, a rounding-invalid response). Minimum per-intent F1 across arms is 0.80 (whatcanyoudo, in fr and es).
+
+**Lessons carried forward:** (1) any future Jev scorer should accept a sum-to-1 tolerance of at least 0.01. That change applies to future pre-registrations only; these verdicts stand. (2) Timeouts need an explicit rule. Here one counted as invalid, as registered, and its billing is unknown. (3) The claim is stronger now but still not real traffic. The next evidence has to come from GA's shadow log.
+
+**Cumulative Jev spend (all experiments):** 143 + 506 = 649 calls, ≈ $0.0050 + $0.0160 = **≈ $0.021** computed, against the operator's $1 ceiling.
+
+## Jev arm — Stage 3 full-universe pre-registration (2026-10-01, written before any Stage 3 call and before any local run on its corpus)
+
+**Why:** Stages 1 and 2 asked Jev to choose among 16 skills + `__none__`, and every labelled routing set so far (GA dev, TEST, fresh) covers only those 16. GA routes over **32** skills (the production-like registry of `RoutingEvalHarness`; production also registers `AlgebraIntent` and `VoicingIntent`, which are outside this test). An offline simulation in arena cycle 2 put the GA router plus Jev escalation at 124/126 on TEST, but it ran on the 16-skill sets, where the other 16 skills never compete. The real-traffic shadow named after Stage 2 cannot run yet: GA's routing telemetry holds 34 distinct texts in four months, all developer or QA traffic.
+
+**Design:**
+- **Corpus** `jev/corpora/full-sol.json`, corpus SHA-256 `f062dcbd…792747`. gpt-5.6-sol (Codex CLI, read-only sandbox, empty working directory, told not to read any file) wrote 224 prompts, 6 per skill + 32 `__none__`, from a user-terms gloss of the 32 skills (`_full-authoring-prompt.txt`). An overlap check against the GA dev set, TEST, fresh, a lesson-11 set and every string literal in the skill sources of ga `5c3a52ab` and arena/c2-merge `e9db25cc` removed 3 prompts before any run (listed in the file). That leaves **190 in-scope + 31 OOS = 221**. Labels are frozen as delivered and will not be changed after results.
+- **Options** `jev/options-full.json` (`jev-options-2`): the 32 production `IIntent.Description` texts, verbatim from ga `5c3a52ab`, plus the Stage 1 `__none__` text and instructions, unchanged.
+- **Scorer:** same model, same fail-closed scorer (`jev-router --arm full`). The sum-to-1 tolerance is **0.03** for this arm (Stage 2 lesson 1: 2-decimal probabilities over 33 options). More than 2 invalid responses, or any model other than `jev-1.13.0`, is **KILL**. A timeout counts as invalid (lesson 2).
+- **Local routers** run on the same 221 prompts with the GA `RoutingEvalHarness` at the production pair (bge-large @ 0.64), over the harness's 32-skill universe:
+  - **base**: ga `5c3a52ab`, the production code;
+  - **c2-merge**: arena/c2-merge `e9db25cc`, the best local candidate so far.
+
+**Decision rule.** A prompt is correct when the right skill is chosen, or when a `__none__` prompt is declined. An invalid Jev response is wrong. Primary questions, all with an exact two-sided McNemar test over the 221 prompts:
+- **Q1, Jev (τ = 0) vs c2-merge.**
+  - **JEV_AHEAD** iff Jev has more correct and p < 0.05.
+  - **LOCAL_AHEAD** iff c2-merge has more correct and p < 0.05.
+  - **TIE** otherwise.
+- **Q2, hybrid vs c2-merge alone.** The hybrid keeps c2-merge's answer unless c2-merge declines or its top1−top2 margin is < 0.05, and then uses Jev's answer. The 0.05 is the escalation value already written in `RoutingEvalHarness`, not tuned on any set.
+  - **HYBRID_HELPS** iff the hybrid has more correct and p < 0.05.
+  - **HYBRID_HURTS** iff c2-merge has more correct and p < 0.05.
+  - **NO_GAIN** otherwise.
+- **Absolute bands** (secondary, in `ARMS`), using the Stage 2 proportions rounded up:
+  - **ROBUST**: ≥ 171/190 in-scope and ≥ 26/31 OOS;
+  - **DEGRADED**: ≥ 156/190 in-scope;
+  - **FAIL** below that.
+- **Reported, not decisive:** the same comparisons against base, the share of prompts escalated, other margins, per-skill F1, and the prompts where all routers disagree with Sol's label.
+
+**Reading the verdicts (fixed now):**
+- **Q1 = JEV_AHEAD**: Jev's lead survives the full skill universe.
+- **Q2 = HYBRID_HELPS**: escalation is worth a GA prototype that runs in shadow only, behind a flag that is off by default.
+- **Q1 = LOCAL_AHEAD, or Q2 = NO_GAIN / HYBRID_HURTS**: the escalation idea stops, or is narrowed to the skills where Jev wins.
+
+**Budget:** 221 calls and 2,086,770 body bytes. The cost proxy is $0.088. At Stage 1's ratio of 0.49 reported tokens per byte, about $0.043 is expected. The runner stop for this arm is raised to $0.08 of reported usage, because a stop mid-run would leave prompts unanswered and KILL the arm. The runner still makes no retries.
+
+Jev spend so far is 649 calls, about $0.021. After this arm it should be about $0.064, against the operator's $1 ceiling. The operator approved Stage 3 on 2026-10-01.
+
+**Integrity notes:**
+- The corpus author (Sol) also wrote the out-of-domain penalty that is now part of c2-merge.
+- The corpus is independent of Jev, of Claude (who wrote the rest of c2-merge) and of bge-large.
+- Claude wrote the skill gloss in the authoring prompt. If its wording sits close to the descriptions, that could favour Jev, the echo effect. Stage 2 found no echo effect on the 16 skills.
+
+## Jev arm — Stage 3 results (2026-10-01, scored against the Stage 3 pre-registration)
+
+Jev ran 221 calls. 220 were valid. One, s-59, failed with a network exception after 21.9 s; it counts as invalid and its billing is unknown. Reported usage was 636,493 input and 87,132 output tokens, **$0.0267** at the rate card. This is computed, not an invoice. The ratio was 0.30 tokens per body byte, lower than Stage 1's 0.49.
+
+| On the same 221 prompts | In-scope (190) | OOS declined (31) | Total |
+|---|---|---|---|
+| base (ga `5c3a52ab`, production code, bge-large @ 0.64) | 121 | 24 | 145 |
+| c2-merge (arena `e9db25cc`) | 121 | 31 | 152 |
+| **Jev zero-shot** (32 production descriptions) | **178** | **31** | **209** |
+| Hybrid: c2-merge, escalating to Jev on a decline or a margin < 0.05 | 180 | 31 | 211 |
+
+**Verdicts:**
+- **Q1 = JEV_AHEAD.** Jev is right where c2-merge is wrong on 64 prompts, and the reverse happens on 7 (exact McNemar p ≈ 1.3e-12).
+- **Q2 = HYBRID_HELPS.** The hybrid is right where c2-merge is wrong on 60 prompts, and the reverse happens on 1 (p ≈ 5.4e-17).
+- **Absolute band: ROBUST.** Jev scores 178/190 against the 171 threshold, and 31/31 OOS.
+- Macro F1 is 0.947. The lowest per-skill F1 is 0.80, for chordinfo and transpose.
+
+**What this does and does not show:**
+- The local router falls from 82 % in-scope on the 16-skill TEST (c2-merge 90/110) to **64 %** (121/190) once all 32 skills compete. The c2-merge in-scope gains measured on the 16-skill sets do not carry over; only its out-of-scope declines do (31/31, against base's 24/31).
+- Jev keeps 94 % in-scope on the full universe, from production descriptions it had never been tuned on.
+- At the registered margin of 0.05, the hybrid sends **133 of 221 prompts (60 %)** to Jev, and it is statistically indistinguishable from Jev alone (6 against 4, p = 0.75).
+- So escalation saves only 40 % of the calls. Two designs remain: Jev as the primary router with the local router as fallback, or escalation on declines only. Declines-only reaches 180/221 with 27 % of prompts escalated; it is reported here, not registered.
+- Not shown: real traffic, which does not exist yet, and French. The corpus is model-authored and its labels are Sol's. Three prompts were missed by every router (s-161, s-179, s-191); they may be label errors and were left as delivered.
+
+**Cumulative Jev spend (all experiments):** 649 + 221 = 870 calls, about $0.021 + $0.027 = **$0.048** computed, against the operator's $1 ceiling.
+
+## Jev arm — Stage 4 human-question pre-registration (2026-10-02, written before any router run on its corpus)
+
+**Why:** every corpus so far was written by a model, and GA's live shadow (GA #786, on since 2026-10-02) has no real traffic yet. Stage 4 uses questions written by real musicians: the 100 most recent question titles on Music Stack Exchange. They are not GA chatbot messages, but nobody wrote them to fit GA's skills.
+
+**Design:**
+- **Corpus** `jev/corpora/music-se.json`, corpus SHA-256 `d60f8015…571460`, pinned in the `musicse` arm of `jev_router.rs`. Selection rule, fixed before fetching: the 100 most recent questions on music.stackexchange.com created before 2026-10-01T00:00Z (Stack Exchange API, no key, fetched 2026-10-02). They were created between 2026-07-10 and 2026-09-29. Titles are used verbatim with HTML entities decoded; bodies are not used. Each title keeps its link, author and license (CC BY-SA 4.0).
+- **Labels:** Claude labelled every title from the title alone, before any router saw the corpus. Site tags were visible. The rule is written in the file:
+  - a skill id when one listed skill answers the title as asked;
+  - `__none__` when no listed skill covers the subject (notation, engraving, other instruments, gear, software, singing, history, performance practice);
+  - `ambiguous` when a skill covers the subject but the title lacks an input it needs, or two labels are defensible.
+- **Result of labelling, already a finding:** **1** title is clearly in scope (`skill.chordvoicings`, quartal voicings in D Dorian), **86** are `__none__`, **13** are ambiguous. Ambiguous titles are routed and reported, never scored, so a defensible skill pick is never counted as wrong. Stage 4 is therefore mostly a test of declining real questions the catalog cannot answer.
+- **Jev:** the Stage 3 options (`options-full.json`) and tolerance (0.03), the same fail-closed scorer (`jev-router --arm musicse`), and the same runner (`run-live.ps1 -Arm musicse`). More than 2 invalid responses, or any model other than `jev-1.13.0`, is **KILL** and voids the Jev comparisons. The arm band is reported as a validity check: ROBUST needs Stage 3's OOS proportion (73/86 declines).
+- **Local routers:** the GA `RoutingEvalHarness` at the production pair (bge-large @ 0.64), over the 32-skill universe, on the same commits as Stage 3: **base** (ga `5c3a52ab`, production code) and **c2-merge** (arena `e9db25cc`). A harness decline (no skill chosen) counts as `__none__`. Correctness is computed from the chosen skill, not the harness's own flag, because ambiguous titles go to the harness with a placeholder expectation.
+
+**Decision rule.** On the **87 scored titles** (1 in-scope + 86 `__none__`), a title is correct when the right skill is chosen, or when a `__none__` title is declined. An invalid Jev response is wrong. Exact two-sided McNemar tests:
+- **H1, Jev vs base (production).**
+  - **JEV_AHEAD** iff Jev has more correct and p < 0.05.
+  - **BASE_AHEAD** iff base has more correct and p < 0.05.
+  - **TIE** otherwise.
+- **Q2, Jev vs c2-merge,** same rule (secondary).
+- **Reported, not decisive:**
+  - c2-merge vs base;
+  - for each router, the `__none__` titles it routes to a skill, and which skills absorb them;
+  - every router's pick on the in-scope title and on the 13 ambiguous ones;
+  - agreement between Jev and base over all 100 titles, the number GA's live shadow logs.
+
+**Expectation, stated before any run:** base will send many of the 86 `__none__` titles to a skill, because they are music questions close to the skill descriptions, unlike Stage 3's off-topic prompts. Jev will decline most of them.
+
+**Reading the verdicts (fixed now):**
+- **H1 = JEV_AHEAD**: on real musicians' phrasing, production answers questions it cannot serve with a skill, and Jev declines them. That supports keeping the shadow and testing Jev for the decline decision. It does not support replacing the router: GA users still have not been measured.
+- **H1 = TIE**: Stage 3's lead does not show on this traffic; the next evidence has to come from GA's shadow log.
+- **H1 = BASE_AHEAD**: Jev routes real questions it should decline, and the shadow's agreement rate must be read with that in mind.
+
+**Budget:** 100 calls and 946,541 body bytes; the cost proxy at 1 token per byte is $0.040. At Stage 3's 0.30 reported tokens per byte, about $0.012 is expected, or $0.014 if output tokens are charged at the same rate as GA's shadow assumes. The runner stops at **$0.03** of reported input tokens and makes no retries. The operator approved about $0.015 for this stage on 2026-10-02. Jev spend in this spike so far is 870 calls, about $0.048, against the operator's $1 ceiling.
+
+**Integrity notes:**
+- Claude labelled the corpus, and Claude wrote most of c2-merge.
+- The label rule asks the same question Jev is asked ("can a listed skill answer this?"). That is what a decline means in production, but a similarity threshold cannot see it, so the rule may favour Jev. Excluding ambiguous titles limits that effect; it does not remove it.
+- Music Stack Exchange is not GA's audience. Its questions are more about piano, notation, engraving and gear, and fewer are about guitar chords. Titles are shorter than the questions, and all are in English.
+- The titles are public posts under CC BY-SA 4.0, kept with attribution. They are not GA chatbot users' messages.
+
+## Jev arm — Stage 4 results (2026-10-02, scored against the Stage 4 pre-registration)
+
+Jev ran 100 calls and all 100 were valid: HTTP 200 every time, 202 ms median latency, 441 ms at most. Reported usage was 289,779 input and 39,435 output tokens, **$0.0122** at the rate card. This is computed, not an invoice. The ratio was 0.31 tokens per body byte, close to Stage 3's 0.30. Details are in `jev/musicse/stage4-comparison.json`.
+
+| On the 87 scored titles | In-scope (1) | `__none__` declined (86) | Total |
+|---|---|---|---|
+| base (ga `5c3a52ab`, production code, bge-large @ 0.64) | 1 | 41 | 42 |
+| c2-merge (arena `e9db25cc`) | 0 | 54 | 54 |
+| **Jev zero-shot** (32 production descriptions) | **1** | **81** | **82** |
+
+**Verdicts:**
+- **H1 = JEV_AHEAD.** Jev is right where base is wrong on 41 titles, and the reverse happens on 1 (exact McNemar p ≈ 2.0e-11).
+- **Q2 = JEV_AHEAD.** Against c2-merge, the counts are 31 and 3 (p ≈ 7.7e-7).
+- **Arm band: ROBUST.** 81/86 declines against the 73 threshold, and no invalid response.
+- Reported: c2-merge beats base, 15 against 3 (p = 0.0075). Its out-of-domain penalty helps on real questions, but it still routes 32 of the 86.
+
+**What this shows:**
+- **Production routes 45 of the 86 questions it cannot answer (52 %) to a skill**, spread over 21 skills. Examples: "Linear Phase Plugin" goes to icvshortestpath (confidence 0.668), "Why are repeats not represented in sheet music?" to settheoryequivalence (0.660), and "How to get the deep robotic voice sound effect?" to chordvoicings (0.694). A wrong route answers with the wrong canned skill instead of falling through to the general answer.
+- Stage 3 could not show this. Its out-of-scope prompts (weather, boiled eggs) are far from every skill; real music questions are not. The 0.64 threshold separates music from non-music. It does not separate what a skill can answer from what it cannot.
+- **Jev routes 5 of the 86 (6 %).**
+  - Two follow a "difference between" phrasing to theorycomparison: m-74 (clarion and clarino ranges) and m-85 (tuplet brackets).
+  - m-73 (piano left-hand patterns) goes to voiceleading, and m-75 (a randomly fluctuating metronome) to practiceroutine.
+  - m-95 (violin quadruple stops) goes to fretspan, as it does for base.
+- The one in-scope title, quartal voicings in D Dorian, goes to chordvoicings for Jev and base, and to modes for c2-merge.
+- **On the 13 ambiguous titles:**
+  - Jev picks one of the candidate skills written in the corpus 9 times and declines 3; the 13th goes to a skill outside its candidates.
+  - Base never declines them and picks a candidate 3 times.
+  - c2-merge picks a candidate once and declines 3.
+  - Claude wrote both the candidates and the label rule, so this agreement may partly reflect shared reasoning, not independent correctness.
+- **Jev and base agree on 45 of the 100 titles**: 40 where both decline, 5 with the same skill. In 44 of the 55 disagreements, base routes and Jev declines. If GA's users ask questions like these, the live shadow's agreement rate will be low for that reason. Those rows are the ones to label first.
+- **Design consequence (not registered).** Stage 3's cheaper hybrid, escalating to Jev only when the local router declines, cannot fix this failure. Here the local router does not decline; it routes. Fixing it needs Jev to check every routed message, or a stricter local decline.
+- **Exploratory, tuned on this set, not a result:**
+  - raising base's threshold to 0.70 would leave 20 of the 45 wrong routes and keep 118 of base's 121 correct Stage 3 in-scope answers;
+  - at 0.75, it would leave 4 and keep 103.
+  - A threshold change would need its own pre-registration on a fresh set.
+- **Not shown:**
+  - GA's users: the live shadow log still holds only the 3 deploy checks;
+  - French;
+  - independent labels. Claude labelled the corpus with the question Jev is asked, so the 81 declines partly measure agreement between Jev and Claude. Base's 45 wrong routes depend much less on that: most are notation, gear or software questions that no skill covers under any reading.
+
+**Cumulative Jev spend (all experiments):** 870 + 100 = 970 calls, about $0.048 + $0.012 = **$0.060** computed, against the operator's $1 ceiling. GA's live shadow adds 3 calls, $0.00045.

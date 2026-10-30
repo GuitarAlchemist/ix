@@ -1,0 +1,23 @@
+[package]
+name = "ix-origami"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["science", "mathematics"]
+keywords = ["origami", "fold", "flat-folding", "geometry", "layer-order"]
+description = "Checks of a flat folded state read from a FOLD file: Kawasaki and Maekawa, face isometry, crease orientation, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco)."
+
+[dependencies]
+ix-graph = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[lib]
+path = "src/lib.rs"

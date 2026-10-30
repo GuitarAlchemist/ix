@@ -290,7 +290,7 @@ let objective = |x: &Array1<f64>| -> f64 {
 **Dans ix** : `ClosureObjective` encapsule une closure dans un `ObjectiveFunction` :
 
 ```rust
-use ix_optimize::ClosureObjective;
+use ix_optimize::traits::ClosureObjective;
 
 let objective = ClosureObjective {
     f: |x: &Array1<f64>| (x[0] - 3.0).powi(2) + (x[1] - 7.0).powi(2),
@@ -323,7 +323,8 @@ Vous lirez les generiques plus souvent que vous ne les ecrirez. Quand vous voyez
 ```rust
 // Importer des elements specifiques
 use ndarray::{Array1, Array2, array};
-use ix_supervised::{LinearRegression, Regressor};
+use ix_supervised::linear_regression::LinearRegression;
+use ix_supervised::traits::Regressor;
 use ix_math::distance;
 
 // Tout importer d'un module (a utiliser avec parcimonie)

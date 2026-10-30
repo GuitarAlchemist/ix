@@ -22,6 +22,11 @@
 //! * **Truncated with no witness** — nothing is claimed. Every property is
 //!   `Unknown` and the report says how far it got.
 //!
+//! A firing whose result does not fit a `u64` token count cannot be enumerated
+//! either, so it truncates the run the same way `max_states` does, and the
+//! `Unknown` reasons name the transition and place that overflowed. The edge is
+//! never silently dropped from an otherwise "exhaustive" graph.
+//!
 //! No approximation is ever reported as a result. A truncated run that happens
 //! to have found a deadlock still reports that deadlock — a witness firing
 //! sequence is a positive existence proof and truncation cannot invalidate it —
@@ -39,7 +44,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::net::{Marking, PetriNet};
+use crate::net::{Marking, PetriError, PetriNet};
 
 /// How many ancestors the unboundedness check walks back from a newly
 /// discovered marking. See [`ReachabilityGraph::strictly_covered_ancestor`].
@@ -107,11 +112,28 @@ impl<T> Verdict<T> {
 pub struct Deadlock {
     /// Index into [`ReachabilityGraph::markings`].
     pub state: usize,
-    /// The wedged marking, rendered as `label=tokens` pairs.
+    /// The wedged marking, rendered as `label=tokens` pairs. For a person:
+    /// labels are free text and are not escaped, so do not parse this.
     pub marking: String,
+    /// The same marking as `(place id, tokens)` for the places holding any, in
+    /// place-id order — the form to read programmatically. Defaulted when
+    /// reading a report recorded before the field existed.
+    #[serde(default)]
+    pub tokens: Vec<(String, u64)>,
     /// Transition ids, in firing order, from `m0` to the dead marking. Shortest
     /// such sequence, because the graph is explored breadth-first.
     pub witness: Vec<String>,
+}
+
+/// Why a run stopped short of the full state space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Truncation {
+    /// [`Limits::max_states`] was reached; a larger budget may finish the run.
+    MaxStates,
+    /// A firing overflowed a `u64` token count; no budget finishes the run.
+    /// Reported in preference to `MaxStates` when both happened.
+    Overflow,
 }
 
 /// Per-place token bound over the enumerated state space.
@@ -144,8 +166,15 @@ pub struct Analysis {
     pub states: usize,
     /// Edges in the reachability graph.
     pub transitions_fired: usize,
-    /// True when [`Limits::max_states`] stopped the search early.
+    /// True when the search stopped short of the full state space: either
+    /// [`Limits::max_states`] was reached, or a firing overflowed a `u64`
+    /// token count. [`Analysis::truncation`] says which.
     pub truncated: bool,
+    /// `None` exactly when `truncated` is false; otherwise the cause, so a
+    /// caller can tell a budget cut (raise `max_states`) from an overflow
+    /// (raising it never helps) without parsing the `Unknown` reasons.
+    #[serde(default)]
+    pub truncation: Option<Truncation>,
 
     /// `Holds(())` when no dead marking exists; `Fails(deadlocks)` otherwise.
     pub deadlock_free: Verdict<Vec<Deadlock>>,
@@ -184,7 +213,11 @@ pub struct ReachabilityGraph {
     /// state. `None` for the root only.
     parent: Vec<Option<(usize, usize)>>,
     truncated: bool,
+    /// Whether [`Limits::max_states`] refused a new marking.
+    hit_max_states: bool,
     unbounded: Option<(usize, usize)>,
+    /// The first firing that overflowed a token count, if any.
+    overflow: Option<PetriError>,
 }
 
 impl ReachabilityGraph {
@@ -197,7 +230,9 @@ impl ReachabilityGraph {
             succ: vec![Vec::new()],
             parent: vec![None],
             truncated: false,
+            hit_max_states: false,
             unbounded: None,
+            overflow: None,
         };
 
         let mut queue: VecDeque<usize> = VecDeque::from([0usize]);
@@ -207,10 +242,16 @@ impl ReachabilityGraph {
             for t in net.enabled(&graph.markings[s]) {
                 let next = match net.fire(&graph.markings[s], t) {
                     Ok(m) => m,
-                    // Only reachable via token-count overflow, which is itself
-                    // evidence of unboundedness; the covering check below finds
-                    // it far earlier, so treat the edge as absent.
-                    Err(_) => continue,
+                    // `t` is enabled, so the only refusal left is a token count
+                    // past `u64::MAX`. That successor exists but cannot be
+                    // represented, so the graph is incomplete: say so, exactly
+                    // as a budget cut does, instead of pretending the edge is
+                    // absent and reporting exhaustive verdicts.
+                    Err(e) => {
+                        graph.truncated = true;
+                        graph.overflow.get_or_insert(e);
+                        continue;
+                    }
                 };
 
                 match graph.index.get(&next) {
@@ -218,6 +259,7 @@ impl ReachabilityGraph {
                     None => {
                         if graph.markings.len() >= limits.max_states {
                             graph.truncated = true;
+                            graph.hit_max_states = true;
                             continue;
                         }
                         let id = graph.markings.len();
@@ -252,10 +294,12 @@ impl ReachabilityGraph {
     /// reported witness is checked componentwise against a real ancestor.
     ///
     /// `strictly_covers` implies a strictly larger token total, so the cheap
-    /// `u64` total comparison screens out most ancestors before the O(places)
-    /// componentwise check runs.
+    /// total comparison screens out most ancestors before the O(places)
+    /// componentwise check runs. The totals are summed in `u128` so the screen
+    /// stays exact when places hold near `u64::MAX` tokens.
     fn strictly_covered_ancestor(&self, state: usize) -> Option<usize> {
-        let total = self.markings[state].total();
+        let wide_total = |m: &Marking| -> u128 { m.tokens().iter().map(|&t| u128::from(t)).sum() };
+        let total = wide_total(&self.markings[state]);
         let mut cursor = self.parent[state].map(|(p, _)| p);
         let mut walked = 0usize;
         while let Some(a) = cursor {
@@ -263,7 +307,7 @@ impl ReachabilityGraph {
                 return None;
             }
             walked += 1;
-            if self.markings[a].total() < total
+            if wide_total(&self.markings[a]) < total
                 && self.markings[state].strictly_covers(&self.markings[a])
             {
                 return Some(a);
@@ -400,6 +444,8 @@ pub fn analyze(net: &PetriNet, limits: Limits) -> Analysis {
     let unknown = |what: &str| -> String {
         if unbounded.is_some() {
             format!("{what} ranges over an infinite state space (the net is unbounded)")
+        } else if let Some(e) = &graph.overflow {
+            format!("{what} needs the full state space; exploration stopped because {e}")
         } else {
             format!(
                 "{what} needs the full state space; exploration stopped at {} markings (max_states)",
@@ -424,6 +470,13 @@ pub fn analyze(net: &PetriNet, limits: Limits) -> Analysis {
         .map(|&s| Deadlock {
             state: s,
             marking: net.describe_marking(&graph.markings[s]),
+            tokens: net
+                .places()
+                .iter()
+                .zip(graph.markings[s].tokens())
+                .filter(|(_, &n)| n > 0)
+                .map(|(p, &n)| (p.id.clone(), n))
+                .collect(),
             witness: graph.witness(net, s),
         })
         .collect();
@@ -501,6 +554,13 @@ pub fn analyze(net: &PetriNet, limits: Limits) -> Analysis {
         states: graph.markings.len(),
         transitions_fired,
         truncated: graph.truncated,
+        truncation: if graph.overflow.is_some() {
+            Some(Truncation::Overflow)
+        } else if graph.hit_max_states {
+            Some(Truncation::MaxStates)
+        } else {
+            None
+        },
         deadlock_free,
         deadlock_count,
         bounded,
@@ -536,6 +596,9 @@ fn place_bounds(net: &PetriNet, graph: &ReachabilityGraph) -> Bounds {
 ///   occurs on some edge inside *every terminal* SCC (one with no edge leaving
 ///   it). A dead marking is a terminal SCC with no edges at all, so a net with
 ///   a deadlock and at least one transition is never live — as it should be.
+///   A net with *no* transitions is the degenerate case: `m0` is dead, so
+///   `deadlock_free` fails at `m0`, while `live` holds vacuously because there
+///   is no transition to miss. Read `deadlock_free` for such a net, not `live`.
 /// * **Reversible** — every state is reachable from `m0` by construction, so
 ///   `m0` is reachable from every state exactly when the whole graph is one SCC.
 fn liveness_and_reversibility(
@@ -604,6 +667,7 @@ mod tests {
         let a = analyze(&net, Limits::default());
         assert_eq!(a.states, 2);
         assert!(!a.truncated);
+        assert_eq!(a.truncation, None);
         assert!(a.deadlock_free.holds());
         assert_eq!(
             a.bounded,
@@ -660,6 +724,67 @@ mod tests {
     }
 
     #[test]
+    fn a_firing_that_overflows_truncates_instead_of_dropping_the_edge() {
+        // `t` is enabled at m0 and would push `p` past u64::MAX.
+        let net = PetriNet::builder()
+            .place("p", u64::MAX)
+            .transition("t")
+            .arc("t", "p")
+            .build()
+            .unwrap();
+
+        let a = analyze(&net, Limits::with_max_states(1_000));
+        assert!(
+            a.truncated,
+            "an unrepresentable successor is not exhaustive"
+        );
+        assert_eq!(a.truncation, Some(Truncation::Overflow));
+        let Verdict::Unknown { reason } = &a.bounded else {
+            panic!("boundedness must not be claimed: {:?}", a.bounded);
+        };
+        assert!(
+            reason.contains("overflows the token count of place `p`"),
+            "{reason}"
+        );
+        // `t` is enabled at m0, so it must not be reported as never enabled.
+        assert!(matches!(a.quasi_live, Verdict::Unknown { .. }));
+        assert!(matches!(a.deadlock_free, Verdict::Unknown { .. }));
+        assert!(matches!(a.live, Verdict::Unknown { .. }));
+        assert!(matches!(a.reversible, Verdict::Unknown { .. }));
+    }
+
+    #[test]
+    fn overflow_is_the_reported_cause_when_the_budget_also_ran_out() {
+        // `pump` overflows `p` at m0; `grow` fills the budget meanwhile.
+        let net = PetriNet::builder()
+            .place("p", u64::MAX)
+            .place("q", 0)
+            .transition("grow")
+            .transition("pump")
+            .arc("grow", "q")
+            .arc("pump", "p")
+            .build()
+            .unwrap();
+        let a = analyze(&net, Limits::with_max_states(3));
+        assert_eq!(a.truncation, Some(Truncation::Overflow));
+    }
+
+    #[test]
+    fn a_net_without_transitions_is_dead_at_m0_and_vacuously_live() {
+        let net = PetriNet::builder().build().unwrap();
+        let a = analyze(&net, Limits::default());
+        assert!(!a.truncated);
+        let Verdict::Fails(d) = &a.deadlock_free else {
+            panic!("m0 enables nothing, so it is dead: {:?}", a.deadlock_free);
+        };
+        assert_eq!((d[0].marking.as_str(), d[0].witness.len()), ("(empty)", 0));
+        assert!(
+            a.live.holds(),
+            "no transition can be missing from a terminal SCC"
+        );
+    }
+
+    #[test]
     fn truncation_without_a_witness_claims_nothing() {
         // A long acyclic chain: bounded, but not provably so under a tiny budget.
         let mut b = PetriNet::builder().name("chain").place("p0", 1);
@@ -674,6 +799,7 @@ mod tests {
 
         let a = analyze(&net, Limits::with_max_states(5));
         assert!(a.truncated);
+        assert_eq!(a.truncation, Some(Truncation::MaxStates));
         assert!(matches!(a.bounded, Verdict::Unknown { .. }));
         assert!(a.unbounded_witness.is_none());
         assert!(matches!(a.quasi_live, Verdict::Unknown { .. }));

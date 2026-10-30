@@ -91,6 +91,11 @@ mod hexavalent;
 #[cfg(feature = "udf")]
 mod fractal;
 
+/// Petri-net analysis over `ix-petri` (ix_petri_analyze: deadlock, boundedness,
+/// liveness of a JSON net), registered by [`udf::register_all`]. Pure wrap.
+#[cfg(feature = "udf")]
+mod petri;
+
 /// Artifact source — the deep module every lens reads through: safe materialization of
 /// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
 /// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".

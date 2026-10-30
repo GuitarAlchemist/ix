@@ -106,7 +106,19 @@ fn kmeans_schema() -> Value {
                 "max_iter",
                 Prop::integer().default(100).desc("Max iterations"),
             ),
-            ("seed", Prop::integer().default(42).desc("RNG seed")),
+            (
+                "seed",
+                Prop::integer()
+                    .default(42)
+                    .desc("RNG seed of the first k-means++ start"),
+            ),
+            (
+                "n_init",
+                Prop::integer().minimum(1).default(1).desc(
+                    "Number of k-means++ starts, from seeds seed, seed+1, …; \
+                     the run with the lowest inertia is returned",
+                ),
+            ),
         ],
         &["data", "k"],
     )
@@ -883,6 +895,56 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Four uneven blobs, where k-means++ starts from different seeds land in
+    /// different local minima.
+    fn kmeans_blobs() -> Vec<Vec<f64>> {
+        let centers = [(0.0, 0.0), (6.0, 0.0), (0.0, 6.0), (6.5, 6.5)];
+        let mut rows = Vec::new();
+        for (c, &(cx, cy)) in centers.iter().enumerate() {
+            for i in 0..(4 + 3 * c) {
+                let t = i as f64;
+                rows.push(vec![cx + (t * 0.7).sin() * 1.8, cy + (t * 1.3).cos() * 1.8]);
+            }
+        }
+        rows
+    }
+
+    fn kmeans_inertia(params: Value) -> f64 {
+        kmeans(params).expect("kmeans runs")["inertia"]
+            .as_f64()
+            .unwrap()
+    }
+
+    #[test]
+    fn kmeans_honors_the_seed_parameter() {
+        let data = kmeans_blobs();
+        let by_seed: Vec<f64> = (0..10)
+            .map(|s| kmeans_inertia(json!({ "data": data, "k": 4, "seed": s })))
+            .collect();
+        assert!(
+            by_seed.iter().any(|&v| (v - by_seed[0]).abs() > 1e-9),
+            "the schema's `seed` must change the start: {by_seed:?}"
+        );
+        // Absent seed keeps the historical default of 42.
+        assert_eq!(
+            kmeans_inertia(json!({ "data": data, "k": 4 })),
+            kmeans_inertia(json!({ "data": data, "k": 4, "seed": 42 }))
+        );
+    }
+
+    #[test]
+    fn kmeans_n_init_keeps_the_lowest_inertia_start() {
+        let data = kmeans_blobs();
+        let best_single = (0..10)
+            .map(|s| kmeans_inertia(json!({ "data": data, "k": 4, "seed": s })))
+            .fold(f64::INFINITY, f64::min);
+        let best_of_10 = kmeans_inertia(json!({ "data": data, "k": 4, "seed": 0, "n_init": 10 }));
+        assert_eq!(best_of_10, best_single);
+        // Non-trivial fixture: the default single start is not the best one.
+        assert!(best_of_10 < kmeans_inertia(json!({ "data": data, "k": 4, "seed": 0 })));
+        assert!(kmeans(json!({ "data": data, "k": 4, "n_init": 0 })).is_err());
+    }
 
     // Executes-test for the new `pca` skill: the catalog entry must EXECUTE,
     // not merely register (no green-but-dead). Classic Lindsay-Smith 2D PCA

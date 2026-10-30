@@ -1,0 +1,1554 @@
+{
+ "version": "full-sol-1",
+ "authoredBy": "gpt-5.6-sol",
+ "provenance": "Authored 2026-10-01 by gpt-5.6-sol (Codex CLI, read-only sandbox, empty working directory, told not to read files) from a prompt that glossed the 32 routable GA skills in user terms. 224 delivered (6 per skill + 32 __none__); the 3 prompts in `excluded` were removed by an overlap check against the GA dev set, the IX held-out, the fresh set, the lesson-11 set and every string literal in the skill sources of ga 5c3a52ab and arena/c2-merge e9db25cc, before any run. Labels kept as delivered.",
+ "excluded": {
+  "s-157": "near-duplicate of a ScaleInfoSkill example prompt (base and c2-merge)",
+  "s-188": "near-duplicate of a WhatCanYouDoSkill example prompt added in c2-merge",
+  "s-216": "exact duplicate of a GA dev-set prompt"
+ },
+ "prompts": [
+  {
+   "id": "s-1",
+   "prompt": "whats actually different about drop d",
+   "expectedIntentId": "skill.alternatetunings",
+   "tags": [
+    "beginner",
+    "short"
+   ]
+  },
+  {
+   "id": "s-2",
+   "prompt": "how do i get my guitar into dadgad from standard",
+   "expectedIntentId": "skill.alternatetunings"
+  },
+  {
+   "id": "s-3",
+   "prompt": "open g tuning strings low to high pls",
+   "expectedIntentId": "skill.alternatetunings"
+  },
+  {
+   "id": "s-4",
+   "prompt": "is cgcgce an open c setup",
+   "expectedIntentId": "skill.alternatetunings",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-5",
+   "prompt": "trying double drop d which pegs am i changing",
+   "expectedIntentId": "skill.alternatetunings"
+  },
+  {
+   "id": "s-6",
+   "prompt": "what does nashville tuning mean",
+   "expectedIntentId": "skill.alternatetunings",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-7",
+   "prompt": "just got a guitar what are 3 easy chords to learn",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-8",
+   "prompt": "total noob which chords should i start with",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-9",
+   "prompt": "first day playing give me some simple chords",
+   "expectedIntentId": "skill.beginnerchords"
+  },
+  {
+   "id": "s-10",
+   "prompt": "what beginner chords dont need a barre",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-11",
+   "prompt": "easy cowboy chords for someone with clumsy fingers",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-12",
+   "prompt": "i only know em what should my next basic chord be",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-13",
+   "prompt": "capo spot to play g shapes in a",
+   "expectedIntentId": "skill.capo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-14",
+   "prompt": "if i capo 3 and hold em what chord comes out",
+   "expectedIntentId": "skill.capo"
+  },
+  {
+   "id": "s-15",
+   "prompt": "song is in eb but i wanna use c shapes where capo",
+   "expectedIntentId": "skill.capo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-16",
+   "prompt": "capo on 5 playing d shape whats the real chord",
+   "expectedIntentId": "skill.capo"
+  },
+  {
+   "id": "s-17",
+   "prompt": "where do i clamp it so am sounds like cm",
+   "expectedIntentId": "skill.capo",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-18",
+   "prompt": "using e a b shapes for a tune in g where should the capo go",
+   "expectedIntentId": "skill.capo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-19",
+   "prompt": "what notes are hiding in f#m7b5",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-20",
+   "prompt": "spell a c13 chord for me",
+   "expectedIntentId": "skill.chordinfo"
+  },
+  {
+   "id": "s-21",
+   "prompt": "does dm9 include an e",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-22",
+   "prompt": "what makes a chord sus2 instead of major",
+   "expectedIntentId": "skill.chordinfo"
+  },
+  {
+   "id": "s-23",
+   "prompt": "notes in bb augmented",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": [
+    "short"
+   ]
+  },
+  {
+   "id": "s-24",
+   "prompt": "is g b d f a a g9 or something else",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-25",
+   "prompt": "cant play bm what can i swap in",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-26",
+   "prompt": "need another chord instead of f in c am f g",
+   "expectedIntentId": "skill.chordsubstitution"
+  },
+  {
+   "id": "s-27",
+   "prompt": "whats a jazzy replacement for plain old c major",
+   "expectedIntentId": "skill.chordsubstitution"
+  },
+  {
+   "id": "s-28",
+   "prompt": "sub for e7 that still pulls into am",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-29",
+   "prompt": "can i replace dm with f in this tune",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-30",
+   "prompt": "give me a tritone sub for g7",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-31",
+   "prompt": "show me a playable cmaj9 shape",
+   "expectedIntentId": "skill.chordvoicings"
+  },
+  {
+   "id": "s-32",
+   "prompt": "how do i finger bb without the usual barre",
+   "expectedIntentId": "skill.chordvoicings",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-33",
+   "prompt": "need a rootless g13 grip around fret 8",
+   "expectedIntentId": "skill.chordvoicings",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-34",
+   "prompt": "any nice open-string voicing for dadd9",
+   "expectedIntentId": "skill.chordvoicings"
+  },
+  {
+   "id": "s-35",
+   "prompt": "where can i play a minor triad on the top 3 strings",
+   "expectedIntentId": "skill.chordvoicings",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-36",
+   "prompt": "x5456x what kind of dm voicing is that",
+   "expectedIntentId": "skill.chordvoicings",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-37",
+   "prompt": "why does the circle thing go c g d a",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-38",
+   "prompt": "how many sharps does b major have",
+   "expectedIntentId": "skill.circleoffifths"
+  },
+  {
+   "id": "s-39",
+   "prompt": "which major key has four flats",
+   "expectedIntentId": "skill.circleoffifths"
+  },
+  {
+   "id": "s-40",
+   "prompt": "help me memorize the order of sharps",
+   "expectedIntentId": "skill.circleoffifths"
+  },
+  {
+   "id": "s-41",
+   "prompt": "how do guitarists use that wheel of keys",
+   "expectedIntentId": "skill.circleoffifths"
+  },
+  {
+   "id": "s-42",
+   "prompt": "why are f and c next to each other on the flats side",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-43",
+   "prompt": "what notes overlap between am7 and fmaj7",
+   "expectedIntentId": "skill.commontones"
+  },
+  {
+   "id": "s-44",
+   "prompt": "do c major and e minor share anything",
+   "expectedIntentId": "skill.commontones",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-45",
+   "prompt": "shared pitches in db7 and g7",
+   "expectedIntentId": "skill.commontones",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-46",
+   "prompt": "which note can ring through from dm to bb",
+   "expectedIntentId": "skill.commontones",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-47",
+   "prompt": "find the overlap between g6 and em7",
+   "expectedIntentId": "skill.commontones"
+  },
+  {
+   "id": "s-48",
+   "prompt": "is there one tone i can hold over cmaj9 then a7",
+   "expectedIntentId": "skill.commontones",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-49",
+   "prompt": "what chords naturally show up in e major",
+   "expectedIntentId": "skill.diatonicchords"
+  },
+  {
+   "id": "s-50",
+   "prompt": "give me the seven chords for d minor",
+   "expectedIntentId": "skill.diatonicchords"
+  },
+  {
+   "id": "s-51",
+   "prompt": "in g which number chord is am",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-52",
+   "prompt": "does f#m belong in the key of a",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-53",
+   "prompt": "harmonize the b major scale into triads",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": [
+    "jargon",
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-54",
+   "prompt": "what seventh chords do i get from c harmonic minor",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-55",
+   "prompt": "is 3x stretch from fret 2 to 7 even realistic",
+   "expectedIntentId": "skill.fretspan"
+  },
+  {
+   "id": "s-56",
+   "prompt": "my hand cant reach this x 2 6 4 5 x shape is it nuts",
+   "expectedIntentId": "skill.fretspan",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-57",
+   "prompt": "how wide is the reach on 8 10 12 9 x x",
+   "expectedIntentId": "skill.fretspan"
+  },
+  {
+   "id": "s-58",
+   "prompt": "can normal hands play a chord spanning six frets",
+   "expectedIntentId": "skill.fretspan",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-59",
+   "prompt": "is x13 12 10 15x physically playable",
+   "expectedIntentId": "skill.fretspan",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-60",
+   "prompt": "thumb over plus pinky four frets away doable or no",
+   "expectedIntentId": "skill.fretspan",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-61",
+   "prompt": "what harmony stuff gives funk its sound",
+   "expectedIntentId": "skill.genreessentials"
+  },
+  {
+   "id": "s-62",
+   "prompt": "which scales matter most for doom metal",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-63",
+   "prompt": "starter chord vocabulary for bossa nova",
+   "expectedIntentId": "skill.genreessentials"
+  },
+  {
+   "id": "s-64",
+   "prompt": "what should i learn to sound vaguely gypsy jazz",
+   "expectedIntentId": "skill.genreessentials"
+  },
+  {
+   "id": "s-65",
+   "prompt": "classic neo soul chord flavors",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-66",
+   "prompt": "what modes and chords are typical in surf rock",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-67",
+   "prompt": "grothendieck delta between c major and c minor",
+   "expectedIntentId": "skill.grothendieckdelta",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-68",
+   "prompt": "calculate the app delta for dm7 vs g7",
+   "expectedIntentId": "skill.grothendieckdelta"
+  },
+  {
+   "id": "s-69",
+   "prompt": "whats the g delta from 0 4 7 to 0 3 7",
+   "expectedIntentId": "skill.grothendieckdelta",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-70",
+   "prompt": "numeric grothendieck gap between fmaj7 and bdim7",
+   "expectedIntentId": "skill.grothendieckdelta"
+  },
+  {
+   "id": "s-71",
+   "prompt": "how far apart are c6 and am7 by grothendieck delta",
+   "expectedIntentId": "skill.grothendieckdelta",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-72",
+   "prompt": "compute gd for pitch sets 0 2 7 and 0 5 7",
+   "expectedIntentId": "skill.grothendieckdelta",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-73",
+   "prompt": "evaluate Cmaj tensor Amin in your grothendieck syntax",
+   "expectedIntentId": "skill.grothendieckparse",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-74",
+   "prompt": "what does F(C7 directsum Dm) return",
+   "expectedIntentId": "skill.grothendieckparse",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-75",
+   "prompt": "parse (Am ⊕ G) ⊗ C",
+   "expectedIntentId": "skill.grothendieckparse",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-76",
+   "prompt": "run this expression T(Dm7) + G7 through the category thing",
+   "expectedIntentId": "skill.grothendieckparse"
+  },
+  {
+   "id": "s-77",
+   "prompt": "can you work out tensor(Ebmaj7,Bb7)",
+   "expectedIntentId": "skill.grothendieckparse"
+  },
+  {
+   "id": "s-78",
+   "prompt": "evaluate functor phi on C ⊕ Em ⊕ G",
+   "expectedIntentId": "skill.grothendieckparse",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-79",
+   "prompt": "what chords live closest to fmaj7 in icv space",
+   "expectedIntentId": "skill.icvneighbors",
+   "tags": [
+    "jargon",
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-80",
+   "prompt": "find pitch sets harmonically nearest to 0 3 7",
+   "expectedIntentId": "skill.icvneighbors",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-81",
+   "prompt": "nearest neighbors of c diminished by interval content",
+   "expectedIntentId": "skill.icvneighbors",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-82",
+   "prompt": "what is one tiny harmonic step away from dm9",
+   "expectedIntentId": "skill.icvneighbors"
+  },
+  {
+   "id": "s-83",
+   "prompt": "give me close sounding sets around 0 1 5 8 using icv",
+   "expectedIntentId": "skill.icvneighbors",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-84",
+   "prompt": "which chords cluster near g7alt in interval vector land",
+   "expectedIntentId": "skill.icvneighbors",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-85",
+   "prompt": "shortest harmonic route from c major to f sharp minor",
+   "expectedIntentId": "skill.icvshortestpath"
+  },
+  {
+   "id": "s-86",
+   "prompt": "walk me through nearby chords linking dm7 to abmaj7",
+   "expectedIntentId": "skill.icvshortestpath"
+  },
+  {
+   "id": "s-87",
+   "prompt": "icv path 0 4 7 to 1 5 8 with the fewest hops",
+   "expectedIntentId": "skill.icvshortestpath",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-88",
+   "prompt": "what middle chords make c to ebm less of a leap in harmonic space",
+   "expectedIntentId": "skill.icvshortestpath",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-89",
+   "prompt": "route from am to db7 through nearest-neighbor sets",
+   "expectedIntentId": "skill.icvshortestpath",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-90",
+   "prompt": "connect fmaj7 and b7 using the minimum icv steps",
+   "expectedIntentId": "skill.icvshortestpath"
+  },
+  {
+   "id": "s-91",
+   "prompt": "what can i solo with over am7 d7 gmaj7",
+   "expectedIntentId": "skill.improvisation"
+  },
+  {
+   "id": "s-92",
+   "prompt": "scale choice over a static c7 vamp",
+   "expectedIntentId": "skill.improvisation",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-93",
+   "prompt": "which arpeggios work on a ii v i in eb",
+   "expectedIntentId": "skill.improvisation",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-94",
+   "prompt": "can i use d dorian while jamming on dm7 g7",
+   "expectedIntentId": "skill.improvisation",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-95",
+   "prompt": "need lead ideas over em c g d",
+   "expectedIntentId": "skill.improvisation",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-96",
+   "prompt": "what do i play over g7alt without sounding lost",
+   "expectedIntentId": "skill.improvisation",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-97",
+   "prompt": "how far is c up to a",
+   "expectedIntentId": "skill.interval",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-98",
+   "prompt": "what interval is f sharp to c",
+   "expectedIntentId": "skill.interval"
+  },
+  {
+   "id": "s-99",
+   "prompt": "is a minor third three frets",
+   "expectedIntentId": "skill.interval",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-100",
+   "prompt": "explain compound intervals like im five",
+   "expectedIntentId": "skill.interval",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-101",
+   "prompt": "name the interval from bb3 to e5",
+   "expectedIntentId": "skill.interval",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-102",
+   "prompt": "why is c to g called a perfect fifth",
+   "expectedIntentId": "skill.interval"
+  },
+  {
+   "id": "s-103",
+   "prompt": "ic vector for c e g bb",
+   "expectedIntentId": "skill.intervalclassvector",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-104",
+   "prompt": "calculate the six number vector of 0 1 4 7",
+   "expectedIntentId": "skill.intervalclassvector"
+  },
+  {
+   "id": "s-105",
+   "prompt": "whats the interval class count for a whole tone hexachord",
+   "expectedIntentId": "skill.intervalclassvector",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-106",
+   "prompt": "give me the icv of dm7",
+   "expectedIntentId": "skill.intervalclassvector",
+   "tags": [
+    "short"
+   ]
+  },
+  {
+   "id": "s-107",
+   "prompt": "does 0 3 6 9 have vector 004002",
+   "expectedIntentId": "skill.intervalclassvector",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-108",
+   "prompt": "turn f g a c into an interval class vector",
+   "expectedIntentId": "skill.intervalclassvector"
+  },
+  {
+   "id": "s-109",
+   "prompt": "am f c g what key am i probably in",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-110",
+   "prompt": "what key fits e a c#m b",
+   "expectedIntentId": "skill.keyidentification"
+  },
+  {
+   "id": "s-111",
+   "prompt": "dm g c am tells you which key",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": [
+    "short"
+   ]
+  },
+  {
+   "id": "s-112",
+   "prompt": "chords are bb cm eb f where is home",
+   "expectedIntentId": "skill.keyidentification"
+  },
+  {
+   "id": "s-113",
+   "prompt": "is this in g or em g d em c",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-114",
+   "prompt": "figure out the tonal center of f#m d a e",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-115",
+   "prompt": "what does d dorian sound like",
+   "expectedIntentId": "skill.modes"
+  },
+  {
+   "id": "s-116",
+   "prompt": "notes in c lydian please",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-117",
+   "prompt": "why is phrygian so dark sounding",
+   "expectedIntentId": "skill.modes"
+  },
+  {
+   "id": "s-118",
+   "prompt": "spell f melodic minor altered mode from g",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-119",
+   "prompt": "mixolydian vs major vibe in plain english",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "boundary",
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-120",
+   "prompt": "which mode is 1 2 b3 4 5 6 b7",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-121",
+   "prompt": "will f natural sound wrong over e major",
+   "expectedIntentId": "skill.outsidenotes"
+  },
+  {
+   "id": "s-122",
+   "prompt": "is c sharp safe on an am7 chord",
+   "expectedIntentId": "skill.outsidenotes",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-123",
+   "prompt": "why does bb sound spicy over cmaj7",
+   "expectedIntentId": "skill.outsidenotes"
+  },
+  {
+   "id": "s-124",
+   "prompt": "can i hang on an f over g7 or is that bad",
+   "expectedIntentId": "skill.outsidenotes",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-125",
+   "prompt": "does d belong over an eb minor chord",
+   "expectedIntentId": "skill.outsidenotes"
+  },
+  {
+   "id": "s-126",
+   "prompt": "is the sharp 11 considered inside on maj7",
+   "expectedIntentId": "skill.outsidenotes",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-127",
+   "prompt": "make me a 20 minute daily guitar workout",
+   "expectedIntentId": "skill.practiceroutine"
+  },
+  {
+   "id": "s-128",
+   "prompt": "how should a beginner split up an hour of practice",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-129",
+   "prompt": "routine for fixing sloppy alternate picking and weak rhythm",
+   "expectedIntentId": "skill.practiceroutine"
+  },
+  {
+   "id": "s-130",
+   "prompt": "i only get 10 mins a day what should i work on",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-131",
+   "prompt": "weekly schedule for jazz guitar comping and improv",
+   "expectedIntentId": "skill.practiceroutine"
+  },
+  {
+   "id": "s-132",
+   "prompt": "build me a practice plan before my gig next month",
+   "expectedIntentId": "skill.practiceroutine"
+  },
+  {
+   "id": "s-133",
+   "prompt": "c am f ... what chord wants to come next",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-134",
+   "prompt": "finish this loop dm bb f",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": [
+    "short"
+   ]
+  },
+  {
+   "id": "s-135",
+   "prompt": "after g7 in c where should i land",
+   "expectedIntentId": "skill.progressioncompletion"
+  },
+  {
+   "id": "s-136",
+   "prompt": "em c g needs one more chord any ideas",
+   "expectedIntentId": "skill.progressioncompletion"
+  },
+  {
+   "id": "s-137",
+   "prompt": "what follows i vi ii in a normal turnaround",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-138",
+   "prompt": "i have fmaj7 em7 dm7 whats a convincing fourth chord",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-139",
+   "prompt": "make c g am f feel more gloomy",
+   "expectedIntentId": "skill.progressionmood"
+  },
+  {
+   "id": "s-140",
+   "prompt": "how can i brighten up dm bb f c without changing the groove",
+   "expectedIntentId": "skill.progressionmood"
+  },
+  {
+   "id": "s-141",
+   "prompt": "turn this vanilla loop into something dreamy em c g d",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-142",
+   "prompt": "make a7 d7 gmaj7 sound more tense and noir",
+   "expectedIntentId": "skill.progressionmood"
+  },
+  {
+   "id": "s-143",
+   "prompt": "how would you reharmonize am f c g to feel hopeful",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-144",
+   "prompt": "give dm g c a darker color but keep the basic movement",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-145",
+   "prompt": "whats the relative minor of e major",
+   "expectedIntentId": "skill.relativekey"
+  },
+  {
+   "id": "s-146",
+   "prompt": "parallel major for c minor",
+   "expectedIntentId": "skill.relativekey"
+  },
+  {
+   "id": "s-147",
+   "prompt": "are a minor and c major related somehow",
+   "expectedIntentId": "skill.relativekey",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-148",
+   "prompt": "relative major of bb minor",
+   "expectedIntentId": "skill.relativekey",
+   "tags": [
+    "short"
+   ]
+  },
+  {
+   "id": "s-149",
+   "prompt": "difference between switching to parallel minor and relative minor",
+   "expectedIntentId": "skill.relativekey",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-150",
+   "prompt": "if the song is in f whats its relative minor key",
+   "expectedIntentId": "skill.relativekey"
+  },
+  {
+   "id": "s-151",
+   "prompt": "remember i keep my guitar in drop c",
+   "expectedIntentId": "skill.rememberthis"
+  },
+  {
+   "id": "s-152",
+   "prompt": "next time know that i hate barre chords",
+   "expectedIntentId": "skill.rememberthis",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-153",
+   "prompt": "save this my vocal range tops out at e4",
+   "expectedIntentId": "skill.rememberthis"
+  },
+  {
+   "id": "s-154",
+   "prompt": "dont forget i use left handed chord diagrams",
+   "expectedIntentId": "skill.rememberthis"
+  },
+  {
+   "id": "s-155",
+   "prompt": "keep in mind im working on jazz not metal lately",
+   "expectedIntentId": "skill.rememberthis"
+  },
+  {
+   "id": "s-156",
+   "prompt": "can you remember my band tunes everything down a half step",
+   "expectedIntentId": "skill.rememberthis"
+  },
+  {
+   "id": "s-158",
+   "prompt": "spell the eb major scale",
+   "expectedIntentId": "skill.scaleinfo"
+  },
+  {
+   "id": "s-159",
+   "prompt": "what notes make up f sharp pentatonic minor",
+   "expectedIntentId": "skill.scaleinfo"
+  },
+  {
+   "id": "s-160",
+   "prompt": "is there an a sharp in b major scale",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-161",
+   "prompt": "give me g melodic minor ascending",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-162",
+   "prompt": "whats the formula for the blues scale in c",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-163",
+   "prompt": "are 0 1 4 and 0 3 4 the same set class",
+   "expectedIntentId": "skill.settheoryequivalence",
+   "tags": [
+    "jargon",
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-164",
+   "prompt": "do c e g and f a c belong to one forte type",
+   "expectedIntentId": "skill.settheoryequivalence"
+  },
+  {
+   "id": "s-165",
+   "prompt": "is set 0 2 5 7 equivalent to 0 3 5 8 under tn or tni",
+   "expectedIntentId": "skill.settheoryequivalence",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-166",
+   "prompt": "same pc set class or not c db g versus f b c",
+   "expectedIntentId": "skill.settheoryequivalence",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-167",
+   "prompt": "compare 0146 and 0256 for set-class identity",
+   "expectedIntentId": "skill.settheoryequivalence",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-168",
+   "prompt": "does inversion make these equivalent 0 1 5 and 0 4 5",
+   "expectedIntentId": "skill.settheoryequivalence"
+  },
+  {
+   "id": "s-169",
+   "prompt": "whats the difference between a mode and a scale",
+   "expectedIntentId": "skill.theorycomparison",
+   "tags": [
+    "boundary",
+    "beginner"
+   ]
+  },
+  {
+   "id": "s-170",
+   "prompt": "sus4 vs add11 why arent they the same",
+   "expectedIntentId": "skill.theorycomparison"
+  },
+  {
+   "id": "s-171",
+   "prompt": "compare modulation and tonicization",
+   "expectedIntentId": "skill.theorycomparison",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-172",
+   "prompt": "how is a chord inversion different from a drop 2 voicing",
+   "expectedIntentId": "skill.theorycomparison",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-173",
+   "prompt": "relative minor vs parallel minor explain it simply",
+   "expectedIntentId": "skill.theorycomparison",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-174",
+   "prompt": "whats different about harmonic minor and melodic minor",
+   "expectedIntentId": "skill.theorycomparison"
+  },
+  {
+   "id": "s-175",
+   "prompt": "move c am f g into e",
+   "expectedIntentId": "skill.transpose"
+  },
+  {
+   "id": "s-176",
+   "prompt": "take dm up three semitones",
+   "expectedIntentId": "skill.transpose"
+  },
+  {
+   "id": "s-177",
+   "prompt": "song is in a but singer needs it in f sharp convert the chords",
+   "expectedIntentId": "skill.transpose"
+  },
+  {
+   "id": "s-178",
+   "prompt": "transpose eb bb cm ab down a whole step",
+   "expectedIntentId": "skill.transpose"
+  },
+  {
+   "id": "s-179",
+   "prompt": "what does g d em c become in bb no capo",
+   "expectedIntentId": "skill.transpose",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-180",
+   "prompt": "shift this ii v i from c to db dm7 g7 cmaj7",
+   "expectedIntentId": "skill.transpose",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-181",
+   "prompt": "how can each note move smoothly from cmaj7 to f#m7b5",
+   "expectedIntentId": "skill.voiceleading"
+  },
+  {
+   "id": "s-182",
+   "prompt": "show the smallest movements between dm7 and g7",
+   "expectedIntentId": "skill.voiceleading",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-183",
+   "prompt": "which voices should rise or fall going am to f",
+   "expectedIntentId": "skill.voiceleading"
+  },
+  {
+   "id": "s-184",
+   "prompt": "connect c e g b to d f a c without jumpy parts",
+   "expectedIntentId": "skill.voiceleading"
+  },
+  {
+   "id": "s-185",
+   "prompt": "need parsimonious motion from ebmaj7 into a7alt",
+   "expectedIntentId": "skill.voiceleading",
+   "tags": [
+    "jargon"
+   ]
+  },
+  {
+   "id": "s-186",
+   "prompt": "make g13 resolve into cmaj9 with smooth inner lines",
+   "expectedIntentId": "skill.voiceleading",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-187",
+   "prompt": "what sort of guitar questions can you help with",
+   "expectedIntentId": "skill.whatcanyoudo"
+  },
+  {
+   "id": "s-189",
+   "prompt": "give me the quick tour of what you know",
+   "expectedIntentId": "skill.whatcanyoudo"
+  },
+  {
+   "id": "s-190",
+   "prompt": "are you just for chords or can you do other theory stuff",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": [
+    "chatty"
+   ]
+  },
+  {
+   "id": "s-191",
+   "prompt": "what are your guitar superpowers lol",
+   "expectedIntentId": "skill.whatcanyoudo"
+  },
+  {
+   "id": "s-192",
+   "prompt": "help menu pls what do you handle",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": [
+    "typo"
+   ]
+  },
+  {
+   "id": "s-193",
+   "prompt": "is it gonna rain in toronto tomorrow",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-194",
+   "prompt": "how long should i boil an egg",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-195",
+   "prompt": "fix this javascript promise bug",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-196",
+   "prompt": "cheap hotels near the vatican",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-197",
+   "prompt": "who won the hockey game last night",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-198",
+   "prompt": "why is the sky blue",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-199",
+   "prompt": "translate good morning into japanese",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-200",
+   "prompt": "best way to clean a cast iron pan",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-201",
+   "prompt": "write me a workout for running a 5k",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos",
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-202",
+   "prompt": "whats the capital of mongolia",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-203",
+   "prompt": "how do mortgages work im confused",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-204",
+   "prompt": "good birthday gift for my sister",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-205",
+   "prompt": "can dogs eat blueberries",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-206",
+   "prompt": "make this email sound less rude",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-207",
+   "prompt": "why does my car shake when braking",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-208",
+   "prompt": "plan a weekend in montreal",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-209",
+   "prompt": "explain photosynthesis to a 10 year old",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-210",
+   "prompt": "how many ounces are in 2 liters",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-211",
+   "prompt": "what time is it in berlin",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-212",
+   "prompt": "help me name my new kitten",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-213",
+   "prompt": "is chess boxing a real sport",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-214",
+   "prompt": "whats a good password manager",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-215",
+   "prompt": "how do i unclog a bathroom sink",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-217",
+   "prompt": "which strings should i buy for my tele",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos",
+    "boundary"
+   ]
+  },
+  {
+   "id": "s-218",
+   "prompt": "best small tube amp for apartment volume",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-219",
+   "prompt": "who was the first guitarist in deep purple",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-220",
+   "prompt": "give me the lyrics to hotel california",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-221",
+   "prompt": "how should i mic my acoustic at home",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-222",
+   "prompt": "why is my mix muddy when the guitars come in",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-223",
+   "prompt": "is that vintage fuzz pedal worth the money",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "s-224",
+   "prompt": "tell me about hendrix at woodstock",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  }
+ ]
+}

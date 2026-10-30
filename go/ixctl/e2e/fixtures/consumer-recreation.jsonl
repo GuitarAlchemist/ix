@@ -1,0 +1,6 @@
+{"step":"stopped","env":{"ch":"ctl","seq":9,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072235,"ev":{"kind":"probe.stopped","t":1792554072235,"data":{"kind":"heartbeat@1","node":"hb","reason":"requested"}}}}
+{"step":"removed","env":{"ch":"ctl","seq":10,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072236,"ev":{"kind":"probe.removed","t":1792554072236,"data":{"kind":"heartbeat@1","node":"hb","reason":"removed"}}}}
+{"step":"recreated","env":{"ch":"ctl","seq":11,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072236,"ev":{"kind":"probe.created","t":1792554072236,"data":{"kind":"heartbeat@1","node":"hb"}}}}
+{"step":"recreated","env":{"ch":"ctl","seq":12,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072236,"ev":{"kind":"probe.started","t":1792554072236,"data":{"kind":"heartbeat@1","node":"hb"}}}}
+{"step":"recreated","env":{"ch":"probe/hb","seq":13,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072246,"ev":{"kind":"sample","t":1792554072246,"data":{"kind":"heartbeat@1","n":1,"node":"hb","seq":1}}}}
+{"step":"recreated","env":{"ch":"probe/hb","seq":14,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072256,"ev":{"kind":"sample","t":1792554072256,"data":{"kind":"heartbeat@1","n":2,"node":"hb","seq":2}}}}
