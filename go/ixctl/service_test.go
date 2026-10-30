@@ -410,18 +410,23 @@ func TestTheInstallPlanIsExplicitAndStoresNoSecret(t *testing.T) {
 			t.Errorf("plan lacks section %q", section)
 		}
 	}
-	// sc.exe stop only asks; Stop-Service returns once the service is stopped, and fails (which
-	// ends the section) when it cannot stop it.
-	if strings.Contains(p, "sc.exe stop") || strings.Count(p, "Stop-Service ixctl\n") != 2 {
-		t.Errorf("a stop is not waited for:\n%s", p)
+	// sc.exe start and stop only ask: each is followed by a bounded wait for the state, whose
+	// timeout ends the section.
+	stop := "Stop-Service ixctl -NoWait\n(Get-Service ixctl).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))\n"
+	start := "sc.exe start ixctl\n(Get-Service ixctl).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))\n"
+	if strings.Contains(p, "sc.exe stop") || strings.Count(p, stop) != 2 || !strings.Contains(p, start) {
+		t.Errorf("a start or a stop is not waited for:\n%s", p)
 	}
-	for _, section := range []string{"# install", "# uninstall"} {
+	if !strings.Contains(p, "PowerShell 7.4 or later") {
+		t.Errorf("the plan does not name PowerShell 7.4, where native errors can stop a script:\n%s", p)
+	}
+	for _, section := range []string{"# install", "# start", "# status", "# stop", "# uninstall"} {
 		if !strings.HasPrefix(p[strings.Index(p, section):], section+"\n"+prefs+"\n") {
 			t.Errorf("section %s does not stop at its first failure:\n%s", section, p)
 		}
 	}
 	un := p[strings.Index(p, "# uninstall"):]
-	if strings.Index(un, "Stop-Service ixctl") > strings.Index(un, "sc.exe delete ixctl") {
+	if strings.Index(un, "WaitForStatus('Stopped'") > strings.Index(un, "sc.exe delete ixctl") {
 		t.Errorf("uninstall deletes before it stops:\n%s", p)
 	}
 }

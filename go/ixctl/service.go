@@ -189,6 +189,9 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 			return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
 		case <-tick.C:
 			left := time.Until(deadline)
+			if left <= 0 { // the bound fired too: never report a negative wait hint
+				return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
+			}
 			checkpoint++
 			set(hostStatus{State: hostStopPending, Checkpoint: checkpoint, WaitHint: left})
 		case c := <-controls:
@@ -405,12 +408,23 @@ func installPlan(o planOptions) string {
 		o.exe, svcSpec, o.dir, o.service)
 	var b strings.Builder
 	w := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
-	w("# ixctl as a Windows service: run these in an elevated PowerShell 7.3 or later (the nested quotes")
-	w("# of binPath need its native argument passing), in order. ixctl runs none of them.")
+	w("# ixctl as a Windows service: run these in an elevated PowerShell 7.4 or later, one section at a")
+	w("# time, in order (7.4 stops a section at a failed native command; the nested quotes of binPath")
+	w("# need its native argument passing). ixctl runs none of them.")
 	w("# account: %s (virtual: no password stored, its own SID; on the network it is the computer)", acct)
 	w("# listens on loopback only; state, journal and log in %s; log bounded to 2 x %d MiB", o.dir, serviceLogMax>>20)
-	// A section that chains steps stops at its first failure, a native command's included.
+	// Every section stops at its first failure, a native command's or a timed-out wait's included.
 	prefs := "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true"
+	// sc.exe start and stop only ask: each is followed by a bounded wait for the state. A start
+	// that fails in its setup ends stopped, so the wait for running times out; the host bounds its
+	// own stop by --stop-timeout (30 s), well inside the wait for stopped.
+	waitFor := func(state string, s int) {
+		w(`(Get-Service %s).WaitForStatus('%s', [TimeSpan]::FromSeconds(%d))`, o.service, state, s)
+	}
+	stop := func() {
+		w(`Stop-Service %s -NoWait`, o.service)
+		waitFor("Stopped", 60)
+	}
 	w("")
 	w("# install")
 	w("%s", prefs)
@@ -428,22 +442,24 @@ func installPlan(o planOptions) string {
 		o.dir, acct, o.clientUser)
 	w("")
 	w("# start")
+	w("%s", prefs)
 	w(`sc.exe start %s`, o.service)
+	waitFor("Running", 30)
 	w("")
 	w("# status")
+	w("%s", prefs)
 	w(`sc.exe query %s`, o.service)
 	w(`Get-Content "%s\%s.json"   # addr and token: the service, SYSTEM, Administrators and %s read it`, o.dir, o.name, o.clientUser)
 	w(`Get-Content -Tail 20 "%s\%s.service.log"`, o.dir, o.name)
-	// sc.exe stop only asks; Stop-Service returns once the service is stopped (the host bounds
-	// its own stop by --stop-timeout, 30 s) and fails when it cannot stop it.
 	w("")
 	w("# stop")
-	w(`Stop-Service %s`, o.service)
+	w("%s", prefs)
+	stop()
 	w("")
 	w("# uninstall")
 	w("%s", prefs)
 	w("# the way back: stop first, and wait for it")
-	w(`Stop-Service %s`, o.service)
+	stop()
 	w(`sc.exe delete %s`, o.service)
 	w(`Remove-Item -Recurse "%s"   # after reading what it holds: journal and log`, o.dir)
 	w(`Remove-Item "%s"`, o.exe)

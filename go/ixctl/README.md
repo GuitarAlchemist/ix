@@ -626,12 +626,15 @@ and uninstall commands for an elevated PowerShell; ixctl runs none of them. The 
 virtual account `NT SERVICE\ixctl` (no password stored), a manual start, no automatic restart (a
 restarted plane starts from its spec, not from what it was running), loopback only, and a state
 directory under `C:\ProgramData\ixctl` whose ACL gives read to the one client user named, who reads
-the token there. A stop is `Stop-Service`, which returns once the service is stopped (`sc.exe stop`
-only asks); the install and uninstall sections open with `$ErrorActionPreference = 'Stop'` and
-`$PSNativeCommandUseErrorActionPreference = $true`, so they end at their first failure, a native
-command's included. The plan reads the spec for the instance name, and names the spec and the
-binary that printed it by absolute paths. A test checks its contents, but nothing of it has been
-run on an installed Windows yet. The service account has no Claude credentials, so work that needs them stays in an
+the token there. It needs PowerShell 7.4 or later: every section opens with
+`$ErrorActionPreference = 'Stop'` and `$PSNativeCommandUseErrorActionPreference = $true`, so it ends
+at its first failure, a native command's included. A start or a stop only asks the SCM, so each is
+followed by a bounded `WaitForStatus` (30 s for running, 60 s for stopped) whose timeout ends the
+section: a service that fails in its setup ends stopped and the start's wait says so. The plan
+reads the spec for the instance name, and names the spec and the binary that printed it by
+absolute paths. A test checks its contents, but nothing of it has been run on an installed Windows
+yet. Known limit: the stop bound runs from the request, but the host writes its reports, events
+and log lines on the same goroutine, so a log write that never returns holds the host past it. The service account has no Claude credentials, so work that needs them stays in an
 `ixctl up` of the user's session, a peer of the service.
 
 ## Gate

@@ -670,12 +670,16 @@ ixctl n'en exécute aucune. Le plan utilise le compte virtuel `NT SERVICE\ixctl`
 enregistré), un démarrage manuel, aucun redémarrage automatique (un plan redémarré part de sa spec,
 pas de ce qu'il faisait tourner), la boucle locale seulement, et un répertoire d'état sous
 `C:\ProgramData\ixctl` dont l'ACL donne la lecture au seul utilisateur client nommé, qui y lit le
-jeton. Un arrêt est `Stop-Service`, qui rend la main une fois le service arrêté (`sc.exe stop` ne
-fait que demander) ; les sections d'installation et de désinstallation s'ouvrent sur
-`$ErrorActionPreference = 'Stop'` et `$PSNativeCommandUseErrorActionPreference = $true`, et
-s'arrêtent donc au premier échec, celui d'une commande native compris. Le plan lit la spec pour le
-nom de l'instance, et désigne la spec et le binaire qui l'a affiché par des chemins absolus. Un test
-en vérifie le contenu, mais rien n'en a encore été exécuté sur un Windows installé. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
+jeton. Il demande PowerShell 7.4 ou plus : chaque section s'ouvre sur
+`$ErrorActionPreference = 'Stop'` et `$PSNativeCommandUseErrorActionPreference = $true`, et s'arrête
+donc au premier échec, celui d'une commande native compris. Un démarrage ou un arrêt ne fait que
+demander au SCM : chacun est suivi d'un `WaitForStatus` borné (30 s pour running, 60 s pour stopped)
+dont l'expiration termine la section ; un service qui échoue dans sa préparation finit arrêté, et
+l'attente du démarrage le dit. Le plan lit la spec pour le nom de l'instance, et désigne la spec et
+le binaire qui l'a affiché par des chemins absolus. Un test en vérifie le contenu, mais rien n'en a
+encore été exécuté sur un Windows installé. Limite connue : la borne d'arrêt part de la demande,
+mais l'hôte écrit ses rapports, ses événements et son journal sur la même goroutine, de sorte qu'une
+écriture du journal qui ne revient jamais retient l'hôte au-delà de la borne. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
 `ixctl up` de la session de l'utilisateur, pair du service.
 
 ## Barrière
