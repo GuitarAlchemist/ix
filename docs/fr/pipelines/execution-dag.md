@@ -355,6 +355,31 @@ renvoie `rows: [{"b": "it's", "total": 4.0, "label": "quote"}, {"b": "x", "total
 - **Nombres.** DuckDB imprime les valeurs HUGEINT, UBIGINT et DECIMAL en chaînes, qui gardent tous leurs chiffres, et un DOUBLE sous sa forme décimale la plus courte, qui se relit comme le même double. Dans une LIST ou un STRUCT, il imprime les valeurs HUGEINT, UBIGINT et DECIMAL en nombres : un résultat qui en contient un qui perdrait des chiffres en double JSON (au-delà de 64 bits, ou plus de chiffres qu'un double n'en garde) est refusé plutôt qu'arrondi. Convertissez-le en VARCHAR dans le SQL.
 - **Résultats vides.** DuckDB imprime un résultat vide sans ses noms de colonnes ; le script est donc exécuté une seconde fois pour les lire. Si une requête dont le résultat varie d'une exécution à l'autre (avec `random()`, par exemple) renvoie des lignes la seconde fois, `columns` reste vide plutôt que deviné.
 
+## Les volets du terminal en lignes (`ix_wmux_snapshot`)
+
+`ix_wmux_snapshot` (`wmux.snapshot`) lit le multiplexeur de terminaux wmux dans lequel tourne le pipeline et répond par des lignes : `workspaces`, `surfaces` (une par onglet terminal, navigateur, markdown ou diff, avec son volet, son titre, le nom du dossier de travail des terminaux (jamais son chemin), l'id de session Claude et l'état de l'agent), `agents` (les agents d'arrière-plan lancés par wmux) et `counts`. Il ne prend aucun argument et relève du Tier 1 : il n'exécute que les verbes de lecture de wmux (`sidebar-state`, `tree`, `agent-state`, `agent list`) et ne garde qu'une liste blanche de champs dont il vérifie les valeurs : les ids, les états et les nombres ne sortent que sous leur propre forme, sinon comme `null`, si bien qu'aucun contenu d'écran, corps markdown, chemin de fichier ni ligne de commande n'en sort. Les titres, libellés, noms de dossier et la raison d'un blocage sont du texte libre que l'opérateur a écrit ou qu'il lit, ils gardent donc leurs mots, masqués aussi bien qu'un filtre le peut : les URL et les paires `host:port` deviennent `<url>`, les chemins (`C:notes.txt` compris) `<path>`, les mots qui ont la forme d'un secret et le mot qui suit `token`, `key`, `secret`, `pass`, `auth` ou `Bearer` deviennent `***`, et chacun est tronqué à 80 caractères (300 pour une raison), plus des points de suspension. Ce masquage est au mieux : un secret tapé comme un mot ordinaire dans un titre peut encore sortir. Un seul budget, 10 s et 8 Mio, borne tout l'appel, recherche et démarrage du client compris ; un client qui démarre après l'échéance est tué. Un descendant du client qui garde sa sortie ouverte n'est pas tué, et ses fils de lecture restent en place jusqu'à ce qu'il la ferme ; un client que le système refuse de tuer lui est laissé plutôt qu'attendu. Dans wmux, il lance le client Node injecté par wmux (`WMUX_CLI`), sans shell ; ailleurs, il trouve le `wmux` du `PATH` (un script `.cmd` ou `.ps1` sous Windows, un chemin `.cmd` ou `.bat` contenant `%` étant refusé), ou définissez `IX_WMUX_BIN`.
+
+Ses lignes passent directement en SQL. Ce pipeline liste les volets qui attendent quelqu'un :
+
+```json
+{
+  "steps": [
+    { "id": "snap", "tool": "ix_wmux_snapshot", "arguments": {} },
+    {
+      "id": "blocked",
+      "tool": "ix_duckdb_query",
+      "depends_on": ["snap"],
+      "arguments": {
+        "sql": "SELECT workspace_title, title, blocked_reason FROM surfaces WHERE agent_state = 'blocked' ORDER BY workspace_title",
+        "tables": { "surfaces": "$snap.surfaces" }
+      }
+    }
+  ]
+}
+```
+
+Sur l'instantané capturé pour les tests (anonymisé), `blocked` renvoie deux lignes, dont un terminal sans titre (`"title": null`). La requête est épinglée par `crates/ix-agent/src/skills/wmux.rs::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes`.
+
 ---
 
 ## Pour aller plus loin
