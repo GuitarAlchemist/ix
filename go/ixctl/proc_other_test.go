@@ -82,3 +82,7 @@ func pidAlive(pid int) bool {
 	}
 	return true
 }
+
+// leaveTree makes cmd the leader of a session of its own, as a daemonising descendant does: it
+// leaves the plane's process group, so a group kill does not reach it.
+func leaveTree(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
