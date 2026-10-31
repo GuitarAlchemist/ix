@@ -592,6 +592,54 @@ appends are not `fsync`ed, write errors are ignored, and a crash can cut the las
 boot's header then starts a line of its own), so no record is a commit point; durable restoration would be a separate contract that announces itself
 (door 3).
 
+## Windows service
+
+`ixctl service run <spec.json> --state DIR` hosts one instance for a service manager: the Windows
+SCM when the SCM started the process, else the console (an interrupt is a stop). It is the same
+instance as `ixctl up`, with its lock, token, loopback listener and job objects. What the host adds:
+
+- **States.** It reports `start-pending`, then `running` once the instance serves (stop and shutdown
+  accepted), then `stop-pending` with a growing checkpoint and the time left as wait hint, then
+  `stopped`. Exit codes, service-specific: 0 a stop observed; 1 the instance did not start; 2 the
+  name is held by a running instance (nothing is reported running); 3 the trees were not seen gone
+  within `--stop-timeout` (default 30 s), or a tree still held a process when the supervisor
+  stopped waiting for it — the process exits all the same and the jobs close with it, which kills
+  what is left, but the host does not claim it saw it. On the console the process exits with the
+  same code. Under the SCM, the spec, the state directory and the log are opened after the SCM is
+  connected, so a failure there is code 1 the SCM sees.
+- **A stop in three moments.** `host.stop` on `ctl` with `phase: requested` (the control reached
+  the host; `source` is `scm`, `signal` or `api` for `/v1/shutdown`), then `phase: received` (the
+  plane admits nothing more: an apply answers 503), both before any service stops; then `observed`
+  (every tree seen gone within the bound, with `ms`) or `unobserved` (with `bound_ms` or
+  `trees_not_seen_gone`), in the log only, since the journal is closed by then. For `api` the plane
+  closed its admissions when it took the request, before the host saw it: there an apply may get
+  503 before either event.
+- **Log.** `<name>.service.log` in the state directory, one JSON object per line (`host.ready`,
+  `host.refused`, `host.failed`, `host.stop`), never the token; bounded to two files of 4 MiB
+  (`.service.log` and `.service.log.1`).
+- **After a crash.** The jobs die with the host. The next start draws a new epoch, at generation 0,
+  as any restart does (see Journal): what the dead host was asked to run is not run again, and a
+  run cut by the crash stays the effect run/1 calls `unknown`, for a person or a client to reconcile.
+
+`ixctl service plan --spec FILE --client-user DOMAIN\USER` prints the install, start, status, stop
+and uninstall commands for an elevated PowerShell; ixctl runs none of them. The plan uses the
+virtual account `NT SERVICE\ixctl` (no password stored), a manual start, no automatic restart (a
+restarted plane starts from its spec, not from what it was running), loopback only, and a state
+directory under `C:\ProgramData\ixctl` whose ACL gives read to the one client user named, who reads
+the token there. It needs PowerShell 7.4 or later: every section opens with
+`$ErrorActionPreference = 'Stop'` and `$PSNativeCommandUseErrorActionPreference = $true`, so it ends
+at its first failure, a native command's included. A start or a stop only asks the SCM, so each is
+followed by a bounded `WaitForStatus` (30 s for running, 60 s for stopped) whose timeout ends the
+section: a service that fails in its setup ends stopped and the start's wait says so. The plan
+reads the spec for the instance name, and names the spec and the binary that printed it by
+absolute paths. A test checks its contents; its install, start and status sections ran once on
+Windows 11 (2026-10-31), its stop and uninstall not yet. `--delta-journal FILE` on both commands
+gives the service Delta's journal for the `delta@1` probe kind, as `ixctl up --delta-journal`
+does: the plan passes it in the service's command line, grants the service account read on that
+one file, and takes the grant back at uninstall. Known limit: the stop bound runs from the request, but the host writes its reports, events
+and log lines on the same goroutine, so a log write that never returns holds the host past it. The service account has no Claude credentials, so work that needs them stays in an
+`ixctl up` of the user's session, a peer of the service.
+
 ## Gate
 
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust

@@ -924,6 +924,16 @@ func (p *Plane) RequestShutdown() {
 	})
 }
 
+// TreesNotSeenGone counts the runs, over this boot, whose tree still held a process when the
+// supervisor stopped waiting for it.
+func (p *Plane) TreesNotSeenGone() int64 {
+	var n int64
+	for _, s := range p.svcs {
+		n += s.notGone.Load()
+	}
+	return n
+}
+
 // Quit is closed once a shutdown has been requested.
 func (p *Plane) Quit() <-chan struct{} { return p.quit }
 

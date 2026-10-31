@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -102,6 +103,9 @@ type service struct {
 	spec ServiceSpec
 	hub  *Hub
 	ch   string
+	// notGone counts the runs whose tree still held a process at treeGoneLimit (then killed
+	// with its job, not seen gone).
+	notGone atomic.Int64
 
 	mu        sync.Mutex
 	desired   string
@@ -584,7 +588,9 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 	c := s.proc
 	c.stdin.Close()
 	c.tree.kill()
-	c.tree.waitGone(treeGoneLimit)
+	if !treeGone(c.tree, treeGoneLimit) {
+		s.notGone.Add(1)
+	}
 	c.tree.drain(monitorLimit)
 	if reason == "" && !requested {
 		select {
@@ -679,6 +685,9 @@ func (s *service) exitData(pid int, requested bool, e *exitInfo) map[string]any 
 	}
 	return d
 }
+
+// treeGone waits for a tree's processes to be gone (a test seam).
+var treeGone = (*procTree).waitGone
 
 // stopTree is a requested stop: close stdin, give the tree stopGrace to
 // leave, then kill all of it. generation is the stop's apply's (0 for a shutdown).
