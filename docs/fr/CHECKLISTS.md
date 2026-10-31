@@ -272,3 +272,18 @@ des quatre copies étaient périmées avant que Codex ne les lise.
    marqueurs, les sorties récentes, la fédération et les résultats d'apply manquaient encore ; une
    revue adverse l'a vu, et `TestStatusWithholdsTheRunContractUntilItShips` épingle l'absence
    jusqu'à la dernière tranche (N1, #444).
+
+## Écrire dans un dépôt que d'autres lisent
+
+Un fichier qu'une personne a accepté, qu'une exécution a publié ou qu'un autre processus relit (une
+bibliothèque, un reçu, un résultat validé) est un état partagé, même quand un seul processus
+l'écrit.
+
+1. Le créer avec `create_new` (`OpenOptions::new().write(true).create_new(true)`), pas
+   `fs::write` : un nom déjà pris devient alors un conflit visible, jamais un remplacement
+   silencieux. Vérifier d'abord la présence du fichier puis écrire laisse une fenêtre à un autre
+   écrivain. `Store::accept` d'`ix-loop` remplaçait ainsi une boucle acceptée jusqu'à ce que
+   l'inventaire de ix#485 le trouve.
+2. Remplacer volontairement est une opération à part, nommée, que le relecteur voit dans le diff.
+3. Une écriture refusée laisse son entrée où elle était (la proposition reste en attente) : rien
+   n'est perdu.
