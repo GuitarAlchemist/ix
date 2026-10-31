@@ -131,6 +131,16 @@ def wait_until(pred, timeout, step=0.01):
         time.sleep(step)
 
 
+def caught_up(nodes, mux, child):
+    """E18: whether a probe list (`nodes` by name) is one to compare a mux's bytes with its only
+    child's on. A child's record is counted under the tree's lock, released before the mux
+    republishes it, so a list can fall between the two (ubuntu CI, run 40987881936). On a list
+    where the mux's seq equals the child's, the mux has republished every record of it; the
+    window itself is reproduced on the plane by TestBytesAreComparedOnAListWhereTheMux...."""
+    c, m = nodes.get(child) or {}, nodes.get(mux) or {}
+    return bool(c.get("bytes")) and m.get("seq") == c.get("seq")
+
+
 # --- building ---------------------------------------------------------------------------------
 
 
@@ -141,7 +151,7 @@ def build():
                    cwd=str(REPO / "go" / "ixctl"), check=True)
     env = {**os.environ, "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_INCREMENTAL": "0"}
     r = subprocess.run(["cargo", "build", "-q", "-p", "ix-stream", "--example", "pod",
-                        "-p", "ix-ctl", "--example", "ixql-ctl", "-p", "ix-skill", "--bin", "ix",
+                        "-p", "ix-ctl", "--example", "ixql-ctl", "-p", "ix-cli", "--bin", "ix",
                         "--message-format=json"],
                        cwd=str(REPO), env=env, check=True, capture_output=True)
     copied = []
@@ -1172,7 +1182,7 @@ def run():
     def listed():
         _, tb = call(sa, "GET", "/v1/probe")
         nb = {n["name"]: n for n in (tb or {}).get("nodes", [])}
-        return (tb, nb) if (nb.get("bud-0") or {}).get("bytes") else None
+        return (tb, nb) if caught_up(nb, "bud", "bud-0") else None
     found, _ = wait_until(listed, 5)
     tree_b, nodes_b = found if found else (call(sa, "GET", "/v1/probe")[1], {})
     mux_b, leaf_b = nodes_b.get("bud", {}), nodes_b.get("bud-0", {})

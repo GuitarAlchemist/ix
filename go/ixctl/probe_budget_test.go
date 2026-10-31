@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -263,6 +264,66 @@ func TestBytesEmittedAreCountedPerNode(t *testing.T) {
 	}
 	if aggBytes < hbBytes {
 		t.Fatalf("agg republished hb's records with src: %d bytes, hb %d", aggBytes, hbBytes)
+	}
+}
+
+// E18 (ubuntu CI, run 40987881936): a child's record is counted under the tree's lock, which is
+// released before its mux republishes the record, so a list can fall between the two and see the
+// child a record ahead. This test makes the window happen on the plane and checks the condition
+// E18 waits for (e2e.caught_up, tested itself in e2e/test_e2e.py): on a list where the mux has
+// republished every record of its only child (equal seqs), the mux's bytes are at least the
+// child's, since each republished record carries `src` beside the same fields.
+func TestBytesAreComparedOnAListWhereTheMuxHasCaughtUpWithItsChild(t *testing.T) {
+	p := probePlane(t)
+	held, release := make(chan struct{}), make(chan struct{})
+	var hold, free sync.Once
+	t.Cleanup(func() { free.Do(func() { close(release) }) })
+	p.probes.forwarding = func(string) { hold.Do(func() { close(held); <-release }) }
+	mustCreate(t, p, node("bud", "mux@1", 0, map[string]any{"max_rate_per_s": 150}))
+	mustCreate(t, p, node("bud-0", "heartbeat@1", 10, map[string]any{"parent": "bud"}))
+	for _, name := range []string{"bud", "bud-0"} {
+		if _, err := probeOp(t, p, Request{Op: "probe.start", Node: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bud-0 emitted nothing in 5 s")
+	}
+	pair := func(tree budgetTree) (leafSeq, leafBytes, muxSeq, muxBytes uint64) {
+		for _, n := range tree.Nodes {
+			switch n.Name {
+			case "bud-0":
+				leafSeq, leafBytes = n.Seq, n.Bytes
+			case "bud":
+				muxSeq, muxBytes = n.Seq, n.Bytes
+			}
+		}
+		return
+	}
+	settled := func(tree budgetTree) bool {
+		leafSeq, leafBytes, muxSeq, _ := pair(tree)
+		return leafBytes > 0 && muxSeq == leafSeq
+	}
+
+	// The window, as CI saw it: bud-0 at seq 1 with its bytes, bud at seq 0 with none.
+	tree := listTree(t, p)
+	if ls, lb, ms, mb := pair(tree); ls != 1 || lb == 0 || ms != 0 || mb != 0 {
+		t.Fatalf("not the window: bud-0 seq %d bytes %d, bud seq %d bytes %d", ls, lb, ms, mb)
+	}
+	if settled(tree) {
+		t.Fatal("a list with bud-0 ahead of bud is not one to compare their bytes on")
+	}
+
+	free.Do(func() { close(release) })
+	deadline := time.Now().Add(5 * time.Second)
+	for tree = listTree(t, p); !settled(tree) && time.Now().Before(deadline); tree = listTree(t, p) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	ls, lb, ms, mb := pair(tree)
+	if !settled(tree) || mb < lb {
+		t.Fatalf("bud-0 seq %d bytes %d, bud seq %d bytes %d: want bud caught up and its bytes >= bud-0's", ls, lb, ms, mb)
 	}
 }
 

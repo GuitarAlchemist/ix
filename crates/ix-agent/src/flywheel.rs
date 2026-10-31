@@ -208,7 +208,7 @@ pub fn session_to_trace(log: &SessionLog, trace_id: Option<String>) -> Result<Tr
 /// a directory, a symlink or junction, or a read-only file is refused.
 ///
 /// Returns the written file path so callers can hand it straight to
-/// [`crate::handlers::trace_ingest`] (or its skill wrapper).
+/// [`crate::handlers::trace_ingest`] (or its tool wrapper).
 pub fn export_session_to_trace_dir(
     log: &SessionLog,
     trace_dir: &Path,

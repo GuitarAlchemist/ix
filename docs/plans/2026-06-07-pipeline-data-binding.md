@@ -15,7 +15,7 @@ Make the already-declared-but-dead `PipelineSpec.params` field live, via a
 overridden by run-time `ix pipeline run --param NAME=<json|@file>` (overrides
 win). A referenced param with no value (no default / `null` default / no
 override) is a hard error **before any stage executes** — never silently passed
-to a skill.
+to a tool.
 
 This is distinct from `{"from": "stage"}` (resolved against an upstream stage's
 *output* during execution). Params carry data the NL request didn't provide
@@ -37,7 +37,7 @@ prompt enables):
   spawns it) → `compile::execute_and_narrate` binds **first** (before the
   governance gate and execution). Both `run` and `compile` take `--param`. With
   no `--param`, an unbound `{param}` is a hard "missing required param" error
-  before any stage — never a `{"param":...}` blob handed to a skill. (The MCP
+  before any stage — never a `{"param":...}` blob handed to a tool. (The MCP
   tool plumbs no `--param` yet, so a `{param}` spec run via MCP fails closed; a
   params channel on the MCP surface is a follow-up.)
 
@@ -50,9 +50,9 @@ still needs as `params_needed`, so the caller knows what to supply.
 
 ## Considered alternatives
 
-- **Source skills** (`load_csv`/`fetch_url`): adds a file/URL read side-effect +
+- **Source tools** (`load_csv`/`fetch_url`): adds a file/URL read side-effect +
   governance/approval surface; the finding explicitly says the fix is a binding
-  mechanism, not more skills. Deferred.
+  mechanism, not more tools. Deferred.
 - **`${params.NAME}` string interpolation** (the field's original reserved
   design): string-only, so it cannot carry a JSON *matrix* — insufficient for
   data binding. Left reserved, unbuilt.

@@ -1,6 +1,6 @@
-//! Shared type lattice for the ix skill registry.
+//! Shared type lattice for the ix tool registry.
 //!
-//! Every `#[ix_skill]`-annotated function accepts and returns values that
+//! Every `#[ix_tool]`-annotated function accepts and returns values that
 //! serialize through this crate's [`Value`] enum. Socket compatibility between
 //! pipeline nodes is checked via [`SocketType`], and governance verdicts flow
 //! through [`Tetravalent`]. The [`FromValue`] / [`IntoValue`] trait pair is the
@@ -271,7 +271,7 @@ impl std::fmt::Display for Hexavalent {
     }
 }
 
-/// Universal value lattice. All skill inputs and outputs are carried through
+/// Universal value lattice. All tool inputs and outputs are carried through
 /// this enum when they cross the registry boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "data")]
@@ -329,7 +329,7 @@ impl SocketType {
 }
 
 /// Type-mismatch error raised when a `Value` cannot be decoded as the expected
-/// native type by a skill adapter.
+/// native type by a tool adapter.
 #[derive(Debug, Error)]
 #[error("type mismatch: expected {expected:?}, got {actual}")]
 pub struct TypeError {
@@ -356,7 +356,7 @@ impl Value {
 }
 
 // ---------------------------------------------------------------------------
-// Newtypes wrapping ndarray for pipeline transport. Skills should use these
+// Newtypes wrapping ndarray for pipeline transport. Tools should use these
 // in their signatures rather than raw ndarray types so the macro can emit
 // concrete `FromValue`/`IntoValue` calls without orphan-rule issues.
 // ---------------------------------------------------------------------------

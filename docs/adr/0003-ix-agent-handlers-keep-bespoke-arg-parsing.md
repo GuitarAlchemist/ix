@@ -4,7 +4,7 @@ Status: accepted (2026-06-21)
 
 ## Decision
 
-The `ix-agent` MCP tool handlers (`crates/ix-agent/src/handlers.rs` + the `skills/batch{1,2,3}.rs`
+The `ix-agent` MCP tool handlers (`crates/ix-agent/src/handlers.rs` + the `registered/batch{1,2,3}.rs`
 wrappers) **keep their per-handler argument parsing** via the shared `parse_*` helpers. We do
 **not** migrate them to a schema-driven shape where one `serde`/`schemars` struct per tool is the
 single source of truth for both the JSON schema and the parse. The hand-built `schema.rs` DSL

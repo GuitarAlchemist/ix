@@ -1,5 +1,5 @@
-//! Handlers for the acoustic-tune analysis skills — pure, one-shot spectral
-//! analysis wrapped from `ix-acoustic-tune` and exposed as `#[ix_skill]`s, so the
+//! Handlers for the acoustic-tune analysis tools — pure, one-shot spectral
+//! analysis wrapped from `ix-acoustic-tune` and exposed as `#[ix_tool]`s, so the
 //! reference descriptor and the decomposed spectral distance are pipeline-, NL-,
 //! and MCP-callable. Offline `f64`; renders nothing.
 

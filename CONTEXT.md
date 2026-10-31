@@ -9,7 +9,7 @@
 
 A Rust workspace (77 crates) implementing foundational **ML/math algorithms** and
 **AI governance** as composable crates, exposed via an MCP server (`ix-agent`) and
-CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (**ix** + **tars** + **ga**
+CLI (`ix-cli`). Part of the GuitarAlchemist ecosystem (**ix** + **tars** + **ga**
 + **Demerzel**). Source-of-truth for cross-repo collaboration is JSON-on-disk
 contracts (see `docs/contracts/`), not runtime coupling.
 
@@ -24,6 +24,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
   Distinct from a **crate** (Rust library) and a **tool** (MCP-callable function).
 - **Tool** — an MCP-callable function (registered in `ix-agent`; the count is
   asserted by `crates/ix-agent/tests/parity.rs` — every tool-adding PR bumps it).
+  The code says tool too (`#[ix_tool]`, `ix-tool-macros`, the `registry_tools`
+  list of `state/registry/tools.snapshot.json`; ix#474). In prose, docs and
+  conversation say **tool** (FR: *outil IX*), never *skill*, which is the Claude
+  Code term above. Until their deprecation window (ix#479), the surfaces a file
+  or a script outside the repo can depend on still say skill: the `skill:` key
+  of `ix.yaml` / `ix.lock`, `ix list skills` and `ix describe skill`.
 - **Governance / Demerzel constitution** — all agent actions are subject to the
   Demerzel constitution (`governance/demerzel`). The **Galactic Protocol** is the
   cross-repo contract layer; **Prime Radiant** is the 3D governance-graph viz.

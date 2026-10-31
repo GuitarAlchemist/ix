@@ -2,7 +2,7 @@
 //!
 //! Tool schemas were hand-written as `serde_json::json!({...})` blobs — the same
 //! property shapes (`{"type":"array","items":{"type":"number"},…}`) re-typed in
-//! `tools.rs` literals and again in every migrated `#[ix_skill]` `schema_fn`. This
+//! `tools.rs` literals and again in every migrated `#[ix_tool]` `schema_fn`. This
 //! collapses those shapes to composable helpers so a schema reads as intent, not
 //! boilerplate, and the shapes stop diverging.
 //!

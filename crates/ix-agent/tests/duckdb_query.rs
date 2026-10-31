@@ -5,7 +5,7 @@
 //! rule as `crates/ix-duck/tests/common/mod.rs`: a test that cannot reach the
 //! CLI must not read as a pass where the CLI is required.
 
-use ix_agent::skills::duckdb::duckdb_query;
+use ix_agent::registered::duckdb::duckdb_query;
 use serde_json::json;
 
 fn duckdb_available() -> bool {

@@ -17,7 +17,7 @@ ix-pipeline = { workspace = true }
 # `stream.run`, the ix-pipeline skill (src/skill.rs), registered at link time.
 ix-registry = { workspace = true }
 ix-rl = { workspace = true }
-ix-skill-macros = { workspace = true }
+ix-tool-macros = { workspace = true }
 ix-types = { workspace = true }
 # `wasm` nodes of `stream.run` (src/skill/wasm.rs). Optional, so ix-agent, which links
 # ix-stream, does not pull wasmi.

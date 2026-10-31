@@ -81,7 +81,7 @@ The existing `Scripts/gate-ledger-write.ps1` (GA) keeps writing v0 for one relea
 
 | Producer | Trigger | Source value | Domain | Wired? |
 |---|---|---|---|---|
-| `ix doctor` | Every run of the pre-PR gate (`crates/ix-skill/src/doctor/mod.rs`) | `ix-doctor` | `harness` | **yes** |
+| `ix doctor` | Every run of the pre-PR gate (`crates/ix-cli/src/doctor/mod.rs`) | `ix-doctor` | `harness` | **yes** |
 | `ix-quality-trend` | After daily snapshot ingest | `ix-quality-trend` | `structural` / `coverage` (one row per category) | no |
 | `ix-sentrux-gate-writer` | Wraps `sentrux gate` | `sentrux` | `structural` | binary exists, no caller — needs a `sentrux` on PATH |
 | `Scripts/chatbot-qa-snapshot.ps1` (or equivalent) | After QA run | `chatbot-qa` | `chatbot` |

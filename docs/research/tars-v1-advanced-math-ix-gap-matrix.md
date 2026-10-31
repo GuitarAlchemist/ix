@@ -147,7 +147,7 @@ Columns are those requested by #202. Conventions:
   reachable from DuckDB, a skill verb, or an MCP tool. `partially_implemented` means part of the
   *algorithm* is missing, not just its exposure.
 - **exposure columns** record the surface as of this commit: `duckdb` = a UDF registered in
-  `ix-duck`/`ix-duck-ext`; `skill` = a verb under `crates/ix-skill/src/verbs/`; `pipeline` = a stage
+  `ix-duck`/`ix-duck-ext`; `skill` = a verb under `crates/ix-cli/src/verbs/`; `pipeline` = a stage
   reachable from `ix-pipeline`. The authoritative MCP list is the 96-entry `EXPECTED` array in
   `crates/ix-agent/tests/parity.rs`; MCP presence is noted in `notes`, since #202's column set has no
   MCP column.
@@ -293,7 +293,7 @@ and A5 rows for the evidence.
 **The second headline.** The largest exposure deficit is not per-technique but per-crate.
 `ix-dynamics` (Lie algebras, inverse kinematics, neural ODEs) and `ix-signal`'s Kalman filter have
 **no MCP tool, no skill verb, and — apart from `ix_kalman_smooth` — no UDF**. They are correct,
-tested, and invisible to every agent in the federation. `crates/ix-skill/src/verbs/` contains no math
+tested, and invisible to every agent in the federation. `crates/ix-cli/src/verbs/` contains no math
 verb at all: the verbs are `beliefs`, `check`, `compile`, `demo`, `describe`, `embed_coverage`,
 `list`, `pipeline`, `run`, `stable_surface`. The `skill_exposure` column is therefore `no` for every
 row in this matrix — which is a finding, not an omission.
@@ -355,7 +355,7 @@ of those four would need that pass first; only D2 and E2 are in that position, a
    `pub` surface of every file cited in a `current_ix_surface` cell.
 7. Cross-checked exposure against three authoritative lists: registered UDF names under
    `crates/ix-duck*/src/`, the 96-entry `EXPECTED` array in `crates/ix-agent/tests/parity.rs`, and the
-   verb list in `crates/ix-skill/src/verbs/`.
+   verb list in `crates/ix-cli/src/verbs/`.
 
 ### Unresolved and not reached
 
