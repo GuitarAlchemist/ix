@@ -5,6 +5,7 @@
 //! an answer past its buffer), or to the end of the stream.
 
 use std::cell::Cell;
+use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::rc::Rc;
@@ -21,10 +22,46 @@ pub(crate) struct Response {
     pub body: Vec<u8>,
 }
 
+/// Marks an answer whose body is past the caller's bound, inside an `InvalidData` error.
+#[derive(Debug)]
+pub(crate) struct TooLarge;
+
+impl fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the answer is larger than the bound")
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+fn too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, TooLarge)
+}
+
+/// Marks a connection that never opened, so the request never left. Windows reports a closed
+/// loopback port after its connect retries, the way it reports a timeout: the kind alone
+/// cannot say whether anything was sent.
+#[derive(Debug)]
+pub(crate) struct NotConnected(io::Error);
+
+impl fmt::Display for NotConnected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "no connection: {}", self.0)
+    }
+}
+
+impl std::error::Error for NotConnected {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
 /// One request. `within` caps every socket timeout (connect, each read, each write) at what is
 /// left of a wait's deadline, down to a millisecond, so a wait never blocks past its timeout on
 /// a plane that accepts and stalls; `None` leaves the defaults. `read`, when set, replaces the
-/// read timeout: a plane-side wait holds its answer for its own `timeout_ms`, past `IO`.
+/// read timeout: a plane-side wait holds its answer for its own `timeout_ms`, past `IO`. A body
+/// past `limit` bytes is a [`TooLarge`] error, refused before it is read when its length says so.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn request(
     addr: SocketAddr,
     method: &str,
@@ -33,10 +70,12 @@ pub(crate) fn request(
     body: Option<&[u8]>,
     within: Option<Duration>,
     read: Option<Duration>,
+    limit: usize,
 ) -> io::Result<Response> {
     let cap = |d: Duration| within.map_or(d, |w| d.min(w).max(Duration::from_millis(1)));
     let read = read.map_or_else(|| cap(IO), |r| r.max(Duration::from_millis(1)));
-    let mut stream = TcpStream::connect_timeout(&addr, cap(CONNECT))?;
+    let mut stream = TcpStream::connect_timeout(&addr, cap(CONNECT))
+        .map_err(|e| io::Error::new(e.kind(), NotConnected(e)))?;
     stream.set_read_timeout(Some(read))?;
     stream.set_write_timeout(Some(cap(IO)))?;
     stream.set_nodelay(true)?;
@@ -59,7 +98,7 @@ pub(crate) fn request(
     stream.write_all(&out)?;
     stream.flush()?;
 
-    read_response(BufReader::new(stream))
+    read_response(BufReader::new(stream), limit)
 }
 
 /// A stream the plane keeps open (`/v1/events`): the status, and the body as it comes, chunks
@@ -131,7 +170,7 @@ pub(crate) fn open_stream(
     let (status, length, chunked) = read_head(&mut r)?;
     if status != 200 {
         // The refusal is a short JSON body: hand it over whole.
-        let body = read_body(&mut r, length, chunked)?;
+        let body = read_body(&mut r, length, chunked, usize::MAX)?;
         return Ok(Stream {
             status,
             body: Box::new(io::Cursor::new(body)),
@@ -189,9 +228,9 @@ impl<R: BufRead> io::Read for Dechunk<R> {
     }
 }
 
-fn read_response(mut r: impl BufRead) -> io::Result<Response> {
+fn read_response(mut r: impl BufRead, limit: usize) -> io::Result<Response> {
     let (status, length, chunked) = read_head(&mut r)?;
-    let body = read_body(&mut r, length, chunked)?;
+    let body = read_body(&mut r, length, chunked, limit)?;
     Ok(Response { status, body })
 }
 
@@ -230,8 +269,13 @@ fn read_head(mut r: impl BufRead) -> io::Result<(u16, Option<usize>, bool)> {
     Ok((status, length, chunked))
 }
 
-/// The body, by chunks, by `Content-Length`, or to the end of the stream.
-fn read_body(mut r: impl BufRead, length: Option<usize>, chunked: bool) -> io::Result<Vec<u8>> {
+/// The body, by chunks, by `Content-Length`, or to the end of the stream, up to `limit` bytes.
+fn read_body(
+    mut r: impl BufRead,
+    length: Option<usize>,
+    chunked: bool,
+    limit: usize,
+) -> io::Result<Vec<u8>> {
     let mut body = Vec::new();
     if chunked {
         loop {
@@ -244,6 +288,9 @@ fn read_body(mut r: impl BufRead, length: Option<usize>, chunked: bool) -> io::R
                 while !read_line(&mut r)?.is_empty() {}
                 break;
             }
+            if size > limit - body.len() {
+                return Err(too_large());
+            }
             let start = body.len();
             body.resize(start + size, 0);
             r.read_exact(&mut body[start..])?;
@@ -252,10 +299,17 @@ fn read_body(mut r: impl BufRead, length: Option<usize>, chunked: bool) -> io::R
             }
         }
     } else if let Some(n) = length {
+        if n > limit {
+            return Err(too_large());
+        }
         body.resize(n, 0);
         r.read_exact(&mut body)?;
     } else {
-        r.read_to_end(&mut body)?;
+        r.take((limit as u64).saturating_add(1))
+            .read_to_end(&mut body)?;
+        if body.len() > limit {
+            return Err(too_large());
+        }
     }
     Ok(body)
 }
@@ -284,7 +338,7 @@ mod tests {
     fn a_chunked_answer_is_put_back_together() {
         let wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
                     4\r\n{\"a\"\r\n3;x=1\r\n:1}\r\n0\r\n\r\n";
-        let r = read_response(wire.as_bytes()).unwrap();
+        let r = read_response(wire.as_bytes(), usize::MAX).unwrap();
         assert_eq!(200, r.status);
         assert_eq!(b"{\"a\":1}".as_slice(), r.body.as_slice());
     }
@@ -293,10 +347,15 @@ mod tests {
     fn a_length_bounds_the_body_and_its_absence_reads_to_the_end() {
         let r = read_response(
             "HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\n\r\n{}tail".as_bytes(),
+            usize::MAX,
         )
         .unwrap();
         assert_eq!((401, b"{}".as_slice()), (r.status, r.body.as_slice()));
-        let r = read_response("HTTP/1.1 400 Bad Request\r\n\r\nall of it".as_bytes()).unwrap();
+        let r = read_response(
+            "HTTP/1.1 400 Bad Request\r\n\r\nall of it".as_bytes(),
+            usize::MAX,
+        )
+        .unwrap();
         assert_eq!(b"all of it".as_slice(), r.body.as_slice());
     }
 
@@ -322,10 +381,9 @@ mod tests {
 
     #[test]
     fn a_cut_answer_is_an_error_not_an_empty_body() {
-        assert!(
-            read_response("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n{}".as_bytes()).is_err()
-        );
-        assert!(read_response("HTTP/1.1 200 OK\r\n".as_bytes()).is_err());
-        assert!(read_response("SSH-2.0-OpenSSH\r\n\r\n".as_bytes()).is_err());
+        let cut = |wire: &str| read_response(wire.as_bytes(), usize::MAX).is_err();
+        assert!(cut("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n{}"));
+        assert!(cut("HTTP/1.1 200 OK\r\n"));
+        assert!(cut("SSH-2.0-OpenSSH\r\n\r\n"));
     }
 }

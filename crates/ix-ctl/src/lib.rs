@@ -52,6 +52,7 @@
 
 mod http;
 mod ixql;
+pub mod relay;
 
 pub use ixql::register;
 
@@ -1333,6 +1334,19 @@ impl Ctl {
         within: Option<Duration>,
         read: Option<Duration>,
     ) -> Result<Value, CtlError> {
+        self.call_bounded(method, path, body, within, read, usize::MAX)
+    }
+
+    /// [`Ctl::call_within`] reading at most `limit` bytes of answer.
+    fn call_bounded(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        within: Option<Duration>,
+        read: Option<Duration>,
+        limit: usize,
+    ) -> Result<Value, CtlError> {
         let addr = self.loopback()?;
         let body = body.map(|b| b.to_string().into_bytes());
         let r = http::request(
@@ -1343,6 +1357,7 @@ impl Ctl {
             body.as_deref(),
             within,
             read,
+            limit,
         )?;
         let parsed = serde_json::from_slice::<Value>(&r.body);
         if !(200..300).contains(&r.status) {
