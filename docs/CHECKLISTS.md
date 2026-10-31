@@ -240,3 +240,15 @@ contract and a code comment, and two of the four copies went stale before Codex 
    run/1 announced it while markers, recent exits, federation and apply results were still missing;
    an adversarial review caught it, and `TestStatusWithholdsTheRunContractUntilItShips` pins the
    absence until the last slice (N1, #444).
+
+## Writing into a store that others read
+
+A file that a person accepted, a run published or another process reads back (a library, a
+receipt, a committed result) is shared state, even when one process writes it.
+
+1. Create it with `create_new` (`OpenOptions::new().write(true).create_new(true)`), not
+   `fs::write`: a taken name is then a visible conflict, never a silent replacement. Checking for
+   the file first and writing after leaves a window for another writer. `ix-loop`'s
+   `Store::accept` replaced an accepted loop that way until the ix#485 inventory found it.
+2. Replacing on purpose is its own named operation, which the reviewer can see in the diff.
+3. A refused write leaves its input where it was (the proposal stays pending), so nothing is lost.

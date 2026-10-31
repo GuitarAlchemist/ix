@@ -85,6 +85,13 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # crates/ix-router-spike is a standalone crate (an empty [workspace] table), so the
+      # workspace commands above never compile it. Its tests hold the pinned held-out corpora
+      # and the Jev response contract (ix#489); one OS row is enough for a pure-Rust crate.
+      - name: Router spike tests
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo test --manifest-path crates/ix-router-spike/Cargo.toml
+
       # The repo's own pre-PR gate, run where each check is visible by name.
       # Until now its checks reached CI only through one test among many
       # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-skill`), so a
