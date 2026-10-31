@@ -65,13 +65,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # The merge commit and its first parent, the base: `ix doctor`'s rustfmt-touched
+          # check diffs one against the other.
+          fetch-depth: 2
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ matrix.rust }}
-          components: clippy
+          components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Build workspace
         run: cargo build --workspace
@@ -82,17 +85,30 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # crates/ix-router-spike is a standalone crate (an empty [workspace] table), so the
+      # workspace commands above never compile it. Its tests hold the pinned held-out corpora
+      # and the Jev response contract (ix#489); one OS row is enough for a pure-Rust crate.
+      - name: Router spike tests
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo test --manifest-path crates/ix-router-spike/Cargo.toml
+
       # The repo's own pre-PR gate, run where each check is visible by name.
       # Until now its checks reached CI only through one test among many
       # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-cli`), so a
       # new check such as `silent-skips` had no line of its own in any run. The
       # bar is the same as that test's: exit 4 (a failing check) is red, exit 1
       # (warnings only) is reported and stays green, exit 0 is green.
+      # On a pull request HEAD is the merge commit, so HEAD^1 is the base and the
+      # rustfmt-touched check holds the PR's own Rust files; naming the base makes that
+      # check fail, not warn, when it cannot run. A push to main has nothing to scope.
       - name: ix doctor
         shell: bash
         run: |
           export IX_ROOT="$PWD"
           export IX_GOVERNANCE_DIR="$PWD/governance/demerzel"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            export IX_DOCTOR_BASE='HEAD^1'
+          fi
           set +e
           cargo run -q -p ix-cli --bin ix -- doctor
           code=$?
@@ -266,12 +282,12 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
           components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: gated-${{ matrix.crate }}
 
@@ -310,11 +326,11 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: duckdb-sql
 
@@ -370,11 +386,11 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: comfyui-pack
 

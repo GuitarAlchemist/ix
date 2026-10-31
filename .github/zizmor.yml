@@ -1,0 +1,12 @@
+# zizmor's policy for the workflow-lint gate (.github/workflows/workflow-lint.yml), which fails
+# on High findings. This file is a blocked path of agent-blackbox.policy.json: loosening it
+# needs the review label.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # GitHub's own actions may follow a tag. Every other action is pinned by commit, with
+        # the tag or branch it was taken from in a comment, so its code changes only when a
+        # commit of this repository changes the pin.
+        "actions/*": ref-pin
+        "*": hash-pin

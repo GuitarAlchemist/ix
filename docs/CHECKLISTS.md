@@ -30,6 +30,7 @@ in `ix doctor` instead of here.
 | `silent-skips` | A `#[test]` returns early when its environment is missing and so can pass without asserting, with no allowlist entry | Make the skip impossible where the test must run (install the tool in CI, fail closed on a "required" variable), or record it in `state/registry/silent-skips.allow.json` with a `reason` |
 | `hardcoded-paths` | A line of a source or script file under `crates/` (`.rs`, `.sql`, `.ps1`, `.sh`, `.py`, `.toml`, `.md`, any case) names one developer's home directory (`C:\Users\<name>`, `\Users\<name>`, `/home/<name>`, `/Users/<name>`) with no allowlist entry | Resolve from an env var, `PATH` or the workspace root (`../<repo>` for siblings) and fail naming those options; doc examples use `../ga/...`; a line whose text must keep such a path (a test's input, a URL containing `/home/`) goes in `state/registry/hardcoded-paths.allow.json` with `file`, `contains`, `reason` |
 | `hooks` | A hook wired in `.claude/settings.json` is missing, a `.claude/hooks/*.sh` does not parse (`bash -n`), or a fixture `.claude/hooks/test-*.sh` exits non-zero; warns when no bash is found (Git bash on Windows) | Restore or drop the hook entry; `bash -n` the script; run the fixture by hand, its last lines are in `details.fixtures[].tail` |
+| `rustfmt-touched` | A `.rs` file the change adds or modifies (committed, staged or untracked since the merge-base with `origin/main`, or with `IX_DOCTOR_BASE`, which CI sets) is not what `rustfmt` in the workspace edition gives back, and was formatted at the base; warns on drift the base already had, on a file rustfmt cannot parse, and when rustfmt or `origin/main` is missing (fails instead when `IX_DOCTOR_BASE` is set) | `rustfmt --edition 2021 <file>` on the named files, never `cargo fmt --all` (main carries drift in files other work is editing); a fixture that must stay unformatted takes `#![rustfmt::skip]` |
 | `demerzel-governance` | `governance/demerzel` is absent | `git submodule update --init` |
 | `default-constitution` | The submodule is present but incomplete | Re-sync the submodule |
 | `state-directory` | `state/` is missing from the repo root | You are not at the workspace root |
@@ -239,3 +240,15 @@ contract and a code comment, and two of the four copies went stale before Codex 
    run/1 announced it while markers, recent exits, federation and apply results were still missing;
    an adversarial review caught it, and `TestStatusWithholdsTheRunContractUntilItShips` pins the
    absence until the last slice (N1, #444).
+
+## Writing into a store that others read
+
+A file that a person accepted, a run published or another process reads back (a library, a
+receipt, a committed result) is shared state, even when one process writes it.
+
+1. Create it with `create_new` (`OpenOptions::new().write(true).create_new(true)`), not
+   `fs::write`: a taken name is then a visible conflict, never a silent replacement. Checking for
+   the file first and writing after leaves a window for another writer. `ix-loop`'s
+   `Store::accept` replaced an accepted loop that way until the ix#485 inventory found it.
+2. Replacing on purpose is its own named operation, which the reviewer can see in the diff.
+3. A refused write leaves its input where it was (the proposal stays pending), so nothing is lost.

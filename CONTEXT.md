@@ -112,6 +112,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
   cannot be registered over, so no adapter can route around the schema gate. Distinct
   from a **tool** (MCP-callable) and a **skill**: a capability is how one IXQL run
   reaches either, or something else entirely.
+- **BAML step (IXQL)** (`ix_baml::BamlOperation`, dispatched by `ix_ixql::eval` for
+  `→ baml.<Function>()`) — the LLM call of an IXQL run, through a function registered in
+  the run's `BamlRegistry`. The registry starts empty: an unregistered function fails the
+  run rather than evaluating to null. Its errors are `UnknownFunction`, `InputShape` and
+  `Invocation`; it has no timeout or abstention outcome of its own. The `baml.` namespace
+  is the registry's: no **capability** can be registered under it.
 - **Verdict gate** — consecutive `→ when T >= 0.8: …` / `→ when C: …` steps, read as
   **one** match over the verdict (hexavalent truth + confidence) the previous
   capability attached — not as successive filters. The verdict travels *beside* the

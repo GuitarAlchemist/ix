@@ -33,6 +33,7 @@ mécanisée, sa place est dans `ix doctor`, pas ici.
 | `silent-skips` | Un `#[test]` retourne tôt quand son environnement manque et peut donc passer sans rien vérifier, sans entrée d'allowlist | Rendre le saut impossible là où le test doit tourner (installer l'outil en CI, échouer fermé sur une variable « requis »), ou l'inscrire dans `state/registry/silent-skips.allow.json` avec un `reason` |
 | `hardcoded-paths` | Une ligne d'un fichier source ou script sous `crates/` (`.rs`, `.sql`, `.ps1`, `.sh`, `.py`, `.toml`, `.md`, toute casse) nomme le répertoire personnel d'un développeur (`C:\Users\<nom>`, `\Users\<nom>`, `/home/<nom>`, `/Users/<nom>`) sans entrée d'allowlist | Résoudre depuis une variable d'environnement, le `PATH` ou la racine de l'espace de travail (`../<dépôt>` pour les dépôts voisins) et échouer en nommant ces options ; les exemples de doc utilisent `../ga/...` ; une ligne dont le texte doit garder un tel chemin (l'entrée d'un test, une URL contenant `/home/`) va dans `state/registry/hardcoded-paths.allow.json` avec `file`, `contains`, `reason` |
 | `hooks` | Un hook câblé dans `.claude/settings.json` manque, un `.claude/hooks/*.sh` ne s'analyse pas (`bash -n`), ou une fixture `.claude/hooks/test-*.sh` sort avec un code non nul ; avertit quand aucun bash n'est trouvé (le bash de Git sous Windows) | Restaurer ou retirer l'entrée du hook ; `bash -n` sur le script ; lancer la fixture à la main, ses dernières lignes sont dans `details.fixtures[].tail` |
+| `rustfmt-touched` | Un fichier `.rs` que la modification ajoute ou change (commité, indexé ou non suivi depuis la merge-base avec `origin/main`, ou avec `IX_DOCTOR_BASE`, que la CI fixe) diffère de ce que rend `rustfmt` dans l'édition de l'espace de travail, alors qu'il était formaté à la base ; avertit sur une dérive que la base avait déjà, sur un fichier que rustfmt ne sait pas analyser, et quand rustfmt ou `origin/main` manque (échoue à la place quand `IX_DOCTOR_BASE` est fixée) | `rustfmt --edition 2021 <fichier>` sur les fichiers nommés, jamais `cargo fmt --all` (main porte une dérive dans des fichiers que d'autres travaux modifient) ; une fixture qui doit rester non formatée prend `#![rustfmt::skip]` |
 | `demerzel-governance` | `governance/demerzel` est absent | `git submodule update --init` |
 | `default-constitution` | Le sous-module est présent mais incomplet | Resynchroniser le sous-module |
 | `state-directory` | `state/` manque à la racine du dépôt | Vous n'êtes pas à la racine de l'espace de travail |
@@ -271,3 +272,18 @@ des quatre copies étaient périmées avant que Codex ne les lise.
    marqueurs, les sorties récentes, la fédération et les résultats d'apply manquaient encore ; une
    revue adverse l'a vu, et `TestStatusWithholdsTheRunContractUntilItShips` épingle l'absence
    jusqu'à la dernière tranche (N1, #444).
+
+## Écrire dans un dépôt que d'autres lisent
+
+Un fichier qu'une personne a accepté, qu'une exécution a publié ou qu'un autre processus relit (une
+bibliothèque, un reçu, un résultat validé) est un état partagé, même quand un seul processus
+l'écrit.
+
+1. Le créer avec `create_new` (`OpenOptions::new().write(true).create_new(true)`), pas
+   `fs::write` : un nom déjà pris devient alors un conflit visible, jamais un remplacement
+   silencieux. Vérifier d'abord la présence du fichier puis écrire laisse une fenêtre à un autre
+   écrivain. `Store::accept` d'`ix-loop` remplaçait ainsi une boucle acceptée jusqu'à ce que
+   l'inventaire de ix#485 le trouve.
+2. Remplacer volontairement est une opération à part, nommée, que le relecteur voit dans le diff.
+3. Une écriture refusée laisse son entrée où elle était (la proposition reste en attente) : rien
+   n'est perdu.

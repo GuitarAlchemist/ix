@@ -39,13 +39,10 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      # No rust-cache: a cache written by another workflow would reach the released ix-mcp.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: comfyui-release-${{ matrix.platform }}
 
       - uses: actions/setup-python@v5
         with:
