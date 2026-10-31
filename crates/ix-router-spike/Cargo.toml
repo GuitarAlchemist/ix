@@ -16,6 +16,10 @@ path = "src/main.rs"
 name = "jev-router"
 path = "src/bin/jev_router.rs"
 
+[[bin]]
+name = "claude-stream"
+path = "src/bin/claude_stream.rs"
+
 [dependencies]
 ndarray = "0.17"
 serde = { version = "1", features = ["derive"] }
