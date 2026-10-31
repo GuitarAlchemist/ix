@@ -92,6 +92,10 @@ jobs:
         if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
         run: cargo test --manifest-path crates/ix-router-spike/Cargo.toml
 
+      - name: Router spike clippy
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo clippy --manifest-path crates/ix-router-spike/Cargo.toml --all-targets -- -D warnings
+
       # The repo's own pre-PR gate, run where each check is visible by name.
       # Until now its checks reached CI only through one test among many
       # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-cli`), so a
