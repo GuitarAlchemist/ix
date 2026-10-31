@@ -30,9 +30,11 @@ the operator decides #485.
   or session. No seam offers a shared dossier with expected-version (CAS) updates: the only
   `Conflict` found (`ix-recover`) guards one run id's bindings, not a shared document.
 - **The one shared-ish write path loses updates silently.** Two proposals with the same name: the
-  second `accept` replaces the first library file with no conflict (source-read, not tested). It is
-  the exact counterexample #485 names ("concurrent writers conflict visibly rather than overwrite").
-  A person runs `accept`, so the window is small, but nothing makes it visible.
+  second `accept` replaced the first library file with no conflict. It is the exact counterexample
+  #485 names ("concurrent writers conflict visibly rather than overwrite"). **Tested**:
+  `accepting_a_second_loop_under_a_taken_name_is_a_visible_conflict` was seen red ("the second accept
+  replaced the first loop"); the fix (`create_new`, the proposal stays pending) is pull request #491.
+  With it, replacing a loop on purpose needs removing the old file first: no explicit replace.
 - **Proposals instead of writes already exist once.** `ix-loop`'s proposal / accept split is the
   "returned additions are proposals" rule, for loops only.
 - **A missing artifact reads as empty in the DuckDB lens.** For a dashboard that is the intended
@@ -54,10 +56,9 @@ Smallest discriminating check (offline, as #485 asks), with the seams above:
 1. In-memory private snapshot: a `ReadContext` at ordinal *n* is unchanged after an event at *n+1*.
 2. Exported/restored local snapshot: an `ix-recover` commit read back; one changed byte → refused.
 3. Two conflicting shared proposals: two `ix-loop` proposals with one name, both accepted. Expected
-   by #485: a visible conflict. Expected from the source today: the second overwrites. This is the
-   first red test, if the operator wants it.
+   by #485: a visible conflict. On main the second overwrites. This first red test is done (#491).
 4. Missing file, changed hash, incompatible schema, incomplete dump: through the artifact list, each
    an explicit outcome, never the lens's empty table. Revoked read: indeterminate (no seam models
    access rights).
 
-FR translation: to add before any publication (docs/fr convention).
+French: [`docs/fr/research/agent-composition/2026-10-30-485-context-seams-inventory.md`](../../fr/research/agent-composition/2026-10-30-485-context-seams-inventory.md).

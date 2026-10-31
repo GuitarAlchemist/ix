@@ -77,4 +77,4 @@ as one of #484's classes or as not-a-success. Fixtures are hand-written from the
 above, so they are labelled synthetic until a recorded stream replaces them, and a recorded
 stream needs a separately admitted live run.
 
-FR translation: to add before any publication (docs/fr convention).
+French: [`docs/fr/research/agent-composition/2026-10-30-484-claude-code-programmatic-evidence.md`](../../fr/research/agent-composition/2026-10-30-484-claude-code-programmatic-evidence.md).

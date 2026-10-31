@@ -12,7 +12,8 @@ Status words: **source-read**, **tested** (a command ran here), **indeterminate*
 - `crates/ix-router-spike/src/bin/jev_router.rs` at blob `0d8a6adcf1a13ee7182f53647eee85c3c2aabef8`
   and `state/router-spike/jev/run-live.ps1` at blob `a8a3702ef20a4bc4aac46d95215fcdba8ed703da`,
   both the blobs #489 names (`git rev-parse HEAD:<path>` on origin/main 99f2f869).
-- The crate is standalone (empty `[workspace]` table): CI's workspace build never compiles it.
+- The crate is standalone (empty `[workspace]` table): CI's workspace build never compiles it. Since
+  #490 a dedicated CI step (ubuntu, stable) runs its tests.
 - Command: `cargo test --offline --manifest-path crates/ix-router-spike/Cargo.toml --bin jev-router`.
   Before this branch: 17 passed. With the seven pins below: 24 passed.
 
@@ -94,4 +95,4 @@ unparsable receipt line (source-read: `load_receipt` panics on both) should void
 whole run is a choice for the operator. A live adapter, 1.14 support and any spending stay separately
 admitted.
 
-FR translation: to add before any publication (docs/fr convention).
+French: [`docs/fr/research/agent-composition/2026-10-30-489-jev-decision-node-evidence.md`](../../fr/research/agent-composition/2026-10-30-489-jev-decision-node-evidence.md).
