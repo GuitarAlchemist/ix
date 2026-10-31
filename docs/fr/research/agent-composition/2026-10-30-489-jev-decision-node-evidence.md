@@ -36,6 +36,14 @@ contre un bogue.
 | empreinte non conforme | `Invalid::DigestMismatch` ; une invite sans réponse est `Invalid::Missing` | nouveau `test_digest_mismatch_and_missing_answer_are_invalid` | — |
 | retour en double | tout le calcul s'arrête (panic), jamais « le dernier gagne » ; un id imprévu l'arrête aussi | nouveaux `test_duplicate_receipt_id_aborts_scoring`, `test_unplanned_receipt_id_aborts_scoring` | — (fermé en cas d'échec, mais tout ou rien) |
 
+**Mise à jour (tranche D4 de la synthèse #483) :** les trois manques sont fermés sur la branche
+`feat/jev-outcome-classifier`. Un reçu distingue `Invalid::Timeout` et
+`Invalid::ProviderUnavailable(statut ou exception)`, une réponse porte `tied`, et le total d'usage
+rapporte `receipts_without_usage` au lieu de les ajouter pour zéro. Les trois épingles sont devenues
+`test_timeout_and_provider_failure_are_distinct_outcomes`, `test_argmax_tie_is_flagged` et
+`test_usage_totals_count_receipts_without_usage` ; chacune a échoué sur un mutant qui rétablissait
+l'ancien comportement.
+
 Chaque échec est fermé : aucun ne devient un refus correct (existant
 `test_invalid_response_is_never_a_correct_decline`). Ce qui manque, c'est la **nature** de l'échec :
 #489 demande des issues explicites pour le délai dépassé et le fournisseur indisponible, et le spike
