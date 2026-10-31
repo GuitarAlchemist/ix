@@ -1,6 +1,6 @@
-# `mesh_correlate` — le skill de réduction (fan-in) maillage-corrélation dans le pipeline
+# `mesh_correlate` — l’outil de réduction (fan-in) maillage-corrélation dans le pipeline
 
-Un skill `ix-agent` enregistré (`#[ix_skill] name = "mesh_correlate"`) qui transforme N
+Un outil `ix-agent` enregistré (`#[ix_tool] name = "mesh_correlate"`) qui transforme N
 séries en un graphe de corrélation **à l'intérieur d'un pipeline exécutable**, calculant la
 centralité là où un spec ne le pourrait pas autrement.
 
@@ -23,7 +23,7 @@ mesh_correlate({ series: [[…],[…],…], threshold: τ })
 
 Il enveloppe `ix_math::inference::pearson` + `ix_graph::graph::Graph`
 (`betweenness_centrality`, `connected_components`) — pas de nouvel algorithme, juste la
-forme de réduction en tant que skill.
+forme de réduction en tant qu’outil.
 
 ## Dans un pipeline
 
@@ -53,7 +53,7 @@ dans le pipeline comme toute autre sortie d'étape.
   montrent le compromis : un DAG de maillage explicite vs. la centralité dans le pipeline.
 - L'exemple passe les séries directement à `mesh_correlate` plutôt que par N étapes de
   conditionnement par flux, car le cond évident (`autocorrelation`) déforme la corrélation
-  (chaque ACF partage le pic au lag 0 = 1). Un skill de conditionnement *identité*
+  (chaque ACF partage le pic au lag 0 = 1). Un outil de conditionnement *identité*
   préservant la corrélation restaurerait la forme N-pipelines-par-flux — un suivi.
 - Un moyeu de betweenness nécessite une structure **moyeu-et-rayons** ; un ensemble de flux
   mutuellement corrélés est une clique sans moyeu (la même leçon que le maillage de

@@ -1,5 +1,5 @@
 {
-  "note": "Source lines under crates/ that may name a user's home directory (C:\\Users\\<name>, \\Users\\<name>, /home/<name>, /Users/<name>). Checked by `ix doctor` (see crates/ix-skill/src/doctor/hardcoded_paths.rs). An entry covers the lines of `file` whose text contains `contains`, not the whole file, and needs a non-empty `reason`. Honest reasons: the path is the test's input (a sanitizer proving it rejects such paths, a fixture proving this check fires), or the text is not a path at all (a URL whose path contains /home/). Production defaults, test guards and doc examples are fixed, not listed (ix#327, ix#328).",
+  "note": "Source lines under crates/ that may name a user's home directory (C:\\Users\\<name>, \\Users\\<name>, /home/<name>, /Users/<name>). Checked by `ix doctor` (see crates/ix-cli/src/doctor/hardcoded_paths.rs). An entry covers the lines of `file` whose text contains `contains`, not the whole file, and needs a non-empty `reason`. Honest reasons: the path is the test's input (a sanitizer proving it rejects such paths, a fixture proving this check fires), or the text is not a path at all (a URL whose path contains /home/). Production defaults, test guards and doc examples are fixed, not listed (ix#327, ix#328).",
   "allow": [
     {
       "file": "crates/ix-autoresearch/src/milestones.rs",
@@ -7,17 +7,17 @@
       "reason": "Negative inputs of `sanitize_text`: the two tests prove a Windows and a POSIX home path are rejected from milestone text. The path is the thing under test."
     },
     {
-      "file": "crates/ix-skill/tests/doctor_paths.rs",
+      "file": "crates/ix-cli/tests/doctor_paths.rs",
       "contains": "jane",
       "reason": "Fixtures of this very check: the seeded lines prove each spelling is reported. The account name is fictional."
     },
     {
-      "file": "crates/ix-agent/src/skills/wmux.rs",
+      "file": "crates/ix-agent/src/registered/wmux.rs",
       "contains": "alice",
       "reason": "Negative inputs of the wmux.snapshot scrub and error paths: the tests prove a Windows and a POSIX home path in a title, a blocked reason, stderr or the CLI path never leave the tool. The account name is fictional."
     },
     {
-      "file": "crates/ix-agent/src/skills/wmux.rs",
+      "file": "crates/ix-agent/src/registered/wmux.rs",
       "contains": "someone",
       "reason": "Inputs of `folder_name`: the test proves only the last folder of a working directory under a home path leaves. The account name is fictional."
     }

@@ -55,8 +55,8 @@ flowchart LR
 - **Committed, drift-gated artifact** pattern, mirroring `state/assumptions/annotations.snapshot.json`:
   `state/streeling/catalog.jsonl` is committed (so Campus + the agent work with no build step and PRs
   show learning additions), and the CI gate fails if it's stale.
-- **Generator home rationale:** dedicated crate (cohesion + testable adapters) over an `ix-skill` verb
-  (keeps cross-repo file-reading out of the skill CLI; ix-skill is already heavy).
+- **Generator home rationale:** dedicated crate (cohesion + testable adapters) over an `ix-cli` verb
+  (keeps cross-repo file-reading out of the CLI; ix-cli is already heavy).
 
 ### `streeling` bin subcommands
 - `streeling catalog` — ingest → write `state/streeling/catalog.jsonl` (+ `catalog.meta.json`: generated counts).
@@ -96,7 +96,7 @@ flowchart LR
 - Tier 3 "Lecture Hall" (NotebookLM audio-overviews / Prime Radiant viz / NebulaChat) — deferred.
 
 ## Alternative Approaches Considered
-- **`ix-skill` verb instead of a crate** — rejected: cross-repo file-reading doesn't belong in the skill CLI; ix-skill is already large.
+- **`ix-cli` verb instead of a crate** — rejected: cross-repo file-reading doesn't belong in the CLI; ix-cli is already large.
 - **On-the-fly DuckDB parsing of `.md`** (no catalog) — rejected: needs a frontmatter-parse UDF, slower per query, no committed artifact for the agent/Campus.
 - **Uncommitted catalog (CI artifact only)** — rejected: Campus + agent would need a build step; committed+gated mirrors the proven `annotations.snapshot.json` pattern.
 
@@ -138,7 +138,7 @@ flowchart LR
 - **Brainstorm:** [docs/brainstorms/2026-06-14-streeling-university-brainstorm.md](../brainstorms/2026-06-14-streeling-university-brainstorm.md) — carried forward: Tier 1+2 v1 / Tier 3 deferred; federate via contract (ix+ga direct, tars/Demerzel adapters); generator→catalog.jsonl→DuckDB; CI staleness gate.
 ### Internal references
 - `crates/ix-governance/src/policy.rs` — `serde_yaml` frontmatter-parse precedent.
-- `crates/ix-skill/src/verbs/*.rs` — verb pattern (alternative, rejected).
+- `crates/ix-cli/src/verbs/*.rs` — verb pattern (alternative, rejected).
 - `.github/workflows/assumption-drift.yml` — the regenerate+fail-if-stale gate to model.
 - `state/assumptions/annotations.snapshot.json` — committed, drift-gated derived-artifact precedent.
 - `docs/LEARNING.md`, `docs/DUCKDB.md`; `ix-duck` (PR #97); `learnings-researcher` agent (compound-engineering plugin).

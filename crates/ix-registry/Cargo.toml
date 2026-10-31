@@ -7,7 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 categories = ["development-tools"]
 keywords = ["machine-learning", "registry", "mcp"]
-description = "Link-time capability registry unifying CLI, MCP server, and UI surfaces for ix skills"
+description = "Link-time capability registry unifying CLI, MCP server, and UI surfaces for ix tools"
 
 [dependencies]
 ix-types = { workspace = true }
@@ -17,4 +17,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-ix-skill-macros = { workspace = true }
+ix-tool-macros = { workspace = true }

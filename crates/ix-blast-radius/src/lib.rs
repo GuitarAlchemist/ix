@@ -67,7 +67,7 @@ const CRATE_LAYER_MAP: &[(&str, Layer)] = &[
     ("ix-memory", Layer::Orchestration),
     ("ix-sentinel", Layer::Orchestration),
     ("ix-registry", Layer::Orchestration),
-    ("ix-skill", Layer::Orchestration),
+    ("ix-cli", Layer::Orchestration),
     ("ix-autoresearch", Layer::Orchestration),
     ("ix-catalog-core", Layer::Orchestration),
     // Analysis (code observatory, QA, drift)

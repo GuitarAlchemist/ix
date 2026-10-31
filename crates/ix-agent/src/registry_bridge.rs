@@ -1,17 +1,17 @@
 //! Bridge between `ix-registry`'s capability registry and the MCP `Tool`
 //! surface exposed by `ix-agent`.
 //!
-//! Skills registered via `#[ix_skill]` are adapted to MCP tools by:
-//!   1. Mapping the dotted skill name (`supervised.linear_regression.fit`) to
+//! Tools registered via `#[ix_tool]` are adapted to MCP tools by:
+//!   1. Mapping the dotted tool name (`supervised.linear_regression.fit`) to
 //!      an underscore MCP name (`ix_supervised_linear_regression_fit`).
-//!   2. Using the skill's hand-written `json_schema` (via `schema_fn = ...`)
+//!   2. Using the tool's hand-written `json_schema` (via `schema_fn = ...`)
 //!      as the MCP input-schema.
 //!   3. Wrapping the handler so the MCP caller passes one JSON blob in and
 //!      gets one JSON blob out.
 //!
 //! For composite MCP handlers we annotate a single-arg wrapper fn of shape
 //! `fn(params: serde_json::Value) -> Result<serde_json::Value, String>` with
-//! `#[ix_skill]`. The registry carries a single `Json → Json` socket pair,
+//! `#[ix_tool]`. The registry carries a single `Json → Json` socket pair,
 //! but the MCP schema returned to clients is the original hand-written one.
 
 use crate::tools::Tool;
@@ -22,7 +22,7 @@ use ix_agent_core::{
 };
 use ix_approval::ApprovalMiddleware;
 use ix_loop_detect::{LoopDetectMiddleware, LoopDetector};
-use ix_registry::SkillDescriptor;
+use ix_registry::ToolDescriptor;
 use ix_session::SessionLog;
 use ix_types::Value as IxValue;
 use serde_json::Value as JsonValue;
@@ -45,7 +45,7 @@ fn loop_detector() -> Arc<LoopDetector> {
 }
 
 /// Expose a handle to the shared detector so the `ix-mcp` binary (or tests)
-/// can reset state between sessions. Normal skill callers should not touch
+/// can reset state between sessions. Normal tool callers should not touch
 /// the detector directly — `dispatch` manages it.
 pub fn shared_loop_detector() -> Arc<LoopDetector> {
     loop_detector()
@@ -171,7 +171,7 @@ pub fn current_session_log() -> Option<Arc<SessionLog>> {
 /// Terminal handler that looks up the tool by name in the registry at
 /// run time. Acts as the "rightmost" node of the middleware chain in
 /// [`dispatch_action`] — after every middleware has returned Continue,
-/// this handler performs the actual registry lookup + skill invocation.
+/// this handler performs the actual registry lookup + tool invocation.
 ///
 /// Unlike [`ix_agent_core::LegacyAdapter`], which wraps a single
 /// known function pointer, this handler defers the lookup to invocation
@@ -186,11 +186,11 @@ impl AgentHandler for RegistryLookupHandler {
                 tool_name, params, ..
             } => {
                 let mcp_name = tool_name.as_str();
-                let skill_name = mcp_to_skill_name(mcp_name).ok_or_else(|| {
+                let tool_name = mcp_to_tool_name(mcp_name).ok_or_else(|| {
                     ActionError::Exec(format!("not a registry-backed tool: {mcp_name}"))
                 })?;
-                let descriptor = ix_registry::by_name(&skill_name).ok_or_else(|| {
-                    ActionError::Exec(format!("skill not in registry: {skill_name}"))
+                let descriptor = ix_registry::by_name(&tool_name).ok_or_else(|| {
+                    ActionError::Exec(format!("tool not in registry: {tool_name}"))
                 })?;
 
                 let args = [IxValue::Json(params.clone())];
@@ -272,11 +272,11 @@ pub fn dispatch_action_with(
 /// Translate a dotted registry name into the MCP tool name convention.
 ///
 /// `supervised.linear_regression.fit` → `ix_supervised_linear_regression_fit`
-pub fn mcp_name(skill_name: &str) -> String {
-    format!("ix_{}", skill_name.replace('.', "_"))
+pub fn mcp_name(tool_name: &str) -> String {
+    format!("ix_{}", tool_name.replace('.', "_"))
 }
 
-/// Dispatch a registered skill by MCP name — legacy JSON-in/JSON-out
+/// Dispatch a registered tool by MCP name — legacy JSON-in/JSON-out
 /// entry point. Internally routes through [`dispatch_action`] so the
 /// full middleware chain (loop detection + approval, plus any future
 /// middlewares) fires uniformly across both entry points.
@@ -384,24 +384,24 @@ fn dispatch_through_gate(
     }
 }
 
-/// Undo `mcp_name`: `ix_supervised_linear_regression_fit` → dotted skill name
+/// Undo `mcp_name`: `ix_supervised_linear_regression_fit` → dotted tool name
 /// matched against the registry by progressively collapsing underscores.
-fn mcp_to_skill_name(mcp_tool_name: &str) -> Option<String> {
+fn mcp_to_tool_name(mcp_tool_name: &str) -> Option<String> {
     let rest = mcp_tool_name.strip_prefix("ix_")?;
     // The registry stores names with dots. The MCP name replaced dots with
     // underscores, so we must scan the registry for a name whose MCP form
-    // matches. O(n) on total skill count — trivial.
+    // matches. O(n) on total tool count — trivial.
     for desc in ix_registry::all() {
         if mcp_name(desc.name) == mcp_tool_name {
             return Some(desc.name.to_string());
         }
     }
-    // Fallback: heuristic dot-splitting (works for skills with no dots in
+    // Fallback: heuristic dot-splitting (works for tools with no dots in
     // segment names, which is the convention we enforce).
     Some(rest.replace('_', "."))
 }
 
-/// Produce an MCP [`Tool`] definition for every skill in the registry. Used
+/// Produce an MCP [`Tool`] definition for every tool in the registry. Used
 /// by `ToolRegistry::register_all` to merge registry-sourced tools with any
 /// remaining manual entries.
 pub fn all_registry_tools() -> Vec<Tool> {
@@ -416,9 +416,9 @@ pub fn all_registry_tools() -> Vec<Tool> {
 }
 
 /// Leak the MCP-name `String` to satisfy `Tool`'s `&'static str` contract.
-/// The leak is bounded — one `String` per skill, once, at process startup.
-fn mcp_name_static(desc: &'static SkillDescriptor) -> &'static str {
-    // Interning via `OnceLock` keyed on the skill pointer identity.
+/// The leak is bounded — one `String` per tool, once, at process startup.
+fn mcp_name_static(desc: &'static ToolDescriptor) -> &'static str {
+    // Interning via `OnceLock` keyed on the tool pointer identity.
     use std::collections::HashMap;
     use std::sync::OnceLock;
     static INTERN: OnceLock<std::sync::Mutex<HashMap<&'static str, &'static str>>> =
@@ -435,15 +435,15 @@ fn mcp_name_static(desc: &'static SkillDescriptor) -> &'static str {
 
 /// Per-descriptor handler: routes back through the registry by the stored
 /// descriptor's name. Returned fn-pointer has static lifetime by using a
-/// per-skill closure lifted into a stored `Box<dyn Fn>` via `OnceLock`.
+/// per-tool closure lifted into a stored `Box<dyn Fn>` via `OnceLock`.
 ///
 /// MCP tool handlers must be `fn(Value) -> Result<Value, String>`, a plain
-/// function pointer with no captures. To carry the skill name, we generate
+/// function pointer with no captures. To carry the tool name, we generate
 /// one thunk per tool through dynamic dispatch stored in an interning table
 /// — but since we can't lift a `Box<dyn Fn>` to `fn`, we instead use the
 /// MCP name inside a generic dispatch path. `ToolRegistry::call` knows the
 /// tool's name and calls [`dispatch`] directly for registry-backed tools.
-fn registry_handler_for(_: &'static SkillDescriptor) -> fn(JsonValue) -> Result<JsonValue, String> {
+fn registry_handler_for(_: &'static ToolDescriptor) -> fn(JsonValue) -> Result<JsonValue, String> {
     // Stored as a marker; `ToolRegistry::call` intercepts before invoking.
     registry_handler_marker
 }
@@ -455,7 +455,7 @@ pub fn registry_handler_marker(_: JsonValue) -> Result<JsonValue, String> {
 }
 
 /// True iff `handler` is the registry marker — i.e. the tool is backed by a
-/// registry skill, not a manual handler.
+/// registry tool, not a manual handler.
 pub fn is_registry_backed(handler: fn(JsonValue) -> Result<JsonValue, String>) -> bool {
     (handler as *const ()) == (registry_handler_marker as *const ())
 }

@@ -1,5 +1,5 @@
 //! `ix_pipeline_mesh_hub` — correlation + centrality computed **inside** an executable
-//! pipeline, via the `mesh_correlate` fan-in skill.
+//! pipeline, via the `mesh_correlate` fan-in tool.
 //!
 //! Companion to `ix_pipeline_mesh` (the pairwise tier, Option C of the plan): there the
 //! hub was read back in the harness, because a spec can't threshold edges at build time.
@@ -15,13 +15,13 @@
 //! (Why streams are passed to `mesh_correlate` directly rather than through N per-stream
 //! stages: the obvious cond, `autocorrelation`, distorts correlation structure — every
 //! ACF shares the lag-0 = 1 spike, so unrelated streams correlate. A correlation-preserving
-//! identity cond skill would restore the N-per-stream-pipeline shape; see the plan.)
+//! identity cond tool would restore the N-per-stream-pipeline shape; see the plan.)
 //!
 //! Run: `cargo run -p ix-agent --example ix_pipeline_mesh_hub`
 
 use std::collections::{BTreeMap, HashMap};
 
-use ix_agent as _; // force-link the skill registry
+use ix_agent as _; // force-link the tool registry
 use ix_pipeline::executor::{execute, NoCache};
 use ix_pipeline::lower::lower;
 use ix_pipeline::spec::{PipelineSpec, StageSpec};

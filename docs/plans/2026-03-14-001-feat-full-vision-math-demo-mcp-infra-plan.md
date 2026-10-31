@@ -196,8 +196,8 @@ Extract CPU algebra from ix-gpu, fractal curves from ix-chaos. Create ix-number-
 - [x] `ix-nn/src/network.rs` — Composable Sequential network (forward/backward/train)
 - [x] `ix-rl/src/env.rs` — Environment trait + GridWorld
 - [x] `ix-rl/src/q_learning.rs` — Tabular Q-learning with ε-greedy
-- [x] `ix-skill/src/main.rs` — Wire data loading for Train/Cluster CLI commands
-- [x] `ix-skill/src/main.rs` — Wire up decision-tree, SVM, DBSCAN, PCA CLI commands
+- [x] `ix-cli/src/main.rs` — Wire data loading for Train/Cluster CLI commands
+- [x] `ix-cli/src/main.rs` — Wire up decision-tree, SVM, DBSCAN, PCA CLI commands
 - [x] All crates: verify every `pub fn` has at least one unit test
 - [x] All crates: verify doc examples compile
 - [x] Add `rust-version = "1.80"` to `[workspace.package]`

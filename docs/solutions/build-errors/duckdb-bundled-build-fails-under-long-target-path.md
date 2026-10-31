@@ -114,4 +114,4 @@ workspace's `x86_64-pc-windows-msvc` host. `zig cc` (C only) does work, but
 `libduckdb-sys` is the only crate in the workspace that compiles native code,
 and it is C++ — so the intersection of "IX compiles it" and "Zig can compile
 it" is empty. (`ort`/ONNX consumes prebuilt binaries and compiles nothing:
-`ix-skill --features embeddings` builds in ~73s with no native step.)
+`ix-cli --features embeddings` builds in ~73s with no native step.)

@@ -93,9 +93,9 @@
       "claim": "DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::dbscan_skill_executes_and_separates_clusters_from_noise",
+      "evidence": "registered::batch1::tests::dbscan_tool_executes_and_separates_clusters_from_noise",
       "anchor_hash": "sha256:f3ebabf7e34968423cad116341e7d96fd067f0e339759795abd78bbc39b0cdf7",
-      "test_binding": "dbscan_skill_executes_and_separates_clusters_from_noise"
+      "test_binding": "dbscan_tool_executes_and_separates_clusters_from_noise"
     },
     {
       "key": "sha256:dda80e531670cb3bd281d503a7a9516e5c7dcfed68cb8e95364c95f0e953ddaa",
@@ -105,9 +105,9 @@
       "claim": "symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k]",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::eigen_skill_executes_on_symmetric_matrix",
+      "evidence": "registered::batch1::tests::eigen_tool_executes_on_symmetric_matrix",
       "anchor_hash": "sha256:7778d50d92cd959ae968c8ff10f56b3370c5b3be12299121928bd0241c51bb99",
-      "test_binding": "eigen_skill_executes_on_symmetric_matrix"
+      "test_binding": "eigen_tool_executes_on_symmetric_matrix"
     },
     {
       "key": "sha256:b1c9d6d071c8ce6f2943782ab06bd630deeb5e13a0d7b103b564b05d832c5930",
@@ -129,9 +129,9 @@
       "claim": "feature_importances fits a random forest to (data,labels) then reports permutation importance, so ranking[0] is the feature whose scrambling drops accuracy most — the label-determining feature outranks noise features",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::feature_importances_skill_ranks_informative_feature_first",
+      "evidence": "registered::batch1::tests::feature_importances_tool_ranks_informative_feature_first",
       "anchor_hash": "sha256:dbe55f5988a2aae97e76b69493d2b923401a6fb1f519cfd06ef102d39f685e56",
-      "test_binding": "feature_importances_skill_ranks_informative_feature_first"
+      "test_binding": "feature_importances_tool_ranks_informative_feature_first"
     },
     {
       "key": "sha256:dc5bed86bc0b659ac1b6e44d406629b1b9382055a7905efc501a103553d463d7",
@@ -141,9 +141,9 @@
       "claim": "svd returns U, descending non-negative singular values, and V such that U·diag(s)·Vᵀ reconstructs the input matrix (reconstruction error ≈ 0)",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::svd_skill_reconstructs_input",
+      "evidence": "registered::batch1::tests::svd_tool_reconstructs_input",
       "anchor_hash": "sha256:d5a3f0cbeea8d22ce64414716d8d9d4c60a142a74e68c04df1f0179ca196a4f1",
-      "test_binding": "svd_skill_reconstructs_input"
+      "test_binding": "svd_tool_reconstructs_input"
     },
     {
       "key": "sha256:3156021ae308c83430c5346f128396abdfd7d21f2ea08a2d8cee4c74f4f4ac6e",
@@ -153,9 +153,9 @@
       "claim": "gmm fits a k-component diagonal-covariance mixture by EM; the recomputed soft responsibilities rows each sum to 1 and on well-separated blobs the fitted means recover the blob centers",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::gmm_skill_recovers_separated_blobs",
+      "evidence": "registered::batch1::tests::gmm_tool_recovers_separated_blobs",
       "anchor_hash": "sha256:28b5fd362ea23a5ebbce36efb002fc6bbb4346768978f38b21778686ad0bffe5",
-      "test_binding": "gmm_skill_recovers_separated_blobs"
+      "test_binding": "gmm_tool_recovers_separated_blobs"
     },
     {
       "key": "sha256:8c20d4982d84365018f89e400543d09c29c12d5377312a043e380781103d2cc1",
@@ -165,9 +165,9 @@
       "claim": "wavelet_denoise rejects any signal whose length is not divisible by 2^levels (so the Haar DWT round-trips exactly); for accepted input it returns a signal of the SAME length, and with a threshold above the noise floor the denoised signal is closer to the clean signal than the noisy input (lower MSE)",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::wavelet_denoise_skill_reduces_noise",
+      "evidence": "registered::batch1::tests::wavelet_denoise_tool_reduces_noise",
       "anchor_hash": "sha256:e82f0a2ae9d9df5e13f40d265fbd67a9aa305c2180ea14145afa4a5a48827728",
-      "test_binding": "wavelet_denoise_skill_reduces_noise"
+      "test_binding": "wavelet_denoise_tool_reduces_noise"
     },
     {
       "key": "sha256:b898f703fb315291d258acf57631735670952b6cdf2fa73bd9299e337a7a784d",
@@ -177,7 +177,7 @@
       "claim": "a lowpass FIR filter reduces a signal's high-frequency content, measured as its squared consecutive-difference energy (Σ(x[i]-x[i-1])²) dropping after filtering",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::fir_lowpass_attenuates_high_frequency",
+      "evidence": "registered::batch1::tests::fir_lowpass_attenuates_high_frequency",
       "anchor_hash": "sha256:f5aec3fae2b7682a4946da19df544d954f2a78d37b673058acbd398c84e85d85",
       "test_binding": "fir_lowpass_attenuates_high_frequency"
     },
@@ -189,9 +189,9 @@
       "claim": "spectrogram requires a power-of-two window_size (the STFT uses a radix-2 FFT that would otherwise zero-pad and miscalibrate the bins); it returns an (n_frames × n_bins) magnitude matrix with n_bins = window_size/2 + 1, and a single tone localizes to the frequency bin round(f·window_size)",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::spectrogram_skill_localizes_a_tone",
+      "evidence": "registered::batch1::tests::spectrogram_tool_localizes_a_tone",
       "anchor_hash": "sha256:9d4b1470e76a9a435e50604c3ac1febca40956dca8280521dde679c4e552757f",
-      "test_binding": "spectrogram_skill_localizes_a_tone"
+      "test_binding": "spectrogram_tool_localizes_a_tone"
     },
     {
       "key": "sha256:8a4bca446fbd3d7850c861435d1ae548787cc42defaec778ae43470794726578",
@@ -201,9 +201,9 @@
       "claim": "autocorrelation returns the one-sided normalized ACF (lag 0..n-1); acf[0] = 1.0 is the global maximum, and a periodic signal shows an elevated peak at its period lag",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch1::tests::autocorrelation_skill_peaks_at_period",
+      "evidence": "registered::batch1::tests::autocorrelation_tool_peaks_at_period",
       "anchor_hash": "sha256:6839512f79b66a5e7aa338a53b24a7baf362a7fa86bf0eb50e06e986bff25ed1",
-      "test_binding": "autocorrelation_skill_peaks_at_period"
+      "test_binding": "autocorrelation_tool_peaks_at_period"
     },
     {
       "key": "sha256:da428941834bc7e0e7048b2b33320770af019ff05d620f4efeccba372639b910",
@@ -213,7 +213,7 @@
       "claim": "mesh_correlate builds the |Pearson| >= threshold graph over N equal-length series and returns betweenness centrality + connected components; a hub-and-spoke input (one stream correlated with several mutually-uncorrelated others) ranks the hub highest",
       "verdict": "T",
       "certainty": "Test",
-      "evidence": "skills::batch2::tests::mesh_correlate_finds_hub",
+      "evidence": "registered::batch2::tests::mesh_correlate_finds_hub",
       "anchor_hash": "sha256:07714cbb672c362163c4c5905fb4df3a535087fc00e413fe907305f2ee5a410d",
       "test_binding": "mesh_correlate_finds_hub"
     },
@@ -1509,7 +1509,7 @@
       "claim": "from_run's `initial_inputs` is the SAME seed map passed to execute() this run; else a seed-backed resolved_args_hash silently degrades to the template hash",
       "verdict": "U",
       "certainty": "Uncertain",
-      "evidence": "ix-skill pipeline.rs run() passes one shared empty map to both — unenforced precondition",
+      "evidence": "ix-cli pipeline.rs run() passes one shared empty map to both — unenforced precondition",
       "anchor_hash": "sha256:f95f70c18f0ffcb470281a493e4ce17a98832beece682ee4d6761da266f8b527",
       "test_binding": null
     },
@@ -1659,7 +1659,7 @@
     },
     {
       "key": "sha256:6511bb88a56c682ef0cf5414b979950553c36152bf89adbf74a7d2413fce0a74",
-      "path": "crates/ix-skill/src/verbs/compile.rs",
+      "path": "crates/ix-cli/src/verbs/compile.rs",
       "line": 1737,
       "kind": "invariant",
       "claim": "fixed-ref z-norm (E) is affine-identical to raw (A) on AUC/TNR/near-miss — a monotone affine map is rank- and ID-quantile-invariant",
@@ -1671,7 +1671,7 @@
     },
     {
       "key": "sha256:cc19c55cbfe8379f7037d60faad7f46b7c4b67837dca48d7ad7b3cde620cf07e",
-      "path": "crates/ix-skill/src/verbs/compile.rs",
+      "path": "crates/ix-cli/src/verbs/compile.rs",
       "line": 1738,
       "kind": "assumption",
       "claim": "on the 184-probe corpus + bge-base-en, raw mean-top-3 cosine dominates every per-query/margin/kNN calibration on AUC, so the gate keeps the raw threshold — CONDITIONAL on the corpus + embedder, re-run on change",

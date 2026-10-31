@@ -40,7 +40,7 @@ runtime coupling** (the ecosystem's JSON-on-disk contract pattern).
 - **The DuckDB course capstone BUILDS the Registrar.** `/teach DuckDB` L5 capstone = generate the catalog + write 3 registrar queries — learning the tool produces Streeling Tier 2. (folded)
 
 ## Open Questions (for planning)
-- Where does the generator live? (Recommend a small `ix-duck` bin or an `ix-skill` verb, behind the optional `duck`/a plain-Rust path so the catalog build doesn't need DuckDB — DuckDB only *reads* the catalog.)
+- Where does the generator live? (Recommend a small `ix-duck` bin or an `ix-cli` verb, behind the optional `duck`/a plain-Rust path so the catalog build doesn't need DuckDB — DuckDB only *reads* the catalog.)
 - The contract schema fields (superset of ix/ga frontmatter: `repo, category, title, date, tags, symptom, root_cause, path`) + where it's versioned (`docs/contracts/streeling-learning.contract.md`).
 - tars/Demerzel adapters: in v1 or fast-follow? (Recommend: contract + ix/ga in v1; tars/Demerzel adapters as the first fast-follow so v1 isn't blocked on 90 heterogeneous tars files.)
 - Campus index: hand-curated vs generated from the catalog? (Recommend: generated sections from the catalog + a hand-written intro, so it never drifts.)

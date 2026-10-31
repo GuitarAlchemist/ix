@@ -1,6 +1,6 @@
 # Mirroring the ix registry pattern to tars + ga
 
-A checklist for porting ix's `#[ix_skill]`-backed capability registry
+A checklist for porting ix's `#[ix_tool]`-backed capability registry
 to the F# (tars) and C# (ga) repos. The end state: all three repos
 expose their tools through an identical link-time registry that unifies
 CLI, MCP server, and visual surfaces.
@@ -9,8 +9,8 @@ CLI, MCP server, and visual surfaces.
 
 | Problem solved | ix solution |
 |---|---|
-| Tool list drifts between CLI / MCP / UI | Single `IX_SKILLS` distributed slice, all surfaces read from it |
-| Adding a tool requires edits in 3+ places | One `#[ix_skill]` annotation on the source function |
+| Tool list drifts between CLI / MCP / UI | Single `IX_TOOLS` distributed slice, all surfaces read from it |
+| Adding a tool requires edits in 3+ places | One `#[ix_tool]` annotation on the source function |
 | Schema hand-coded for each surface | Hand-written JSON schemas referenced by `schema_fn` attribute |
 | New tools miss the MCP surface | Parity test asserts exact registry count |
 | Dead-code elimination silently strips tools | Documented force-link pattern |
@@ -27,10 +27,10 @@ but the architectural primitives carry over.
 | ix concept | tars equivalent |
 |---|---|
 | `#[linkme::distributed_slice]` | F# `module` with `[<assembly: AssemblyAttribute>]` + reflection |
-| `#[ix_skill]` proc-macro | F# attribute type + source generator (or `ModuleInitializer`) |
-| `SkillDescriptor` struct | F# record: `TarsSkill = { Name; Domain; Inputs; Outputs; Handler }` |
+| `#[ix_tool]` proc-macro | F# attribute type + source generator (or `ModuleInitializer`) |
+| `ToolDescriptor` struct | F# record: `TarsSkill = { Name; Domain; Inputs; Outputs; Handler }` |
 | `linkme` crate | `System.Reflection.Assembly.GetTypes()` at startup |
-| `IX_SKILLS` slice | Static `ImmutableArray<TarsSkill>` built at startup |
+| `IX_TOOLS` slice | Static `ImmutableArray<TarsSkill>` built at startup |
 | `ix_registry::by_name` | `Map<string, TarsSkill>` lookup |
 | `fn_ptr` dispatch | `Json -> Result<Json, string>` delegate |
 
@@ -92,7 +92,7 @@ let promoteGrammar (input: JToken) : Result<JToken, string> =
 
 | ix concept | ga equivalent |
 |---|---|
-| `#[ix_skill]` | `[GaSkill(Name="...")]` attribute on static methods |
+| `#[ix_tool]` | `[GaSkill(Name="...")]` attribute on static methods |
 | `#[linkme::distributed_slice]` | `[ModuleInitializer]` method that registers into static list |
 | Proc-macro | Roslyn source generator (optional — reflection works fine at 100-tool scale) |
 | `ix_registry::by_name` | `ConcurrentDictionary<string, GaSkill>` |
@@ -214,7 +214,7 @@ Each consumer crate / project that wants to enumerate skills from a
 sibling module needs a force-link reference to prevent dead-code
 elimination:
 
-- **Rust**: `pub use sibling_crate::skills as _ix_agent_skills;`
+- **Rust**: `pub use sibling_crate::registered as _ix_agent_registered;`
 - **F#**: reference the assembly from a startup path, or use
   `assembly: AssemblyAttribute("TarsSkillProvider", ...)` markers
 - **C#**: `ModuleInitializer` in the assembly containing the skills
@@ -250,6 +250,6 @@ mostly mechanical translation.
 
 - `docs/FEDERATION.md` — cross-repo integration architecture
 - `crates/ix-registry/src/lib.rs` — reference Rust implementation
-- `crates/ix-skill-macros/src/lib.rs` — proc-macro to model after
-- `crates/ix-agent/src/skills/batch1.rs` — example annotated wrappers
+- `crates/ix-tool-macros/src/lib.rs` — proc-macro to model after
+- `crates/ix-agent/src/registered/batch1.rs` — example annotated wrappers
 - `crates/ix-agent/tests/parity.rs` — parity test pattern

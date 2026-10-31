@@ -10,7 +10,7 @@ keywords = ["tts", "speech", "piper", "voice", "client"]
 description = "Client of the local voice service (piper-voice): speak text aloud sentence by sentence, stop, list the voices. Piper itself stays outside the workspace (ADR-0013)."
 
 [dependencies]
-# Plain HTTP to 127.0.0.1, so no TLS stack. Blocking, like ix-skill's and ix-agent's clients.
+# Plain HTTP to 127.0.0.1, so no TLS stack. Blocking, like ix-cli's and ix-agent's clients.
 reqwest = { version = "0.12", features = ["blocking", "json"], default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }

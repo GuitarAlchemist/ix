@@ -1,6 +1,6 @@
 # ix — ML Algorithms + Governance for Claude Code Skills
 
-Rust workspace (81 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
+Rust workspace (81 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-cli`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
 
 **Crate map**: see `README.md` for the full list of 81 crates grouped by domain.
 
@@ -15,14 +15,14 @@ cargo clippy --workspace -- -D warnings
 Pre-PR gate — one command, actionable failures (ix#185):
 
 ```bash
-cargo run -p ix-skill --bin ix -- doctor          # fast repo-specific surface checks
-cargo run -p ix-skill --bin ix -- doctor --full   # plus the CI clippy + test invocation
+cargo run -p ix-cli --bin ix -- doctor          # fast repo-specific surface checks
+cargo run -p ix-cli --bin ix -- doctor --full   # plus the CI clippy + test invocation
 ```
 
 It checks registry-snapshot drift (no hand-typed tool counts), orphan public
 traits, the harness's hooks (`.claude/hooks/*.sh` present, parsing, their
 `test-*.sh` fixtures green), and the governance/state environment. Per-change-type checklists —
-MCP skill, DuckDB UDF, public API, `@ai:` invariant — live in
+MCP tool, DuckDB UDF, public API, `@ai:` invariant — live in
 [docs/CHECKLISTS.md](docs/CHECKLISTS.md) ([FR](docs/fr/CHECKLISTS.md)).
 
 Repo harness verification:

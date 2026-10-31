@@ -5,7 +5,7 @@ name: Stable Surface Guard
 # `crate-maturity.toml` or (b) a major version bump on the crate.
 #
 # Source of truth: `crate-maturity.toml` (workspace root).
-# Implementation: `ix stable-surface --format=json` (in crates/ix-skill).
+# Implementation: `ix stable-surface --format=json` (in crates/ix-cli).
 # Policy doc: README.md "Stability contract" section.
 
 on:
@@ -50,15 +50,17 @@ jobs:
             pr
             base
 
-      - name: Build ix-skill on PR
+      - name: Build ix-cli on PR
         working-directory: pr
-        run: cargo build -p ix-skill --bin ix --release
+        run: cargo build -p ix-cli --bin ix --release
 
-      - name: Build ix-skill on base
+      - name: Build ix CLI on base
         working-directory: base
-        # Tolerate base lacking the verb (first introduction); fall back to
-        # the PR binary running against the base workspace tree.
-        run: cargo build -p ix-skill --bin ix --release || echo "base has no ix-skill stable-surface verb yet — will use PR binary"
+        # The base may predate the crate rename (ix#474): try `-p ix-cli`, then
+        # the old package name. Tolerate base lacking the verb (first
+        # introduction); fall back to the PR binary running against the base
+        # workspace tree.
+        run: cargo build -p ix-cli --bin ix --release || cargo build -p ix-skill --bin ix --release || echo "base has no ix stable-surface verb yet — will use PR binary"
 
       - name: Capture PR report
         working-directory: pr

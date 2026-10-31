@@ -26,7 +26,7 @@ The brainstorm's load-bearing insight, from Gemini: **"Don't build a Context obj
 - First-class `replay_seed: u64` in `ReadContext` — closes Gemini's "if RNG state isn't in context, replay is an illusion" critique
 - `AgentAction` as a tagged enum with ordinal, correlation ID, and a `loop_key()` helper
 - `ix-loop-detect` rewritten to consume `&AgentAction` — breaking change, explicitly approved
-- Backwards compat for the 48 existing `fn(Value) → Result<Value, String>` skills via `LegacyAdapter`
+- Backwards compat for the 48 existing `fn(Value) → Result<Value, String>` tools via `LegacyAdapter`
 
 ---
 
@@ -509,12 +509,12 @@ Every arrow is an event in the log. Replay traverses the same flow, but the midd
 
 ## Backwards compatibility
 
-**Non-negotiable:** the 48 existing `#[ix_skill]`-annotated tools must keep working with zero signature changes.
+**Non-negotiable:** the 48 existing `#[ix_tool]`-annotated tools must keep working with zero signature changes.
 
 ### The `LegacyAdapter`
 
 ```rust
-/// Adapts a `fn(Value) → Result<Value, String>` legacy skill to the
+/// Adapts a `fn(Value) → Result<Value, String>` legacy tool to the
 /// new `AgentHandler` trait.
 pub struct LegacyAdapter {
     pub inner: fn(JsonValue) -> Result<JsonValue, String>,
@@ -617,13 +617,13 @@ The breaking change is bounded: only the 8 tests + 1 dispatcher call site need u
 
 1. **Should `metadata: BTreeMap<String, JsonValue>` enforce path namespacing?** e.g., reject keys that don't match `^[a-z][a-z0-9_]*(/[a-z][a-z0-9_]*)*$`. Helps prevent middleware from polluting the top level, but adds runtime validation overhead.
 
-2. **Does `ReadContext::synthetic_for_legacy()` carry meaningful defaults or just zeros?** If zeros, legacy skills see `session_id = ""`, `ordinal = 0`, `replay_seed = 0` — which means ML tools calling from legacy paths get the same seed every time. Is that the right default, or should we use a process-startup random seed that stays stable for the process lifetime?
+2. **Does `ReadContext::synthetic_for_legacy()` carry meaningful defaults or just zeros?** If zeros, legacy tools see `session_id = ""`, `ordinal = 0`, `replay_seed = 0` — which means ML tools calling from legacy paths get the same seed every time. Is that the right default, or should we use a process-startup random seed that stays stable for the process lifetime?
 
 3. **Where does the belief projection come from?** `ReadContext::beliefs: BTreeMap<String, Hexavalent>`. Populated by what? ix-session reading Demerzel's `state/beliefs/*.yaml`? A separate `ix-belief-proj` crate? For v1 this can be empty, but the hook should exist.
 
 4. **EventSink trait object vs. generic parameter?** `pub struct WriteContext<'a>` has `sink: &'a mut dyn EventSink`. Alternative: `WriteContext<'a, S: EventSink>`. Trait object is simpler for registry tables; generic is faster and avoids vtable dispatch. **Recommendation: trait object for v1** — performance can be measured later.
 
-5. **Should `AgentAction::InvokeTool::params` be `JsonValue` or a typed socket?** Current ix-agent skills use `JsonValue`. Typed sockets would require per-tool schemas at the action level. **Recommendation: `JsonValue` for v1** — matches the existing skill surface and keeps ix-agent-core dependency-free of ix-registry.
+5. **Should `AgentAction::InvokeTool::params` be `JsonValue` or a typed socket?** Current ix-agent tools use `JsonValue`. Typed sockets would require per-tool schemas at the action level. **Recommendation: `JsonValue` for v1** — matches the existing tool surface and keeps ix-agent-core dependency-free of ix-registry.
 
 6. **Does `ReadContext` need a `persona: Option<String>`?** Demerzel personas are a thing. For v1, `persona` can live in `metadata["demerzel/persona"]` and avoid a hard coupling to ix-governance.
 

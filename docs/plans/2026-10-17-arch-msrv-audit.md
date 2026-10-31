@@ -32,7 +32,7 @@ revisit-trigger: a lock refresh, wgpu past 28, or a consumer's build failure on 
 Every workspace member inherits `rust-version = "1.80"` (`Cargo.toml:98`).
 `CLAUDE.md:33` and `README.md:475` say "MSRV: Rust 1.80+ (due to wgpu 28)".
 But wgpu 28.0.0 declares Rust 1.92, so that sentence contradicts itself, and
-the declaration is false for the CLI (`ix-skill`) and the MCP server
+the declaration is false for the CLI (`ix-cli`) and the MCP server
 (`ix-agent`).
 
 Two groups are hurt:
@@ -80,7 +80,7 @@ What this does **not** establish:
    `resolver = "2"`, so a fresh `cargo update`, or a CI checkout without a
    lock, may resolve newer versions that declare more. The numbers move with
    the lock.
-4. **One feature cell is missing.** `ix-skill --all-features` did not resolve
+4. **One feature cell is missing.** `ix-cli --all-features` did not resolve
    offline on any target, because a feature-only crate is not in the local
    cache.
 5. **Only the two feature extremes were measured.** Single features in
@@ -94,7 +94,7 @@ What this does **not** establish:
   their own.
 - **The target never changed a maximum.** For every member and feature set,
   all three targets gave the same highest declaration. Closure sizes do
-  differ: `ix-skill` with default features has 342, 328 and 320 packages on
+  differ: `ix-cli` with default features has 342, 328 and 320 packages on
   Windows, Linux and macOS.
 - **The worst case**, over targets and feature sets, sorts the members like
   this:
@@ -127,7 +127,7 @@ means that no package in that closure declares a `rust-version`.
 | Member | Declares | Closure max, default features | Closure max, all features | Highest declarations above the member's own |
 |---|---|---|---|---|
 | memristive-markov | 1.80 | 1.77.0 | 1.92.0 | wgpu 28.0.0 (1.92), ordered-float 5.5.0 (1.90), indexmap 2.14.2 (1.85) … |
-| ix-skill | 1.80 | 1.92.0 | not resolved offline | wgpu 28.0.0 (1.92), ordered-float 5.5.0 (1.90), tree-sitter-language 0.1.9 (1.90) … |
+| ix-cli | 1.80 | 1.92.0 | not resolved offline | wgpu 28.0.0 (1.92), ordered-float 5.5.0 (1.90), tree-sitter-language 0.1.9 (1.90) … |
 | ix-nn | 1.80 | 1.92.0 | 1.92.0 | wgpu 28.0.0 (1.92), ordered-float 5.5.0 (1.90), indexmap 2.14.2 (1.85) … |
 | ix-gpu | 1.80 | 1.92.0 | 1.92.0 | wgpu 28.0.0 (1.92), ordered-float 5.5.0 (1.90), indexmap 2.14.2 (1.85) … |
 | ix-demo | 1.80 | 1.92.0 | 1.92.0 | wgpu 28.0.0 (1.92), tree-sitter-language 0.1.9 (1.90), ordered-float 5.5.0 (1.90) … |
@@ -172,11 +172,11 @@ features, on Windows and Linux:
   is stable since 1.89. Its closure has 21 packages, itself included, and
   declares at most 1.71 (proc-macro2 1.0.107, quote 1.0.47, serde_json
   1.0.154, zmij 1.0.23).
-- **ix-skill on that branch** has 344 packages on Windows and 330 on Linux,
+- **ix-cli on that branch** has 344 packages on Windows and 330 on Linux,
   itself included (§3 counts exclude the member).
   Its highest declarations are wgpu 28.0.0 (1.92), tree-sitter-language
   0.1.9 (1.90), ordered-float 5.5.0 (1.90) and uuid 1.28.0 (1.89.0).
-- **ix-skill on main**, without ix-recover, already declares 1.92 (§3).
+- **ix-cli on main**, without ix-recover, already declares 1.92 (§3).
 
 So, by declared bounds and with this lock, adding ix-recover does **not**
 raise the CLI's highest declaration: its 1.89 is below the 1.92 already
@@ -235,7 +235,7 @@ The decision is the operator's. I recommend a tracer bullet, as one PR:
    `compound-engineering.local.md:13`.
 2. **A, limited to the 1.92 group.** Raise `rust-version` to 1.92 for the five
    members whose *default* closure declares it: `ix-gpu`, `ix-nn`,
-   `ix-agent`, `ix-demo` and `ix-skill`. `memristive-markov` gets the feature
+   `ix-agent`, `ix-demo` and `ix-cli`. `memristive-markov` gets the feature
    comment instead.
 3. **C2 as a warning in `ix doctor`**, with a test. It reports what §3
    reports.

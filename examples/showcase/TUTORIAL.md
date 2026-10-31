@@ -4,7 +4,7 @@ A narrative walkthrough that takes you from "cold repo" to "production
 pipeline with governance gate" — building a customer-churn predictor
 from scratch. Every command is runnable; copy and paste as you go.
 
-Prereq: you've run `cargo build -p ix-skill` so the `ix` binary exists.
+Prereq: you've run `cargo build -p ix-cli` so the `ix` binary exists.
 
 ---
 

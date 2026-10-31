@@ -14,8 +14,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+use ix_agent::registered::petri::analyze_and_render;
 use ix_agent::server_context::{tools_call_result, ServerContext};
-use ix_agent::skills::petri::analyze_and_render;
 use ix_petri::json::{admit, heap_bound, JsonNetError, NetSpec, Output};
 use ix_petri::json::{HEAP_BUDGET_BYTES, MAX_STATES_CEILING};
 use ix_petri::{Limits, PetriNet};

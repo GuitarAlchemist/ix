@@ -38,7 +38,7 @@ members = [
     "crates/ix-rotation",
     "crates/ix-fractal",
     "crates/ix-number-theory",
-    "crates/ix-skill",
+    "crates/ix-cli",
     "crates/ix-demo",
     "crates/ix-governance",
     "crates/ix-code",
@@ -46,7 +46,7 @@ members = [
     "crates/memristive-markov",
     "crates/ix-types",
     "crates/ix-registry",
-    "crates/ix-skill-macros",
+    "crates/ix-tool-macros",
     "crates/ix-context",
     "crates/ix-loop-detect",
     "crates/ix-manifold",
@@ -177,7 +177,7 @@ ix-governance = { path = "crates/ix-governance", version = "0.1.0" }
 ix-code = { path = "crates/ix-code", version = "0.1.0" }
 ix-types = { path = "crates/ix-types", version = "0.1.0" }
 ix-registry = { path = "crates/ix-registry", version = "0.1.0" }
-ix-skill-macros = { path = "crates/ix-skill-macros", version = "0.1.0" }
+ix-tool-macros = { path = "crates/ix-tool-macros", version = "0.1.0" }
 ix-context = { path = "crates/ix-context", version = "0.1.0" }
 ix-loop-detect = { path = "crates/ix-loop-detect", version = "0.1.0" }
 ix-manifold = { path = "crates/ix-manifold", version = "0.1.0" }

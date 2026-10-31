@@ -18,13 +18,13 @@ pub mod ml_pipeline;
 /// Confinement of caller-supplied paths for tools that run without a prompt.
 mod path_confine;
 pub mod projection;
+pub mod registered;
 pub mod registry_bridge;
 /// A small JSON-Schema builder DSL for MCP tool input/output schemas — collapses the
-/// repeated `json!({...})` property shapes used across `tools.rs` + the `#[ix_skill]`
+/// repeated `json!({...})` property shapes used across `tools.rs` + the `#[ix_tool]`
 /// `schema_fn`s. See `schema.rs`.
 mod schema;
 pub mod scopes;
 pub mod server_context;
-pub mod skills;
 pub mod tools;
 pub mod triage;

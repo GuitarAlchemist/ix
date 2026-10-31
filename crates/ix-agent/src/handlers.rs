@@ -412,7 +412,7 @@ pub fn pca(params: Value) -> Result<Value, String> {
 
 // ── ix_dbscan ────────────────────────────────────────────────
 
-// @ai:invariant DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0 [T:test conf:0.9 src:skills::batch1::tests::dbscan_skill_executes_and_separates_clusters_from_noise]
+// @ai:invariant DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0 [T:test conf:0.9 src:registered::batch1::tests::dbscan_tool_executes_and_separates_clusters_from_noise]
 pub fn dbscan(params: Value) -> Result<Value, String> {
     use ix_unsupervised::traits::Clusterer;
     use std::collections::BTreeSet;
@@ -439,7 +439,7 @@ pub fn dbscan(params: Value) -> Result<Value, String> {
     };
     // Reject min_points < 1: with min_points=0 every point clears the core
     // threshold (a point is its own neighbour), so nothing is ever noise and the
-    // skill's advertised "0 = noise" contract becomes unreachable.
+    // tool's advertised "0 = noise" contract becomes unreachable.
     if min_points < 1 {
         return Err("min_points must be >= 1".to_string());
     }
@@ -465,7 +465,7 @@ pub fn dbscan(params: Value) -> Result<Value, String> {
 
 // ── ix_eigen ────────────────────────────────────────────────
 
-// @ai:invariant symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k] [T:test conf:0.9 src:skills::batch1::tests::eigen_skill_executes_on_symmetric_matrix]
+// @ai:invariant symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k] [T:test conf:0.9 src:registered::batch1::tests::eigen_tool_executes_on_symmetric_matrix]
 pub fn eigen(params: Value) -> Result<Value, String> {
     let rows = parse_f64_matrix(&params, "matrix")?;
     let n = rows.len();
@@ -553,7 +553,7 @@ pub fn silhouette(params: Value) -> Result<Value, String> {
 
 // ── ix_feature_importances ───────────────────────────────────
 
-// @ai:invariant feature_importances fits a random forest to (data,labels) then reports permutation importance, so ranking[0] is the feature whose scrambling drops accuracy most — the label-determining feature outranks noise features [T:test conf:0.85 src:skills::batch1::tests::feature_importances_skill_ranks_informative_feature_first]
+// @ai:invariant feature_importances fits a random forest to (data,labels) then reports permutation importance, so ranking[0] is the feature whose scrambling drops accuracy most — the label-determining feature outranks noise features [T:test conf:0.85 src:registered::batch1::tests::feature_importances_tool_ranks_informative_feature_first]
 pub fn feature_importances(params: Value) -> Result<Value, String> {
     use ix_ensemble::traits::EnsembleClassifier;
 
@@ -623,7 +623,7 @@ pub fn feature_importances(params: Value) -> Result<Value, String> {
 
 // ── ix_svd ───────────────────────────────────────────────────
 
-// @ai:invariant svd returns U, descending non-negative singular values, and V such that U·diag(s)·Vᵀ reconstructs the input matrix (reconstruction error ≈ 0) [T:test conf:0.9 src:skills::batch1::tests::svd_skill_reconstructs_input]
+// @ai:invariant svd returns U, descending non-negative singular values, and V such that U·diag(s)·Vᵀ reconstructs the input matrix (reconstruction error ≈ 0) [T:test conf:0.9 src:registered::batch1::tests::svd_tool_reconstructs_input]
 pub fn svd(params: Value) -> Result<Value, String> {
     let rows = parse_f64_matrix(&params, "matrix")?;
     if rows.is_empty() {
@@ -649,7 +649,7 @@ pub fn svd(params: Value) -> Result<Value, String> {
 
 // ── ix_gmm ───────────────────────────────────────────────────
 
-// @ai:invariant gmm fits a k-component diagonal-covariance mixture by EM; the recomputed soft responsibilities rows each sum to 1 and on well-separated blobs the fitted means recover the blob centers [T:test conf:0.85 src:skills::batch1::tests::gmm_skill_recovers_separated_blobs]
+// @ai:invariant gmm fits a k-component diagonal-covariance mixture by EM; the recomputed soft responsibilities rows each sum to 1 and on well-separated blobs the fitted means recover the blob centers [T:test conf:0.85 src:registered::batch1::tests::gmm_tool_recovers_separated_blobs]
 pub fn gmm(params: Value) -> Result<Value, String> {
     use ix_unsupervised::traits::Clusterer;
 
@@ -758,7 +758,7 @@ fn gmm_responsibilities(
 
 // ── ix_wavelet_denoise ───────────────────────────────────────
 
-// @ai:invariant wavelet_denoise rejects any signal whose length is not divisible by 2^levels (so the Haar DWT round-trips exactly); for accepted input it returns a signal of the SAME length, and with a threshold above the noise floor the denoised signal is closer to the clean signal than the noisy input (lower MSE) [T:test conf:0.85 src:skills::batch1::tests::wavelet_denoise_skill_reduces_noise]
+// @ai:invariant wavelet_denoise rejects any signal whose length is not divisible by 2^levels (so the Haar DWT round-trips exactly); for accepted input it returns a signal of the SAME length, and with a threshold above the noise floor the denoised signal is closer to the clean signal than the noisy input (lower MSE) [T:test conf:0.85 src:registered::batch1::tests::wavelet_denoise_tool_reduces_noise]
 pub fn wavelet_denoise(params: Value) -> Result<Value, String> {
     let signal = parse_f64_array(&params, "signal")?;
     if signal.is_empty() {
@@ -798,7 +798,7 @@ pub fn wavelet_denoise(params: Value) -> Result<Value, String> {
 
 // ── ix_fir_filter ────────────────────────────────────────────
 
-// @ai:invariant a lowpass FIR filter reduces a signal's high-frequency content, measured as its squared consecutive-difference energy (Σ(x[i]-x[i-1])²) dropping after filtering [T:test conf:0.85 src:skills::batch1::tests::fir_lowpass_attenuates_high_frequency]
+// @ai:invariant a lowpass FIR filter reduces a signal's high-frequency content, measured as its squared consecutive-difference energy (Σ(x[i]-x[i-1])²) dropping after filtering [T:test conf:0.85 src:registered::batch1::tests::fir_lowpass_attenuates_high_frequency]
 pub fn fir_filter(params: Value) -> Result<Value, String> {
     let signal = parse_f64_array(&params, "signal")?;
     if signal.is_empty() {
@@ -1142,7 +1142,7 @@ mod kalman_estimates_tests {
 
 // ── ix_spectrogram ───────────────────────────────────────────
 
-// @ai:invariant spectrogram requires a power-of-two window_size (the STFT uses a radix-2 FFT that would otherwise zero-pad and miscalibrate the bins); it returns an (n_frames × n_bins) magnitude matrix with n_bins = window_size/2 + 1, and a single tone localizes to the frequency bin round(f·window_size) [T:test conf:0.85 src:skills::batch1::tests::spectrogram_skill_localizes_a_tone]
+// @ai:invariant spectrogram requires a power-of-two window_size (the STFT uses a radix-2 FFT that would otherwise zero-pad and miscalibrate the bins); it returns an (n_frames × n_bins) magnitude matrix with n_bins = window_size/2 + 1, and a single tone localizes to the frequency bin round(f·window_size) [T:test conf:0.85 src:registered::batch1::tests::spectrogram_tool_localizes_a_tone]
 pub fn spectrogram(params: Value) -> Result<Value, String> {
     let signal = parse_f64_array(&params, "signal")?;
     if signal.is_empty() {
@@ -1191,7 +1191,7 @@ pub fn spectrogram(params: Value) -> Result<Value, String> {
 
 // ── ix_autocorrelation ───────────────────────────────────────
 
-// @ai:invariant autocorrelation returns the one-sided normalized ACF (lag 0..n-1); acf[0] = 1.0 is the global maximum, and a periodic signal shows an elevated peak at its period lag [T:test conf:0.9 src:skills::batch1::tests::autocorrelation_skill_peaks_at_period]
+// @ai:invariant autocorrelation returns the one-sided normalized ACF (lag 0..n-1); acf[0] = 1.0 is the global maximum, and a periodic signal shows an elevated peak at its period lag [T:test conf:0.9 src:registered::batch1::tests::autocorrelation_tool_peaks_at_period]
 pub fn autocorrelation(params: Value) -> Result<Value, String> {
     let signal = parse_f64_array(&params, "signal")?;
     if signal.is_empty() {
@@ -1210,7 +1210,7 @@ pub fn autocorrelation(params: Value) -> Result<Value, String> {
     }))
 }
 
-// @ai:invariant mesh_correlate builds the |Pearson| >= threshold graph over N equal-length series and returns betweenness centrality + connected components; a hub-and-spoke input (one stream correlated with several mutually-uncorrelated others) ranks the hub highest [T:test conf:0.85 src:skills::batch2::tests::mesh_correlate_finds_hub]
+// @ai:invariant mesh_correlate builds the |Pearson| >= threshold graph over N equal-length series and returns betweenness centrality + connected components; a hub-and-spoke input (one stream correlated with several mutually-uncorrelated others) ranks the hub highest [T:test conf:0.85 src:registered::batch2::tests::mesh_correlate_finds_hub]
 pub fn mesh_correlate(params: Value) -> Result<Value, String> {
     use ix_graph::graph::Graph;
     let series = parse_f64_matrix(&params, "series")?;
@@ -1221,7 +1221,7 @@ pub fn mesh_correlate(params: Value) -> Result<Value, String> {
     }
     // Pairwise Pearson → threshold edges → graph. The thresholding happens here at run
     // time (a pipeline spec can't threshold edges at build time), which is exactly why
-    // this fan-in is a skill: it turns N stream features into one correlation graph.
+    // this fan-in is a tool: it turns N stream features into one correlation graph.
     let mut corr = vec![vec![0.0f64; n]; n];
     let mut g = Graph::with_nodes(n);
     for i in 0..n {
@@ -3039,7 +3039,7 @@ pub fn pipeline_compile_placeholder(_params: Value) -> Result<Value, String> {
 // Direct-API proposer; NO MCP sampling (deprecated, unsupported by Claude
 // Code). Extracting the core into a shared lib so this calls it in-process is
 // the `unify` follow-up; shelling the sibling binary keeps behavior identical
-// today with no circular ix-skill<->ix-agent dependency.
+// today with no circular ix-cli<->ix-agent dependency.
 
 /// `ix_nl_to_pipeline` handler — wraps `ix pipeline compile`.
 pub fn nl_to_pipeline(params: Value) -> Result<Value, String> {
@@ -5024,7 +5024,7 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
             "absent",
             Some(
                 "no ledger at this path — no quality gate has recorded a run here. \
-                 This is NOT evidence that gates passed. Run `cargo run -p ix-skill \
+                 This is NOT evidence that gates passed. Run `cargo run -p ix-cli \
                  --bin ix -- doctor` to record one, or pass `ledger_path` to point at \
                  a repo that has a ledger."
                     .to_string(),

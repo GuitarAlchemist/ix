@@ -1,29 +1,29 @@
-//! End-to-end smoke test for the `#[ix_skill]` macro + `linkme` + registry.
+//! End-to-end smoke test for the `#[ix_tool]` macro + `linkme` + registry.
 //!
 //! Annotates three trivial functions, then verifies:
-//!   1. They all appear in `IX_SKILLS` (sentinel filtered).
-//!   2. Their `SkillDescriptor` metadata is correct.
+//!   1. They all appear in `IX_TOOLS` (sentinel filtered).
+//!   2. Their `ToolDescriptor` metadata is correct.
 //!   3. `invoke()` decodes args, calls the handler, and encodes the result.
-//!   4. A `Result`-returning skill propagates `Err(_)` as `SkillError::Exec`.
+//!   4. A `Result`-returning tool propagates `Err(_)` as `ToolError::Exec`.
 
-use ix_registry::{by_domain, by_name, count, invoke, search, SkillError};
-use ix_skill_macros::ix_skill;
+use ix_registry::{by_domain, by_name, count, invoke, search, ToolError};
+use ix_tool_macros::ix_tool;
 use ix_types::{IxVector, Value};
 
 /// Add two scalars.
-#[ix_skill(domain = "canary")]
+#[ix_tool(domain = "canary")]
 pub fn add(a: f64, b: f64) -> f64 {
     a + b
 }
 
 /// Sum the elements of a vector.
-#[ix_skill(domain = "canary", governance = "deterministic")]
+#[ix_tool(domain = "canary", governance = "deterministic")]
 pub fn vec_sum(v: IxVector) -> f64 {
     v.0.sum()
 }
 
 /// Divide, returning `Err` on zero divisor (tests Result unwrapping).
-#[ix_skill(domain = "canary")]
+#[ix_tool(domain = "canary")]
 pub fn divide(a: f64, b: f64) -> Result<f64, String> {
     if b == 0.0 {
         Err("division by zero".into())
@@ -33,10 +33,10 @@ pub fn divide(a: f64, b: f64) -> Result<f64, String> {
 }
 
 #[test]
-fn all_three_skills_are_registered() {
-    // At least the 3 canary skills are present (the workspace may link
+fn all_three_tools_are_registered() {
+    // At least the 3 canary tools are present (the workspace may link
     // others in the future; assert a lower bound instead of equality).
-    assert!(count() >= 3, "expected ≥ 3 skills, got {}", count());
+    assert!(count() >= 3, "expected ≥ 3 tools, got {}", count());
 
     assert!(by_name("registry.canary.add").is_some());
     assert!(by_name("registry.canary.vec_sum").is_some());
@@ -61,7 +61,7 @@ fn descriptor_metadata_is_correct() {
 }
 
 #[test]
-fn invoke_scalar_skill() {
+fn invoke_scalar_tool() {
     let out = invoke(
         "registry.canary.add",
         &[Value::Scalar(2.0), Value::Scalar(3.5)],
@@ -74,7 +74,7 @@ fn invoke_scalar_skill() {
 }
 
 #[test]
-fn invoke_vector_skill() {
+fn invoke_vector_tool() {
     let v = IxVector::new(vec![1.0, 2.0, 3.0, 4.0]);
     let out = invoke(
         "registry.canary.vec_sum",
@@ -91,7 +91,7 @@ fn invoke_vector_skill() {
 fn invoke_wrong_arity_returns_error() {
     let err = invoke("registry.canary.add", &[Value::Scalar(1.0)]).unwrap_err();
     match err {
-        SkillError::Arity { expected, actual } => {
+        ToolError::Arity { expected, actual } => {
             assert_eq!(expected, 2);
             assert_eq!(actual, 1);
         }
@@ -106,7 +106,7 @@ fn invoke_wrong_type_returns_type_error() {
         &[Value::Text("nope".into()), Value::Scalar(1.0)],
     )
     .unwrap_err();
-    assert!(matches!(err, SkillError::Type { arg_index: 0, .. }));
+    assert!(matches!(err, ToolError::Type { arg_index: 0, .. }));
 }
 
 #[test]
@@ -117,13 +117,13 @@ fn result_err_propagates_as_exec() {
     )
     .unwrap_err();
     match err {
-        SkillError::Exec(msg) => assert!(msg.contains("division by zero")),
+        ToolError::Exec(msg) => assert!(msg.contains("division by zero")),
         other => panic!("expected Exec error, got {other:?}"),
     }
 }
 
 #[test]
-fn by_domain_groups_canary_skills() {
+fn by_domain_groups_canary_tools() {
     let canary = by_domain("canary");
     assert_eq!(canary.len(), 3);
 }
