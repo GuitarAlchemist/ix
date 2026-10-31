@@ -188,8 +188,18 @@ impl Store {
         let lib = self.root.join("library");
         std::fs::create_dir_all(&lib).map_err(|e| format!("accept: {e}"))?;
         let file = lib.join(format!("{name}.{ext}"));
-        std::fs::write(&file, doc["body"].as_str().unwrap_or(""))
-            .map_err(|e| format!("accept: {e}"))?;
+        // create_new: a taken name is a visible conflict, never a silent replacement.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+            .and_then(|mut f| f.write_all(doc["body"].as_str().unwrap_or("").as_bytes()))
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => {
+                    format!("accept: the library already holds {name}.{ext}; proposal {id} stays pending")
+                }
+                _ => format!("accept: {e}"),
+            })?;
         std::fs::remove_file(&path).map_err(|e| format!("accept: {e}"))?;
         Ok(file)
     }
@@ -265,5 +275,32 @@ mod tests {
         let size = std::fs::metadata(file).unwrap().len();
         assert!(size > 6 * MAX_BODY_BYTES as u64, "not escaped: {size}");
         assert!(size < 2 << 20, "{size}");
+    }
+
+    // ix#485: concurrent writers conflict visibly rather than overwrite.
+    #[test]
+    fn accepting_a_second_loop_under_a_taken_name_is_a_visible_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path());
+        let draft = |body: &str| Draft {
+            name: "count-up".into(),
+            kind: "lua".into(),
+            body: body.into(),
+            note: None,
+        };
+        let first = store.propose(&draft("return 1"), "a").unwrap();
+        let second = store.propose(&draft("return 2"), "b").unwrap();
+        store.accept(&first).unwrap();
+
+        assert!(
+            store.accept(&second).is_err(),
+            "the second accept replaced the first loop"
+        );
+        assert_eq!(store.load("count-up.lua").as_deref(), Some("return 1"));
+        assert_eq!(
+            store.proposals().len(),
+            1,
+            "the refused proposal stays pending"
+        );
     }
 }
