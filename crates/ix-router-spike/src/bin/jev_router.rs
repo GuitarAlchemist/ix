@@ -1183,4 +1183,127 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
+
+    // ix#489 contract cases. These pin the CURRENT behaviour, gaps included:
+    // they were written green against unchanged code, so none was seen red.
+
+    fn musicse_setup() -> Setup {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        setup(&root, arm("musicse"))
+    }
+
+    fn temp_receipt(name: &str, lines: &[Value]) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("jev-{name}-{}.jsonl", std::process::id()));
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        fs::write(&p, text).unwrap();
+        p
+    }
+
+    #[test]
+    fn test_digest_mismatch_and_missing_answer_are_invalid() {
+        let s = musicse_setup();
+        let ids: Vec<&str> = s.heldout.prompts.iter().map(|p| p.id.as_str()).collect();
+        let receipt = BTreeMap::from([
+            (
+                ids[0].to_string(),
+                (s.digests[0].clone(), resp("a", 0.7, 0.2, 0.1)),
+            ),
+            (
+                ids[1].to_string(),
+                ("0".repeat(64), resp("a", 0.7, 0.2, 0.1)),
+            ),
+        ]);
+        let r = validate_all(&s, &receipt);
+        assert_ne!(r[0], Err(Invalid::DigestMismatch));
+        assert_eq!(r[1], Err(Invalid::DigestMismatch));
+        assert_eq!(r[2], Err(Invalid::Missing));
+    }
+
+    #[test]
+    #[should_panic(expected = "extra calls are not allowed")]
+    fn test_unplanned_receipt_id_aborts_scoring() {
+        let s = musicse_setup();
+        let receipt = BTreeMap::from([("not-planned".to_string(), (String::new(), Value::Null))]);
+        validate_all(&s, &receipt);
+    }
+
+    #[test]
+    fn test_duplicate_receipt_id_aborts_scoring() {
+        let line = json!({ "id": "x", "request_sha256": "", "response": null });
+        let p = temp_receipt("dup", &[line.clone(), line]);
+        let got = std::panic::catch_unwind(|| load_receipt(&p));
+        fs::remove_file(&p).unwrap();
+        assert!(
+            got.is_err(),
+            "a duplicate id (a retry) must abort, never last-wins"
+        );
+    }
+
+    /// Gap: run-live.ps1 records a timeout or an HTTP failure in `error` /
+    /// `http_status`, but `load_receipt` keeps only `response`. Both become the
+    /// same `Contract("model missing")`: no timeout or provider-unavailable outcome.
+    #[test]
+    fn test_timeout_and_provider_failure_collapse_into_one_contract_failure() {
+        let p = temp_receipt(
+            "fail",
+            &[
+                json!({ "id": "t", "request_sha256": "d", "http_status": null, "latency_ms": 30001, "error": "TaskCanceledException", "response": null }),
+                json!({ "id": "h", "request_sha256": "d", "http_status": 503, "latency_ms": 80, "error": "http 503", "response": null }),
+            ],
+        );
+        let receipt = load_receipt(&p);
+        fs::remove_file(&p).unwrap();
+        let outcome = |id: &str| validate(&receipt[id].1, &opts(), SUM_TOL);
+        assert_eq!(outcome("t"), Err(Invalid::Contract("model missing".into())));
+        assert_eq!(outcome("t"), outcome("h"));
+    }
+
+    #[test]
+    fn test_non_finite_or_out_of_range_scores_are_invalid() {
+        for bad in [json!(null), json!(-0.1), json!(1.5), json!("0.7")] {
+            let mut r = resp("a", 0.7, 0.2, 0.1);
+            r["answers"]["intent"]["probabilities"]["b"] = bad.clone();
+            assert!(
+                matches!(validate(&r, &opts(), SUM_TOL), Err(Invalid::Contract(_))),
+                "probability {bad} accepted"
+            );
+        }
+        // serde_json has no NaN literal: json!(f64::NAN) is null, rejected above.
+        assert_eq!(json!(f64::NAN), Value::Null);
+        let mut r = resp("a", 0.7, 0.2, 0.1);
+        r["answers"]["intent"]["confidence"] = json!(1.5);
+        assert!(matches!(
+            validate(&r, &opts(), SUM_TOL),
+            Err(Invalid::Contract(_))
+        ));
+    }
+
+    /// Gap: a tie for the maximum is accepted whichever tied option is chosen;
+    /// nothing marks the answer as ambiguous evidence.
+    #[test]
+    fn test_argmax_tie_is_accepted_and_not_flagged() {
+        assert_eq!(
+            validate(&resp("a", 0.45, 0.45, 0.1), &opts(), SUM_TOL)
+                .unwrap()
+                .choice,
+            "a"
+        );
+        assert_eq!(
+            validate(&resp("b", 0.45, 0.45, 0.1), &opts(), SUM_TOL)
+                .unwrap()
+                .choice,
+            "b"
+        );
+    }
+
+    /// Gap: `validate` rejects a response without usage, but the reported total
+    /// counts it as zero tokens, so the aggregate understates what was billed.
+    #[test]
+    fn test_usage_total_counts_a_missing_usage_as_zero() {
+        let mut r = resp("a", 0.7, 0.2, 0.1);
+        r.as_object_mut().unwrap().remove("usage");
+        let receipt = BTreeMap::from([("x".to_string(), (String::new(), r))]);
+        assert!(validate(&receipt["x"].1, &opts(), SUM_TOL).is_err());
+        assert_eq!(usage_totals(&receipt), (0, 0));
+    }
 }
