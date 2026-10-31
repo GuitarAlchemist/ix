@@ -18,7 +18,7 @@
 use ndarray::{Array1, Array2, Axis};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ix_supervised::metrics::{accuracy, f1_avg, f1_score, Average};
 use ix_unsupervised::pca::PCA;
@@ -90,7 +90,7 @@ fn l2norm(v: &[f64]) -> Vec<f64> {
     }
 }
 
-fn load(dir: &PathBuf, name: &str) -> Vec<Row> {
+fn load(dir: &Path, name: &str) -> Vec<Row> {
     let p = dir.join(name);
     let s = fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {:?}: {}", p, e));
     serde_json::from_str(&s).unwrap_or_else(|e| panic!("parse {:?}: {}", p, e))
@@ -155,16 +155,16 @@ fn predict(x: &Array2<f64>, w: &Array2<f64>, b: &Array1<f64>) -> (Array1<usize>,
     let mut idx = Array1::<usize>::zeros(p.nrows());
     let mut maxp = Array1::<f64>::zeros(p.nrows());
     for (i, row) in p.rows().into_iter().enumerate() {
-        let (a, m) = row
-            .iter()
-            .enumerate()
-            .fold((0usize, f64::NEG_INFINITY), |(bi, bm), (j, &v)| {
-                if v > bm {
-                    (j, v)
-                } else {
-                    (bi, bm)
-                }
-            });
+        let (a, m) =
+            row.iter()
+                .enumerate()
+                .fold((0usize, f64::NEG_INFINITY), |(bi, bm), (j, &v)| {
+                    if v > bm {
+                        (j, v)
+                    } else {
+                        (bi, bm)
+                    }
+                });
         idx[i] = a;
         maxp[i] = m;
     }
@@ -204,6 +204,8 @@ fn cosine_1nn(
 }
 
 /// L2-regularized softmax regression via full-batch GD, early-stopped on DEV.
+// Throwaway spike: two call sites pass the three hyperparameters positionally.
+#[allow(clippy::too_many_arguments)]
 fn train(
     x: &Array2<f64>,
     y: &Array1<usize>,
@@ -275,12 +277,7 @@ fn balanced_threshold(
     best_t
 }
 
-fn acc_with_tau(
-    pred: &Array1<usize>,
-    truth: &Array1<usize>,
-    score: &Array1<f64>,
-    tau: f64,
-) -> f64 {
+fn acc_with_tau(pred: &Array1<usize>, truth: &Array1<usize>, score: &Array1<f64>, tau: f64) -> f64 {
     pred.iter()
         .zip(truth.iter())
         .zip(score.iter())
@@ -382,12 +379,18 @@ fn main() {
     let (w, b) = train(&xtr, &ytr, k, &xdev, &ydev, 1.0, 2000, 1e-4);
     let tr_acc = argmax_acc(&xtr, &ytr, &w, &b);
     let dev_acc = argmax_acc(&xdev, &ydev, &w, &b);
-    println!("[full {}d] train_acc={tr_acc:.3} dev_acc={dev_acc:.3}", xtr.ncols());
+    println!(
+        "[full {}d] train_acc={tr_acc:.3} dev_acc={dev_acc:.3}",
+        xtr.ncols()
+    );
 
     // ---- Auto PCA fallback if overfit ----
     let overfit = tr_acc - dev_acc > 0.15;
     let (used_pca, dim_used, w, b, pca_state, xte_f, xoos_te_f, tau, tr_acc, dev_acc) = if overfit {
-        println!("overfit gap {:.3} > 0.15 -> PCA->64 fallback", tr_acc - dev_acc);
+        println!(
+            "overfit gap {:.3} > 0.15 -> PCA->64 fallback",
+            tr_acc - dev_acc
+        );
         let mut pca = PCA::new(64);
         let xtr_p = pca.fit_transform(&xtr);
         let xdev_p = pca.transform(&xdev);
@@ -416,7 +419,18 @@ fn main() {
     } else {
         let tau = calibrate_tau(&xdev, &ydev, &xoos_dev, &w, &b);
         println!("tau={tau:.2}");
-        (false, xtr.ncols(), w, b, None, xte, xoos_te, tau, tr_acc, dev_acc)
+        (
+            false,
+            xtr.ncols(),
+            w,
+            b,
+            None,
+            xte,
+            xoos_te,
+            tau,
+            tr_acc,
+            dev_acc,
+        )
     };
 
     // ---- Evaluate LEARNED HEAD on TEST ----
@@ -444,7 +458,8 @@ fn main() {
         .fold(f64::INFINITY, f64::min);
     let beats = delta_pp >= 3.0;
     let f1_ok = min_f1 >= 0.80;
-    let oos_ok = oos_decline.is_nan() || base_oos_decline.is_nan() || oos_decline >= base_oos_decline;
+    let oos_ok =
+        oos_decline.is_nan() || base_oos_decline.is_nan() || oos_decline >= base_oos_decline;
     let verdict = if beats && f1_ok && oos_ok {
         "GO — head clears all gates"
     } else if beats {
