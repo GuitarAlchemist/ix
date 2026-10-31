@@ -340,6 +340,13 @@ To prove the outcome of one opaque `run`, a consumer follows this order:
 
 An exit from another run, including `last_exit`, is never substituted.
 
+A run's tree is killed before its output is drained, so `truncated` needs a process that left
+the tree with the output still open. On Windows none can: the job object holds every descendant
+and allows no breakaway, and the end is `complete`. On Linux a descendant that calls `setsid`
+leaves the process group the plane kills, and keeps the output open: the end then comes at the
+drain bound, `truncated` (`TestADescendantHoldingStdoutEndsTheRunAtTheDrainBound`, a real
+descendant on both systems).
+
 After a truncated end, later lines are dropped and counted in
 `services[].last_exit.late_lines`; the counter saturates instead of wrapping. Markers remain in
 the ring, but SSE and WebSocket subscribers skip them, including during replay, unless they ask

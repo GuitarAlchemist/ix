@@ -360,6 +360,14 @@ Pour prouver le résultat d'un `run` opaque donné, un consommateur suit cet ord
 
 La sortie d'une autre exécution, y compris `last_exit`, ne la remplace jamais.
 
+L'arbre d'un run est tué avant que sa sortie soit drainée : `truncated` demande donc un processus
+sorti de l'arbre avec la sortie encore ouverte. Sous Windows, aucun ne le peut : le job object
+tient chaque descendant et n'autorise aucune sortie, et la fin est `complete`. Sous Linux, un
+descendant qui appelle `setsid` quitte le groupe de processus que le plan tue et garde la sortie
+ouverte : la fin arrive alors à la borne de drainage, `truncated`
+(`TestADescendantHoldingStdoutEndsTheRunAtTheDrainBound`, un vrai descendant sur les deux
+systèmes).
+
 Après une fin tronquée, les lignes tardives sont écartées et comptées dans
 `services[].last_exit.late_lines` ; le compteur sature au lieu de boucler. Les marqueurs restent
 dans l'anneau, mais SSE et WebSocket les sautent, même en rejeu, sauf demande de `markers=run`

@@ -2,7 +2,11 @@
 
 package main
 
-import "golang.org/x/sys/windows"
+import (
+	"os/exec"
+
+	"golang.org/x/sys/windows"
+)
 
 const stillActive = 259
 
@@ -18,3 +22,7 @@ func pidAlive(pid int) bool {
 	}
 	return code == stillActive
 }
+
+// leaveTree leaves cmd as it is: the job object holds every descendant and does not allow
+// breakaway, so no descendant can leave the tree on Windows.
+func leaveTree(cmd *exec.Cmd) {}
