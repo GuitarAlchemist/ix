@@ -70,3 +70,23 @@ ci-dessus :
 4. Fichier manquant, empreinte changée, schéma incompatible, export incomplet : via la liste
    d'artefacts, chacun une issue explicite, jamais la table vide de la lentille. Lecture révoquée :
    indéterminé (aucun point d'appui ne modélise les droits d'accès).
+
+**Vérifications 1, 2 et 4 faites (testé), hors ligne :**
+
+- Vérification 1 : `crates/ix-agent-core/tests/snapshot_isolation.rs`. Un `ReadContext` projeté à
+  l'ordinal 0 reste égal à son clone antérieur après l'émission d'un `BeliefChanged` à 1 via
+  `WriteContext` ; seule une nouvelle `project_beliefs` voit le changement. Une épingle, verte dès le
+  départ : le système de types (données possédées, référence partagée) est le garde.
+- Vérification 2 : déjà couverte sur main par `test_a_tampered_file_is_corrupt` d'`ix-recover` (un
+  octet changé → `Error::Corrupt`) et `test_publish_then_begin_replays_the_same_files`.
+- Vérification 4 : `crates/ix-router-spike/src/bin/context_list.rs` (binaire `context-list`,
+  fixtures synthétiques, 9 tests, chacune des 10 règles vue rouge sous un mutant). Un manifeste
+  (version 0, nombre déclaré, éléments avec id, source locale ou GitHub, `sha256` au format
+  d'`ix-recover`, schéma, classification, octets) est vérifié en entier avant toute lecture : une
+  mauvaise version, un export incomplet, un id en double, une référence GitHub qui n'est pas un sha de
+  commit complet, une classification hors de `public` / `internal` (donc `secret` refusé), ou un
+  élément de plus de 16 Mio refusent la liste et ne lisent rien. Ensuite chaque élément reçoit une
+  issue : `ready`, `missing`, `read_denied` (distinct de manquant : le lecteur du spike modélise une
+  lecture révoquée, IX lui-même n'a toujours pas de point d'appui pour les droits d'accès),
+  `size_mismatch`, `changed_hash`, `incompatible_schema` (non lu). Un élément défaillant laisse les
+  autres nommés ; la tâche ne voit jamais une table vide.

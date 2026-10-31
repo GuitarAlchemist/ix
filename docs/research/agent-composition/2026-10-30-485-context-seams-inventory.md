@@ -61,4 +61,23 @@ Smallest discriminating check (offline, as #485 asks), with the seams above:
    an explicit outcome, never the lens's empty table. Revoked read: indeterminate (no seam models
    access rights).
 
+**Checks 1, 2 and 4 done (tested), offline:**
+
+- Check 1: `crates/ix-agent-core/tests/snapshot_isolation.rs`. A `ReadContext` projected at ordinal 0
+  is equal to its earlier clone after a `BeliefChanged` is emitted at 1 through `WriteContext`;
+  only a new `project_beliefs` sees the change. A pin, green from the start: the type system
+  (owned data, shared reference) is the guard.
+- Check 2: already covered on main by `ix-recover`'s `test_a_tampered_file_is_corrupt` (one changed
+  byte → `Error::Corrupt`) and `test_publish_then_begin_replays_the_same_files`.
+- Check 4: `crates/ix-router-spike/src/bin/context_list.rs` (binary `context-list`, synthetic
+  fixtures, 9 tests, each of 10 rules seen red under a mutant). A manifest (version 0, declared
+  count, items with id, local or GitHub source, `sha256` in `ix-recover`'s format, schema,
+  classification, bytes) is checked whole before any read: wrong version, incomplete dump, duplicate
+  id, a GitHub reference that is not a full commit sha, a classification outside `public` /
+  `internal` (so `secret` is refused), or an item over 16 MiB refuses the list and reads nothing.
+  Then each item gets one outcome: `ready`, `missing`, `read_denied` (distinct from missing: the
+  spike's reader models a revoked read, IX itself still has no access-rights seam),
+  `size_mismatch`, `changed_hash`, `incompatible_schema` (not read). One bad item leaves the
+  others named; the task never sees an empty table.
+
 French: [`docs/fr/research/agent-composition/2026-10-30-485-context-seams-inventory.md`](../../fr/research/agent-composition/2026-10-30-485-context-seams-inventory.md).
