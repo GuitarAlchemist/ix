@@ -69,10 +69,10 @@ fn main() {
     world.env.insert("ECHO_PORT".into(), "8080".into());
     let admitted = admit(&resolve(&corrected, &world).unwrap(), &mandate).unwrap();
     println!("{:#}", admitted.to_json());
-    apply(&admitted, &mandate, &world, &mut Print).unwrap();
+    apply(&admitted, admitted.digest(), &mandate, &world, &mut Print).unwrap();
 
     println!("-- the variable moved after admission");
     world.env.insert("ECHO_PORT".into(), "9090".into());
-    let moved = apply(&admitted, &mandate, &world, &mut Print).unwrap_err();
+    let moved = apply(&admitted, admitted.digest(), &mandate, &world, &mut Print).unwrap_err();
     println!("{:#}", findings(&moved));
 }

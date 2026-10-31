@@ -93,7 +93,7 @@ fn run(
 ) -> Result<String, Vec<ix_ctl::admission::Finding>> {
     let plan = resolve(proposal, world)?;
     let admitted = admit(&plan, mandate)?;
-    apply(&admitted, mandate, world, runner)
+    apply(&admitted, admitted.digest(), mandate, world, runner)
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn test_the_corrected_plan_is_admitted_and_exactly_that_document_runs() {
     // The admitted document crosses a process boundary as JSON and still applies.
     let back = Admitted::from_json(&admitted.to_json()).unwrap();
     let mut runner = Recorder::default();
-    assert_eq!(digest, apply(&back, &m, &w, &mut runner).unwrap());
+    assert_eq!(digest, apply(&back, &digest, &m, &w, &mut runner).unwrap());
     assert_eq!(vec![digest.clone()], runner.0);
 
     // What the plan pins: the artifact digest, the typed values, the budget.
@@ -288,7 +288,14 @@ fn test_changes_after_admission_are_refused_and_nothing_launches() {
     // A variable moved.
     let mut moved = good_env();
     moved.insert("ECHO_PORT".into(), "9090".into());
-    let f = apply(&admitted, &m, &world(&store, moved), &mut runner).unwrap_err();
+    let f = apply(
+        &admitted,
+        admitted.digest(),
+        &m,
+        &world(&store, moved),
+        &mut runner,
+    )
+    .unwrap_err();
     assert_eq!(
         vec![(Code::ConfigChanged, "$.config.PORT".to_string())],
         codes(&f)
@@ -297,7 +304,14 @@ fn test_changes_after_admission_are_refused_and_nothing_launches() {
     // A variable gone.
     let mut gone = good_env();
     gone.remove("ECHO_VERBOSE");
-    let f = apply(&admitted, &m, &world(&store, gone), &mut runner).unwrap_err();
+    let f = apply(
+        &admitted,
+        admitted.digest(),
+        &m,
+        &world(&store, gone),
+        &mut runner,
+    )
+    .unwrap_err();
     assert_eq!(
         vec![(Code::MissingConfig, "$.config.VERBOSE".to_string())],
         codes(&f)
@@ -307,7 +321,14 @@ fn test_changes_after_admission_are_refused_and_nothing_launches() {
     let rebuilt = OneArtifact(
         "sha256:2222222222222222222222222222222222222222222222222222222222222222".into(),
     );
-    let f = apply(&admitted, &m, &world(&rebuilt, good_env()), &mut runner).unwrap_err();
+    let f = apply(
+        &admitted,
+        admitted.digest(),
+        &m,
+        &world(&rebuilt, good_env()),
+        &mut runner,
+    )
+    .unwrap_err();
     assert_eq!(
         vec![(Code::ArtifactChanged, "$.artifact".to_string())],
         codes(&f)
@@ -316,7 +337,7 @@ fn test_changes_after_admission_are_refused_and_nothing_launches() {
     // The plane now keeps another contract.
     let mut w = world(&store, good_env());
     w.contract = "run/2".into();
-    let f = apply(&admitted, &m, &w, &mut runner).unwrap_err();
+    let f = apply(&admitted, admitted.digest(), &m, &w, &mut runner).unwrap_err();
     assert_eq!(
         vec![(Code::ContractChanged, "$.contract".to_string())],
         codes(&f)
@@ -326,7 +347,14 @@ fn test_changes_after_admission_are_refused_and_nothing_launches() {
     let mut doc = admitted.to_json();
     doc["plan"]["limits"]["memory_mb"] = json!(4096);
     let edited = Admitted::from_json(&doc).unwrap();
-    let f = apply(&edited, &m, &world(&store, good_env()), &mut runner).unwrap_err();
+    let f = apply(
+        &edited,
+        admitted.digest(),
+        &m,
+        &world(&store, good_env()),
+        &mut runner,
+    )
+    .unwrap_err();
     assert_eq!(
         vec![(Code::RevisionTampered, "$.plan".to_string())],
         codes(&f)
@@ -344,7 +372,7 @@ fn test_a_rebuilt_binary_on_disk_is_refused() {
         .join("windows-x86_64");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("echo-worker.exe"), b"build one").unwrap();
-    let store = DirStore { root: root.clone() };
+    let store = DirStore::new(root.clone());
     let m = mandate(&["process.spawn"], 60000, 256);
     let admitted = admit(
         &resolve(&proposal(), &world(&store, good_env())).unwrap(),
@@ -358,7 +386,14 @@ fn test_a_rebuilt_binary_on_disk_is_refused() {
 
     std::fs::write(dir.join("echo-worker.exe"), b"build two").unwrap();
     let mut runner = Recorder::default();
-    let f = apply(&admitted, &m, &world(&store, good_env()), &mut runner).unwrap_err();
+    let f = apply(
+        &admitted,
+        admitted.digest(),
+        &m,
+        &world(&store, good_env()),
+        &mut runner,
+    )
+    .unwrap_err();
     assert_eq!(
         vec![(Code::ArtifactChanged, "$.artifact".to_string())],
         codes(&f)
@@ -421,7 +456,7 @@ fn test_an_insufficient_mandate_or_invalid_budget_is_refused_never_widened() {
     let m = mandate(&["process.spawn"], 60000, 256);
     let admitted = admit(&resolve(&proposal(), &w).unwrap(), &m).unwrap();
     let wider = mandate(&["process.spawn", "net.any"], 600000, 4096);
-    let f = apply(&admitted, &wider, &w, &mut runner).unwrap_err();
+    let f = apply(&admitted, admitted.digest(), &wider, &w, &mut runner).unwrap_err();
     assert_eq!(
         vec![(Code::MandateChanged, "$.mandate".to_string())],
         codes(&f)
@@ -439,4 +474,178 @@ fn test_findings_serialise_with_code_path_and_message() {
     assert_eq!(json!("FloatingVersion"), v["code"]);
     assert_eq!(json!("$.artifact.version"), v["path"]);
     assert!(v["message"].as_str().unwrap().contains("latest"));
+}
+
+#[test]
+fn test_a_document_forged_with_a_recomputed_digest_is_refused() {
+    let store = OneArtifact(DIGEST.into());
+    let m = mandate(&["process.spawn"], 60000, 256);
+    let admitted = admit(
+        &resolve(&proposal(), &world(&store, good_env())).unwrap(),
+        &m,
+    )
+    .unwrap();
+    let mut runner = Recorder::default();
+    let forge = |edit: &dyn Fn(&mut Value)| {
+        let mut doc = admitted.to_json();
+        edit(&mut doc["plan"]);
+        doc["digest"] = json!(ix_recover::canonical_sha256(&doc["plan"]));
+        Admitted::from_json(&doc).unwrap()
+    };
+
+    // A pinned value edited to match a changed environment, its digest recomputed: the
+    // digest the caller admitted is not this one.
+    let mut moved = good_env();
+    moved.insert("ECHO_PORT".into(), "9090".into());
+    let edited = forge(&|p| p["config"]["PORT"]["value"] = json!(9090));
+    let f = apply(
+        &edited,
+        admitted.digest(),
+        &m,
+        &world(&store, moved),
+        &mut runner,
+    )
+    .unwrap_err();
+    assert_eq!(
+        vec![(Code::RevisionTampered, "$.digest".to_string())],
+        codes(&f)
+    );
+
+    // Even taken at its own word, a plan stripped of its budget and scopes is not a plan.
+    let stripped = forge(&|p| {
+        p.as_object_mut().unwrap().remove("limits");
+        p["needs"] = json!("process.spawn");
+    });
+    let f = apply(
+        &stripped,
+        stripped.digest(),
+        &m,
+        &world(&store, good_env()),
+        &mut runner,
+    )
+    .unwrap_err();
+    assert_eq!(vec![(Code::Schema, "$.plan".to_string())], codes(&f));
+
+    // Nor is one whose budget grew past the mandate, or that needs a scope it lacks.
+    let widened = forge(&|p| p["limits"]["memory_mb"] = json!(4096));
+    let f = apply(
+        &widened,
+        widened.digest(),
+        &m,
+        &world(&store, good_env()),
+        &mut runner,
+    )
+    .unwrap_err();
+    assert_eq!(
+        vec![(Code::BudgetExceedsMandate, "$.limits.memory_mb".to_string())],
+        codes(&f)
+    );
+    let needier = forge(&|p| p["needs"] = json!(["process.spawn", "net.any"]));
+    let f = apply(
+        &needier,
+        needier.digest(),
+        &m,
+        &world(&store, good_env()),
+        &mut runner,
+    )
+    .unwrap_err();
+    assert_eq!(
+        vec![(Code::MandateInsufficient, "$.needs".to_string())],
+        codes(&f)
+    );
+    assert!(runner.0.is_empty(), "{:?}", runner.0);
+}
+
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("ix-admission-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn test_the_store_reads_nothing_too_large() {
+    let root = scratch("large");
+    let dir = root
+        .join("echo-worker")
+        .join("1.4.2")
+        .join("windows-x86_64");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("echo-worker.exe"), vec![7u8; 4096]).unwrap();
+    let mut store = DirStore::new(root.clone());
+    store.max_bytes = 4095;
+    let f = resolve(&proposal(), &world(&store, good_env())).unwrap_err();
+    assert_eq!(
+        vec![(Code::ArtifactNotFound, "$.artifact".to_string())],
+        codes(&f)
+    );
+    store.max_bytes = 4096;
+    assert!(resolve(&proposal(), &world(&store, good_env())).is_ok());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn test_the_store_never_leaves_its_root() {
+    let root = scratch("root");
+    let outside = scratch("outside");
+    let dir = outside.join("1.4.2").join("windows-x86_64");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("echo-worker.exe"), b"not from the store").unwrap();
+    let store = DirStore::new(root.clone());
+    // `<root>/echo-worker` is a link to a directory outside the store.
+    let link = root.join("echo-worker");
+    #[cfg(windows)]
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(&outside, &link).is_ok();
+    assert!(made, "could not make the link");
+    let f = resolve(&proposal(), &world(&store, good_env())).unwrap_err();
+    assert_eq!(
+        vec![(Code::ArtifactNotFound, "$.artifact".to_string())],
+        codes(&f)
+    );
+    // Segments that name the store's own directories are refused too: `.` would read
+    // `<root>/1.4.2/windows-x86_64` as if it were `echo-worker`'s.
+    let aliased = root.join("1.4.2").join("windows-x86_64");
+    std::fs::create_dir_all(&aliased).unwrap();
+    std::fs::write(aliased.join("echo-worker.exe"), b"aliased").unwrap();
+    let mut p = proposal();
+    p["artifact"]["name"] = json!(".");
+    let f = resolve(&p, &world(&store, good_env())).unwrap_err();
+    assert_eq!(
+        vec![(Code::ArtifactNotFound, "$.artifact".to_string())],
+        codes(&f)
+    );
+    let _ = std::fs::remove_dir(&link);
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
+}
+
+#[test]
+fn test_versions_that_are_not_exact_semver_are_floating() {
+    let store = OneArtifact(DIGEST.into());
+    for v in [
+        "1.2.3-",
+        "1.2.3+",
+        "01.2.3",
+        "1.02.3",
+        "1.2",
+        "v1.2.3",
+        "1.2.3-a..b",
+    ] {
+        let mut p = proposal();
+        p["artifact"]["version"] = json!(v);
+        let f = resolve(&p, &world(&store, good_env())).unwrap_err();
+        assert_eq!(
+            vec![(Code::FloatingVersion, "$.artifact.version".to_string())],
+            codes(&f),
+            "{v}"
+        );
+    }
 }

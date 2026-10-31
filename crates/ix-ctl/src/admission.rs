@@ -22,6 +22,15 @@
 //!   and variables the plan names, read again. Any difference refuses; the runner is never
 //!   called with a document whose world has moved.
 //!
+//! `apply` takes the digest the caller recorded at admission: the document's own digest is
+//! recomputed, never trusted, so it guards against an edited document, not against a caller
+//! that records a forged digest. It also reads the plan again as a plan and holds it to the
+//! mandate again.
+//!
+//! The artifact is checked by path: [`DirStore`] hashes the file, then hands its path on. A
+//! file replaced between that hash and the launch is not seen here; the launcher must verify
+//! the bytes it opens. Nothing launches yet: the [`Runner`] is a test seam.
+//!
 //! A secret variable (`secret: true`) is checked for presence and type only. Neither its value
 //! nor a digest of it enters the plan, a finding or the admitted document, so a changed secret
 //! is not detected. Variables the plan does not declare are not pinned at all: ixctl's
@@ -173,12 +182,28 @@ pub trait Store {
 /// the artifact, digested each time it is looked up.
 pub struct DirStore {
     pub root: PathBuf,
+    /// The largest artifact it reads; a larger one is not found.
+    pub max_bytes: u64,
+}
+
+impl DirStore {
+    /// The default bound on an artifact's size: 256 MiB.
+    pub const DEFAULT_MAX_BYTES: u64 = 256 << 20;
+
+    pub fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            max_bytes: Self::DEFAULT_MAX_BYTES,
+        }
+    }
 }
 
 impl Store for DirStore {
     fn find(&self, a: &ArtifactRef) -> Option<(PathBuf, String)> {
-        // Names are path segments: a separator or `..` in one would leave the store.
-        let segment = |s: &str| !s.is_empty() && s != ".." && !s.contains(['/', '\\', ':']);
+        // Names are path segments: a separator, or a trailing dot or space (`.`, `..`, and the
+        // names Windows trims), would leave or alias the store's own directories.
+        let segment =
+            |s: &str| !s.is_empty() && !s.ends_with(['.', ' ']) && !s.contains(['/', '\\', ':']);
         if ![&a.name, &a.version, &a.platform]
             .iter()
             .all(|s| segment(s))
@@ -193,8 +218,18 @@ impl Store for DirStore {
         let (Some(only), None) = (files.next(), files.next()) else {
             return None;
         };
-        let bytes = std::fs::read(only.path()).ok()?;
-        Some((only.path(), ix_recover::sha256_hex(&bytes)))
+        // A link or junction on the way may point anywhere: the file, resolved, must still
+        // be under the store's root, resolved.
+        let root = std::fs::canonicalize(&self.root).ok()?;
+        let file = std::fs::canonicalize(only.path()).ok()?;
+        if !file.starts_with(&root) || std::fs::metadata(&file).ok()?.len() > self.max_bytes {
+            return None;
+        }
+        let bytes = std::fs::read(&file).ok()?;
+        if bytes.len() as u64 > self.max_bytes {
+            return None;
+        }
+        Some((file, ix_recover::sha256_hex(&bytes)))
     }
 }
 
@@ -448,31 +483,56 @@ fn read_config(
     })
 }
 
-/// `MAJOR.MINOR.PATCH`, with an optional `-pre` or `+build` suffix: one version, not a range.
+/// One SemVer 2.0 version, `MAJOR.MINOR.PATCH[-pre][+build]`: one version, not a range.
 fn exact_version(v: &str) -> bool {
-    let core = v.split(['-', '+']).next().unwrap_or("");
-    let suffix_ok = v[core.len()..]
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+    let (rest, build) = match v.split_once('+') {
+        Some((rest, build)) => (rest, Some(build)),
+        None => (v, None),
+    };
+    let (core, pre) = match rest.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (rest, None),
+    };
+    let number = |p: &str| {
+        !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && (p == "0" || !p.starts_with('0'))
+    };
+    let identifiers = |s: &str| {
+        s.split('.')
+            .all(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+    };
     let parts: Vec<&str> = core.split('.').collect();
     parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-        && suffix_ok
+        && parts.iter().all(|p| number(p))
+        && pre.map_or(true, identifiers)
+        && build.map_or(true, identifiers)
 }
 
-/// `plan`, admitted under `mandate`: every scope it needs granted and its budget within the
-/// mandate's ceiling. A shortfall is refused, never carved down or widened.
-pub fn admit(plan: &Plan, mandate: &Mandate) -> Result<Admitted, Vec<Finding>> {
-    let p = &plan.0;
+/// A plan as [`resolve`] writes it, read back with every field required and no other.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // `service`, `artifact`, `contract` and `config` are read from the JSON
+struct PlanDoc {
+    schema: String,
+    service: String,
+    artifact: Value,
+    contract: String,
+    config: BTreeMap<String, Value>,
+    limits: Limits,
+    needs: BTreeSet<String>,
+}
+
+/// What `mandate` does not cover of `needs` and `limits`: missing scopes, a zero budget, a
+/// budget past the ceiling. Nothing is carved down or widened.
+fn authority_findings(
+    needs: &BTreeSet<String>,
+    limits: &Limits,
+    mandate: &Mandate,
+) -> Vec<Finding> {
     let mut out = Vec::new();
-    let missing: Vec<&str> = p["needs"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
+    let missing: Vec<&str> = needs
+        .iter()
         .filter(|s| !mandate.scopes.contains(*s))
+        .map(String::as_str)
         .collect();
     if !missing.is_empty() {
         out.push(finding(
@@ -481,12 +541,17 @@ pub fn admit(plan: &Plan, mandate: &Mandate) -> Result<Admitted, Vec<Finding>> {
             &format!("not granted: {}", missing.join(", ")),
         ));
     }
-    for (field, max) in [
-        ("wall_ms", mandate.max.wall_ms),
-        ("memory_mb", mandate.max.memory_mb),
+    for (field, want, max) in [
+        ("wall_ms", limits.wall_ms, mandate.max.wall_ms),
+        ("memory_mb", limits.memory_mb, mandate.max.memory_mb),
     ] {
-        let want = p["limits"][field].as_u64().unwrap_or(u64::MAX);
-        if want > max {
+        if want == 0 {
+            out.push(finding(
+                Code::InvalidBudget,
+                &format!("$.limits.{field}"),
+                "0 is no limit in ixctl: an admitted plan names a bound",
+            ));
+        } else if want > max {
             out.push(finding(
                 Code::BudgetExceedsMandate,
                 &format!("$.limits.{field}"),
@@ -494,6 +559,16 @@ pub fn admit(plan: &Plan, mandate: &Mandate) -> Result<Admitted, Vec<Finding>> {
             ));
         }
     }
+    out
+}
+
+/// `plan`, admitted under `mandate`: every scope it needs granted and its budget within the
+/// mandate's ceiling. A shortfall is refused, never carved down or widened.
+pub fn admit(plan: &Plan, mandate: &Mandate) -> Result<Admitted, Vec<Finding>> {
+    let p = &plan.0;
+    let doc: PlanDoc = serde_json::from_value(p.clone())
+        .map_err(|e| vec![finding(Code::Schema, "$.plan", &e.to_string())])?;
+    let out = authority_findings(&doc.needs, &doc.limits, mandate);
     if !out.is_empty() {
         return Err(out);
     }
@@ -508,11 +583,21 @@ pub fn admit(plan: &Plan, mandate: &Mandate) -> Result<Admitted, Vec<Finding>> {
 /// hold; answers the digest launched. Every difference is reported and nothing runs.
 pub fn apply(
     admitted: &Admitted,
+    expected: &str,
     mandate: &Mandate,
     world: &World,
     runner: &mut dyn Runner,
 ) -> Result<String, Vec<Finding>> {
     let p = &admitted.plan;
+    // The document names itself, so its own digest proves nothing: `expected` is the digest
+    // the caller recorded when it admitted the plan.
+    if admitted.digest != expected {
+        return Err(vec![finding(
+            Code::RevisionTampered,
+            "$.digest",
+            "not the document admitted: its digest is not the one expected",
+        )]);
+    }
     if ix_recover::canonical_sha256(p) != admitted.digest {
         return Err(vec![finding(
             Code::RevisionTampered,
@@ -526,6 +611,21 @@ pub fn apply(
             "$.mandate",
             "not the mandate this plan was admitted under",
         )]);
+    }
+    // The plan is read again as a plan, and held to the mandate again: a document that
+    // reached here under a trusted digest still never launches past its authority.
+    let doc: PlanDoc = serde_json::from_value(p.clone())
+        .map_err(|e| vec![finding(Code::Schema, "$.plan", &e.to_string())])?;
+    if doc.schema != PLAN_SCHEMA {
+        return Err(vec![finding(
+            Code::Schema,
+            "$.plan",
+            "not an admission plan",
+        )]);
+    }
+    let authority = authority_findings(&doc.needs, &doc.limits, mandate);
+    if !authority.is_empty() {
+        return Err(authority);
     }
     let mut out = Vec::new();
 
