@@ -38,6 +38,9 @@ type kindConfig struct {
 	// deltaJournal is the JSONL journal the `delta@1` kind tails (`ixctl up --delta-journal`);
 	// empty refuses the kind at create, naming the flag.
 	deltaJournal string
+	// claudeBin is the Claude Code CLI the `claude-sessions@1` kind runs as `agents --json`
+	// (`ixctl up --claude-bin`); empty refuses the kind at create, naming the flag.
+	claudeBin string
 }
 
 // sampler is one node's source of records: called once per interval, on the node's own
@@ -122,6 +125,9 @@ var probeKinds = []probeKind{
 	{Name: "delta", Version: 1, Fields: deltaFields,
 		Doc:        "tails the voice robot Delta's JSONL journal named by `ixctl up --delta-journal` (one JSON object per line: t, t_ms, event, pid, journal_seq and the event's fields), one line per tick with its byte offset; a line that is not an object is an error record naming its offset; a missing or shrunk journal is said once",
 		newSampler: func(c kindConfig) sampler { return newJournalTail(c.deltaJournal) }},
+	{Name: "claude-sessions", Version: 1, Fields: claudeSessionsFields,
+		Doc:        "Claude Code's live sessions of the plane's user, read with `claude agents --json` (the CLI named by `ixctl up --claude-bin`): per session its id, declared status, a verified incarnation (pid:creation_ms) and an availability that is idle or busy only for a verified incarnation, unknown with a reason otherwise; sessions gone since the last read under gone; every_ms at least 5000",
+		newSampler: func(c kindConfig) sampler { return newClaudeSessions(c.claudeBin) }},
 	{Name: "mux", Version: 1, Fields: nil,
 		Doc: "no sampler: multiplexes its children's records, each stamped with its source node as src"},
 }
@@ -831,6 +837,13 @@ func (t *probeTree) setDeltaJournal(path string) {
 	t.cfg.deltaJournal = path
 }
 
+// setClaudeBin names the CLI the `claude-sessions@1` kind runs; empty keeps the kind refused.
+func (t *probeTree) setClaudeBin(path string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cfg.claudeBin = path
+}
+
 // setBudget replaces the plane's budget before any node exists (that is the gate, not the
 // plane's start): nothing declared can end up over it. The caller holds no lock.
 func (t *probeTree) setBudget(b probeBudget) error {
@@ -943,6 +956,14 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 	}
 	if kind.Name == "delta" && t.cfg.deltaJournal == "" {
 		return nil, badRequest("kind delta@1 needs a journal to tail: start the plane with --delta-journal PATH")
+	}
+	if kind.Name == "claude-sessions" {
+		if t.cfg.claudeBin == "" {
+			return nil, badRequest("kind claude-sessions@1 needs the Claude Code CLI: start the plane with --claude-bin PATH")
+		}
+		if spec.EveryMs < claudeSessionsMinEveryMs {
+			return nil, badRequest("every_ms %d is under %d, the least claude-sessions@1 takes (one read takes seconds)", spec.EveryMs, claudeSessionsMinEveryMs)
+		}
 	}
 	if kind.Name == "mux" {
 		spec.EveryMs = 0

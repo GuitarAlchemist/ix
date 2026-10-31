@@ -456,6 +456,7 @@ frozen core of `ixctl.v1`.
 | `cpu@1` | `busy_pct`, `cores` | The host's processor busy share over the last interval (`GetSystemTimes`; `/proc/stat`). The first interval emits nothing. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | The host's physical memory (`GlobalMemoryStatusEx`; `/proc/meminfo`). |
 | `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, and the event's own (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | The JSONL journal of Delta, the voice robot, named by `ixctl up --delta-journal FILE`: one line per tick, every top-level field of the line as it is, plus `offset`, the line's byte position. Without the flag the kind is listed and refused at create. |
+| `claude-sessions@1` | `read_at_ms`, `read_ms`, `count`, `sessions`, `gone` | Claude Code's live sessions of the plane's user, read with `claude agents --json` (the CLI named by `ixctl up --claude-bin`). Without the flag the kind is listed and refused at create; `every_ms` is at least 5000. |
 | `mux@1` | (its children's) | No sampler: it carries what its children pass it. |
 
 `delta@1` is the plane *reading* a file another program writes (brickyard's `brain.exe`, which
@@ -468,6 +469,23 @@ same name, said once and read again from offset 0. `node`, `kind` and `seq` are 
 stamps and win over a line field of the same name. A consumer dedups on the writer's pair
 (`pid`, `journal_seq`), which restarts with each brain, and resumes on `offset`, which belongs
 to the file.
+
+`claude-sessions@1` tells which Claude Code sessions could take work, without ever saying so on
+a guess. One record per tick is a snapshot of `claude agents --json` (no model call; a read
+takes seconds and is killed past 20 s). Each entry of `sessions` keeps apart what Claude Code
+declares and what the plane verified: `session_id` (the stable identity), `name`, `kind`,
+`declared` (the listed status, else state), `pid`, `started_at_ms`, and, only when the process
+at that pid was created at most 60 s before the session's start, `identity: "verified"`,
+`proc_start_ms` and `incarnation` (`pid:creation_ms`, which changes on a resume:
+`incarnation_changed: true`). `availability` is `idle` or `busy` for a verified incarnation
+only, `blocked` for a declared wait, and otherwise `unknown` with a `reason`: `no-pid`,
+`no-started-at`, `process-unreadable`, `pid-reused` (a process created after the session
+started holds the pid), `start-mismatch`, or `declared "…"`. A session missing from a later
+read is said once in `gone` (`unknown`, `absent`, its `last_incarnation`). A failed or slow
+read is an error record with no availability, and no earlier one is repeated: silence, an error
+or an old `read_at_ms` never means idle. The plane must run in that user's session (a desk peer);
+a service in session 0 sees no session. Availability is an observation, not an authority to
+dispatch.
 
 A **node** is one instance of a kind in the tree:
 

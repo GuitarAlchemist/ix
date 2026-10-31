@@ -486,6 +486,7 @@ noyau figé d'`ixctl.v1`.
 | `cpu@1` | `busy_pct`, `cores` | La part d'occupation du processeur de l'hôte sur le dernier intervalle (`GetSystemTimes` ; `/proc/stat`). Le premier intervalle n'émet rien. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | La mémoire physique de l'hôte (`GlobalMemoryStatusEx` ; `/proc/meminfo`). |
 | `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, et ceux de l'événement (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | Le journal JSONL de Delta, le robot vocal, nommé par `ixctl up --delta-journal FICHIER` : une ligne par tick, chaque champ de premier niveau de la ligne tel quel, plus `offset`, la position en octets de la ligne. Sans le flag, le kind est listé et refusé à la création. |
+| `claude-sessions@1` | `read_at_ms`, `read_ms`, `count`, `sessions`, `gone` | Les sessions Claude Code vivantes de l'utilisateur du plan, lues par `claude agents --json` (le CLI que nomme `ixctl up --claude-bin`). Sans l'option, le kind est listé et refusé à la création ; `every_ms` vaut au moins 5000. |
 | `mux@1` | (ceux de ses enfants) | Pas d'échantillonneur : il porte ce que ses enfants lui passent. |
 
 `delta@1`, c'est le plan qui *lit* un fichier qu'un autre programme écrit (le `brain.exe` de
@@ -499,6 +500,24 @@ relu depuis l'offset 0. `node`, `kind` et `seq` sont les estampilles de l'arbre 
 sur un champ de ligne du même nom. Un consommateur dédoublonne sur la paire de l'écrivain
 (`pid`, `journal_seq`), qui repart à chaque brain, et reprend sur `offset`, qui appartient au
 fichier.
+
+`claude-sessions@1` dit quelles sessions Claude Code pourraient prendre du travail, sans jamais
+le dire sur une supposition. Un enregistrement par tick est un instantané de
+`claude agents --json` (aucun appel de modèle ; une lecture prend des secondes et est tuée au-delà
+de 20 s). Chaque entrée de `sessions` sépare ce que Claude Code déclare de ce que le plan a
+vérifié : `session_id` (l'identité stable), `name`, `kind`, `declared` (le statut listé, sinon
+l'état), `pid`, `started_at_ms` et, seulement quand le processus de ce pid a été créé au plus
+60 s avant le début de la session, `identity: "verified"`, `proc_start_ms` et `incarnation`
+(`pid:creation_ms`, qui change à une reprise : `incarnation_changed: true`). `availability`
+vaut `idle` ou `busy` pour une incarnation vérifiée seulement, `blocked` pour une attente
+déclarée, et sinon `unknown` avec une `reason` : `no-pid`, `no-started-at`,
+`process-unreadable`, `pid-reused` (un processus créé après le début de la session tient le
+pid), `start-mismatch` ou `declared "…"`. Une session absente d'une lecture suivante est dite
+une fois dans `gone` (`unknown`, `absent`, sa `last_incarnation`). Une lecture ratée ou trop
+lente est un enregistrement d'erreur sans disponibilité, et aucune ancienne n'est répétée : un
+silence, une erreur ou un `read_at_ms` ancien ne veulent jamais dire libre. Le plan doit tourner
+dans la session de cet utilisateur (un pair desk) ; un service en session 0 ne voit aucune
+session. La disponibilité est une observation, pas une autorité pour confier du travail.
 
 Un **nœud** est une instance d'un kind dans l'arbre :
 

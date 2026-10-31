@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -88,3 +89,40 @@ func (memProbe) sample() (map[string]any, error) {
 }
 
 func cpuCores() int { return runtime.NumCPU() }
+
+// procStartMs is the creation time of process pid, in Unix milliseconds: field 22 of
+// /proc/<pid>/stat (clock ticks since boot) plus the boot time (`btime` in /proc/stat). It
+// tells the process a session started from apart from a later one given the same pid.
+func procStartMs(pid int) (int64, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, err
+	}
+	// The command name, field 2, is in parentheses and may hold spaces: count from the last ')'.
+	i := strings.LastIndexByte(string(b), ')')
+	if i < 0 {
+		return 0, fmt.Errorf("/proc/%d/stat: no command name", pid)
+	}
+	f := strings.Fields(string(b[i+1:]))
+	if len(f) < 20 {
+		return 0, fmt.Errorf("/proc/%d/stat: %d fields after the name", pid, len(f))
+	}
+	ticks, err := strconv.ParseInt(f[19], 10, 64) // field 22: starttime
+	if err != nil {
+		return 0, err
+	}
+	st, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(st), "\n") {
+		if v, ok := strings.CutPrefix(line, "btime "); ok {
+			boot, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err != nil {
+				return 0, err
+			}
+			return boot*1000 + ticks*1000/clockTicks(), nil
+		}
+	}
+	return 0, errors.New("/proc/stat: no btime")
+}
