@@ -1,0 +1,599 @@
+<style>
+  .ix { font-family: var(--font-anthropic-sans); color: var(--color-fg); display: grid; gap: var(--cds-gap-lg); max-width: 1280px; margin-inline: auto; }
+  .ix-head { display: grid; gap: var(--cds-gap-xs); }
+  .ix-title { margin: 0; font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); text-wrap: balance; }
+  .ix-takeaway { margin: 0; font-size: var(--cds-font-size-body); max-width: 72ch; }
+  .ix-asof { margin: 0; font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ix-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--cds-gap-md); }
+  .ix-tile, .ix-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); min-width: 0; }
+  .ix-tile { padding: var(--cds-pad-md) var(--cds-pad-lg); display: grid; gap: var(--cds-gap-xs); align-content: start; }
+  .ix-tile-label { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ix-tile-value { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: calc(var(--cds-font-size-title) * 1.4); line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .ix-tile-note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ix-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: var(--cds-gap-md); }
+  .ix-card { padding: var(--cds-pad-lg); display: grid; gap: var(--cds-gap-sm); align-content: start; position: relative; }
+  .ix-card h2 { margin: 0; font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); }
+  .ix-note { margin: 0; font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); max-width: 80ch; }
+  .ix-table-wrap { overflow-x: auto; }
+  .ix-table { width: 100%; border-collapse: collapse; font-size: var(--cds-font-size-body); font-variant-numeric: tabular-nums; }
+  .ix-table th { text-align: left; font-weight: var(--cds-font-weight-medium); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-sm); border-bottom: 1px solid var(--color-border-line); white-space: nowrap; }
+  .ix-table td { padding: var(--cds-pad-sm); border-bottom: 1px solid var(--color-border-line); vertical-align: top; }
+  .ix-table tr:last-child td { border-bottom: 0; }
+  .ix-table .ix-num { text-align: right; }
+  .ix-table a { color: inherit; text-decoration: none; }
+  .ix-table a:hover, .ix-table a:focus-visible { text-decoration: underline; }
+  .ix-pill { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: var(--cds-font-size-caption); white-space: nowrap; }
+  .ix-pill[data-tone="ok"] { color: var(--color-ok); background: color-mix(in srgb, var(--color-ok) 14%, transparent); }
+  .ix-pill[data-tone="warn"] { color: var(--color-warn); background: color-mix(in srgb, var(--color-warn) 14%, transparent); }
+  .ix-pill[data-tone="bad"] { color: var(--color-bad); background: color-mix(in srgb, var(--color-bad) 14%, transparent); }
+  .ix-pill[data-tone="muted"] { color: var(--color-fg-muted); background: color-mix(in srgb, var(--color-fg-muted) 12%, transparent); }
+  .ix-state { display: inline-block; text-transform: lowercase; }
+  .ix-state::first-letter { text-transform: uppercase; }
+  .ix-chart { min-height: 220px; }
+  .ix-runs { min-height: 300px; }
+  .ix-chart svg text { fill: var(--color-fg-muted); font-size: var(--cds-font-size-caption); font-family: var(--font-anthropic-sans); }
+  .ix-chart svg .ix-lane-name { fill: var(--color-fg); }
+  .ix-bars { display: grid; gap: var(--cds-gap-xs); min-height: 8rem; align-content: start; }
+  .ix-bar { display: grid; grid-template-columns: minmax(6rem, 9rem) 1fr 2.5rem; gap: var(--cds-gap-sm); align-items: center; font-size: var(--cds-font-size-body); }
+  .ix-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ix-bar-track { height: 12px; border-radius: 999px; background: color-mix(in srgb, var(--color-fg-muted) 10%, transparent); overflow: hidden; }
+  .ix-bar-fill { height: 100%; border-radius: 999px; }
+  .ix-bar-value { text-align: right; font-variant-numeric: tabular-nums; }
+  .ix-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ix-legend span { display: inline-flex; align-items: center; gap: var(--cds-gap-xs); }
+  .ix-legend i { width: 0.5rem; height: 0.5rem; border-radius: 50%; display: inline-block; }
+  .ix-tip { position: absolute; z-index: 2; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); max-width: 18rem; }
+  .ix-tip .ix-tip-head { color: var(--cds-text-secondary); }
+  .ix-failed { display: flex; align-items: center; justify-content: center; gap: var(--cds-gap-xs); min-height: inherit; color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .ix-failed::before { content: ""; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: var(--color-bad); }
+  .ix [data-dash-source-state="refreshing"] { opacity: 0.5; transition: opacity var(--cds-dur-slow); }
+  .ix [data-dash-source-state="empty"] { color: transparent; }
+  @media (max-width: 40rem) { .ix-narrow-hide { display: none; } .ix-bar { grid-template-columns: minmax(5rem, 7rem) 1fr 2rem; } }
+</style>
+
+<div class="ix">
+  <header class="ix-head" id="summary">
+    <h1 class="ix-title">IX Control Room</h1>
+    <p class="ix-takeaway">
+      <span class="ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=ready_for_you">—</span>
+      of <span class="ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=open_prs">—</span>
+      open pull requests are ready for your merge, and
+      <span class="ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=failing_workflows">—</span>
+      of <span class="ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=workflows">—</span>
+      workflows failed their latest run on main.
+    </p>
+    <p class="ix-asof">
+      Snapshot of origin/main at <span class="ix-v dash-skeleton" data-source="surface" data-field="commit" data-row="0">—</span>,
+      read <span class="ix-v dash-skeleton" data-fmt="when" data-source="surface" data-field="read_at" data-row="0">—</span> UTC.
+    </p>
+  </header>
+
+  <section class="ix-tiles" id="headline" aria-label="Headline figures">
+    <div class="ix-tile">
+      <span class="ix-tile-label">Ready for your merge</span>
+      <span class="ix-tile-value ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=ready_for_you">—</span>
+      <span class="ix-tile-note">of <span class="ix-v" data-source="headline" data-field="value" data-where="metric=open_prs">—</span> open pull requests</span>
+    </div>
+    <div class="ix-tile">
+      <span class="ix-tile-label">Merged, last 30 days</span>
+      <span class="ix-tile-value ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=merged_30d">—</span>
+      <span class="ix-tile-note">pull requests, before the snapshot</span>
+    </div>
+    <div class="ix-tile">
+      <span class="ix-tile-label">Open issues</span>
+      <span class="ix-tile-value ix-v dash-skeleton" data-source="headline" data-field="value" data-where="metric=open_issues">—</span>
+      <span class="ix-tile-note"><span class="ix-v" data-source="headline" data-field="value" data-where="metric=needs_triage">—</span> need triage</span>
+    </div>
+    <div class="ix-tile">
+      <span class="ix-tile-label">MCP tools on main</span>
+      <span class="ix-tile-value ix-v dash-skeleton" data-source="surface" data-field="mcp_tools" data-row="0">—</span>
+      <span class="ix-tile-note"><span class="ix-v" data-source="surface" data-field="registry_skills" data-row="0">—</span> registry skills</span>
+    </div>
+    <div class="ix-tile">
+      <span class="ix-tile-label">Workspace crates</span>
+      <span class="ix-tile-value ix-v dash-skeleton" data-source="surface" data-field="workspace_members" data-row="0">—</span>
+      <span class="ix-tile-note"><span class="ix-v" data-source="tier_counts" data-field="crates" data-where="tier=stable">—</span> in the stable tier</span>
+    </div>
+  </section>
+
+  <section class="ix-card" id="pulls">
+    <h2>Open pull requests</h2>
+    <p class="ix-note">Ordered by what each needs next. Ready means not a draft, no conflict, no unresolved Codex P0/P1 thread, no failing check except the non-required risk-report, no check still running, and based on main. The agent-blackbox-reviewed label is not checked.</p>
+    <div class="ix-table-wrap">
+      <table class="ix-table" id="pulls-table" data-source="open_prs" data-row-key="number">
+        <thead>
+          <tr>
+            <th data-source="pr_stage" data-field="stage">Next</th>
+            <th class="ix-num" data-field="number">PR</th>
+            <th data-field="title">Title</th>
+            <th class="ix-narrow-hide" data-field="base">Base</th>
+            <th class="ix-num" data-source="pr_stage" data-field="age_days">Age (days)</th>
+            <th class="ix-narrow-hide" data-field="ci">CI</th>
+            <th class="ix-num" data-field="codex_p0_p1_open">Codex P0/P1</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="ix-card" id="indigo">
+    <h2>Indigo work in progress</h2>
+    <p class="ix-note">Work by the Indigo session that is not on main. Heads and dates come from git; counts and digests (the first 12 hex digits of SHA-256) are recomputed from the result file each row names. Checks count automated checks only; Verdict is the reviewer's, as relayed by the user, and outranks them. Verdict, Open findings, Review and Next are kept by hand. None of it is a pull request yet.</p>
+    <div class="ix-table-wrap">
+      <table class="ix-table" id="indigo-table" data-source="indigo_work" data-row-key="id">
+        <thead>
+          <tr>
+            <th data-field="item">Item</th>
+            <th data-field="verdict">Verdict</th>
+            <th data-field="open_findings">Open findings</th>
+            <th data-field="where">Where</th>
+            <th class="ix-narrow-hide" data-field="head_sha">Head</th>
+            <th class="ix-num" data-field="checks_passed">Checks passed</th>
+            <th class="ix-num" data-field="checks_total">of</th>
+            <th class="ix-num ix-narrow-hide" data-field="mutants_red">Mutants caught</th>
+            <th class="ix-num ix-narrow-hide" data-field="mutants_total">of</th>
+            <th class="ix-narrow-hide" data-field="bundle">Review bundle</th>
+            <th class="ix-narrow-hide" data-field="bundle_sha256">Bundle SHA-256</th>
+            <th data-field="review">Review</th>
+            <th class="ix-narrow-hide" data-field="next">Next</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="ix-grid">
+    <section class="ix-card" id="merged-weekly">
+      <h2>Merged per week</h2>
+      <p class="ix-note">Pull requests merged into main, the last 12 weeks starting Monday (UTC). The last bar is the week of the snapshot, still open.</p>
+      <div class="ix-chart dash-skeleton" id="merged-weekly-chart" data-source="merged_weekly"></div>
+    </section>
+    <section class="ix-card" id="maturity">
+      <h2>Crate maturity</h2>
+      <p class="ix-note">Each crate's tier in crate-maturity.toml on main. CI guards the stable tier's public API.</p>
+      <div class="ix-bars dash-skeleton" id="maturity-bars" data-source="tier_counts"></div>
+    </section>
+  </div>
+
+  <section class="ix-card" id="main-ci">
+    <h2>Workflow runs on main</h2>
+    <p class="ix-note">Each dot is one run of a workflow on main, oldest at the left; the right-hand figures count runs and failures in this window.</p>
+    <div class="ix-legend" aria-hidden="true">
+      <span><i class="ix-sw-ok"></i>Passed</span>
+      <span><i class="ix-sw-muted"></i>Skipped, cancelled or running</span>
+      <span><i class="ix-sw-bad"></i>Failed</span>
+    </div>
+    <div class="ix-chart ix-runs dash-skeleton" id="runs-chart" data-source="main_runs workflow_health"></div>
+  </section>
+
+  <section class="ix-card" id="issues">
+    <h2>Open issues by label</h2>
+    <p class="ix-note">An issue with several labels counts under each.</p>
+    <div class="ix-bars dash-skeleton" id="issue-bars" data-source="issue_labels"></div>
+  </section>
+</div>
+
+<script>
+  dash.calc('pr_stage', {
+    title: 'Next step per pull request',
+    description: 'What each open pull request needs next, from its draft flag, Codex threads, merge state, checks and base, with its age at the snapshot.',
+    inputs: ['open_prs', 'surface'],
+    fn: (open_prs, surface) => {
+      const asOf = new Date(surface[0].read_at);
+      const notRequired = ['risk-report'];
+      return open_prs.map((p) => {
+        const failing = p.failing_checks ? p.failing_checks.split(', ').filter((c) => !notRequired.includes(c)) : [];
+        let stage = 'Ready for you';
+        if (p.draft) stage = 'Draft';
+        else if (p.codex_p0_p1_open > 0) stage = 'Codex P0/P1 open';
+        else if (p.mergeable === 'CONFLICTING' || p.merge_state === 'DIRTY') stage = 'Conflict';
+        else if (failing.length > 0) stage = 'CI failing';
+        else if (p.pending_checks > 0) stage = 'CI running';
+        else if (p.base !== 'main') stage = 'Waiting on base PR';
+        return { number: p.number, stage, age_days: Math.floor((asOf - new Date(p.created_at)) / 86400000) };
+      });
+    },
+  });
+
+  dash.calc('workflow_health', {
+    title: 'Latest result per workflow',
+    description: 'Runs, failures and the latest result of each workflow on main, from the runs in the snapshot.',
+    inputs: ['main_runs'],
+    fn: (main_runs) => {
+      const byWorkflow = new Map();
+      for (const r of main_runs) {
+        if (!byWorkflow.has(r.workflow)) byWorkflow.set(r.workflow, []);
+        byWorkflow.get(r.workflow).push(r);
+      }
+      return [...byWorkflow].map(([workflow, runs]) => {
+        runs.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+        return { workflow, runs: runs.length, failures: runs.filter((r) => r.result === 'failure').length, last_result: runs[0].result, last_at: runs[0].created_at };
+      }).sort((a, b) => b.runs - a.runs || (a.workflow < b.workflow ? -1 : 1));
+    },
+  });
+
+  dash.calc('headline', {
+    title: 'Headline figures',
+    description: 'Open and ready pull requests, merges in the 30 days before the snapshot, open and untriaged issues, and workflows whose latest run on main failed.',
+    inputs: ['pr_stage', 'merged_prs', 'open_issues', 'surface', 'workflow_health'],
+    fn: (pr_stage, merged_prs, open_issues, surface, workflow_health) => {
+      const since = new Date(surface[0].read_at).getTime() - 30 * 86400000;
+      return [
+        { metric: 'open_prs', value: pr_stage.length },
+        { metric: 'ready_for_you', value: pr_stage.filter((p) => p.stage === 'Ready for you').length },
+        { metric: 'merged_30d', value: merged_prs.filter((m) => new Date(m.merged_at).getTime() >= since).length },
+        { metric: 'open_issues', value: open_issues.length },
+        { metric: 'needs_triage', value: open_issues.filter((i) => i.labels.split(', ').includes('needs-triage')).length },
+        { metric: 'workflows', value: workflow_health.length },
+        { metric: 'failing_workflows', value: workflow_health.filter((w) => w.last_result === 'failure').length },
+      ];
+    },
+  });
+
+  dash.calc('merged_weekly', {
+    title: 'Merged per week',
+    description: 'Pull requests merged per week (Monday to Sunday, UTC) over the 12 weeks ending with the week of the snapshot.',
+    inputs: ['merged_prs', 'surface'],
+    fn: (merged_prs, surface) => {
+      const monday = (d) => {
+        const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+        x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7));
+        return x.toISOString().slice(0, 10);
+      };
+      const last = new Date(monday(new Date(surface[0].read_at)) + 'T00:00:00Z');
+      const weeks = [];
+      for (let i = 11; i >= 0; i -= 1) weeks.push(new Date(last.getTime() - i * 7 * 86400000).toISOString().slice(0, 10));
+      const counts = Object.fromEntries(weeks.map((w) => [w, 0]));
+      for (const m of merged_prs) {
+        const w = monday(new Date(m.merged_at));
+        if (w in counts) counts[w] += 1;
+      }
+      return weeks.map((week) => ({ week, merged: counts[week] }));
+    },
+  });
+
+  dash.calc('tier_counts', {
+    title: 'Crates per tier',
+    description: 'How many crates crate-maturity.toml puts in each tier.',
+    inputs: ['crate_tiers'],
+    fn: (crate_tiers) => ['stable', 'beta', 'experimental', 'internal'].map((tier) => ({ tier, crates: crate_tiers.filter((c) => c.tier === tier).length })),
+  });
+
+  dash.calc('issue_labels', {
+    title: 'Open issues per label',
+    description: 'Open issues counted under each of their labels; an issue without one counts as unlabelled.',
+    inputs: ['open_issues'],
+    fn: (open_issues) => {
+      const n = {};
+      for (const i of open_issues) for (const label of i.labels.split(', ')) n[label] = (n[label] || 0) + 1;
+      return Object.entries(n).map(([label, issues]) => ({ label, issues })).sort((a, b) => b.issues - a.issues || (a.label < b.label ? -1 : 1));
+    },
+  });
+
+  const fmtInt = d3.format(',');
+  const fmtDay = d3.utcFormat('%b %-d');
+  const fmtWhen = d3.utcFormat('%b %-d, %H:%M');
+  const STAGES = ['Ready for you', 'CI failing', 'Conflict', 'Codex P0/P1 open', 'CI running', 'Waiting on base PR', 'Draft'];
+  const TONE = { 'Ready for you': 'ok', 'CI failing': 'bad', Conflict: 'bad', 'Codex P0/P1 open': 'bad', 'CI running': 'warn', 'Waiting on base PR': 'warn', Draft: 'muted' };
+  const RESULT_FILL = (result) => (result === 'failure' ? 'var(--cds-chart-status-critical)' : result === 'success' ? dash.colors[0] : 'var(--cds-chart-muted)');
+
+  document.querySelector('.ix-sw-ok').style.background = dash.colors[0];
+  document.querySelector('.ix-sw-muted').style.background = 'var(--cds-chart-muted)';
+  document.querySelector('.ix-sw-bad').style.background = 'var(--cds-chart-status-critical)';
+
+  const parseWhere = (where) => Object.fromEntries(where.split('&').map((pair) => pair.split('=').map(decodeURIComponent)));
+
+  const failedLine = () => {
+    const el = document.createElement('div');
+    el.className = 'ix-failed';
+    el.textContent = 'Failed to load';
+    return el;
+  };
+
+  function fillValues() {
+    for (const el of document.querySelectorAll('.ix .ix-v')) {
+      const d = dash.data(el.dataset.source);
+      if (d.status !== 'ok') {
+        el.textContent = '—';
+        el.classList.toggle('dash-skeleton', d.status === 'loading');
+        continue;
+      }
+      let row;
+      if (el.dataset.where) {
+        const want = parseWhere(el.dataset.where);
+        row = d.data.find((r) => Object.entries(want).every(([k, v]) => String(r[k]) === v));
+      } else {
+        row = d.data[Number(el.dataset.row || 0)];
+      }
+      const value = row ? row[el.dataset.field] : undefined;
+      el.classList.remove('dash-skeleton');
+      if (value === undefined || value === null) el.textContent = '—';
+      else if (el.dataset.fmt === 'when') el.textContent = fmtWhen(new Date(value));
+      else el.textContent = typeof value === 'number' ? fmtInt(value) : String(value);
+    }
+  }
+
+  function fillTable() {
+    const table = document.getElementById('pulls-table');
+    const tbody = table.querySelector('tbody');
+    const prs = dash.data('open_prs');
+    const stages = dash.data('pr_stage');
+    if (prs.status !== 'ok' || stages.status !== 'ok') {
+      tbody.replaceChildren();
+      if (prs.status === 'error' || stages.status === 'error') {
+        const tr = tbody.insertRow();
+        const td = tr.insertCell();
+        td.colSpan = 7;
+        td.append(failedLine());
+      }
+      return;
+    }
+    const byNumber = new Map(stages.data.map((s) => [s.number, s]));
+    const rows = prs.data.slice().sort((a, b) => {
+      const sa = STAGES.indexOf(byNumber.get(a.number)?.stage);
+      const sb = STAGES.indexOf(byNumber.get(b.number)?.stage);
+      return sa - sb || a.number - b.number;
+    });
+    tbody.replaceChildren(...rows.map((p) => {
+      const s = byNumber.get(p.number) || {};
+      const tr = document.createElement('tr');
+      const stage = tr.insertCell();
+      const pill = document.createElement('span');
+      pill.className = 'ix-pill';
+      pill.dataset.tone = TONE[s.stage] || 'muted';
+      pill.textContent = s.stage ?? '—';
+      stage.append(pill);
+      const num = tr.insertCell();
+      num.className = 'ix-num';
+      num.textContent = String(p.number);
+      const title = tr.insertCell();
+      const link = document.createElement('a');
+      link.href = p.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = p.title;
+      title.append(link);
+      const base = tr.insertCell();
+      base.className = 'ix-narrow-hide';
+      base.textContent = p.base;
+      const age = tr.insertCell();
+      age.className = 'ix-num';
+      age.textContent = s.age_days === undefined ? '—' : fmtInt(s.age_days);
+      const ci = tr.insertCell();
+      ci.className = 'ix-narrow-hide';
+      const ciText = document.createElement('span');
+      ciText.className = 'ix-state';
+      ciText.textContent = p.ci;
+      ci.append(ciText);
+      const codex = tr.insertCell();
+      codex.className = 'ix-num';
+      codex.textContent = fmtInt(p.codex_p0_p1_open);
+      return tr;
+    }));
+  }
+
+  function tipFor(card) {
+    let tip = card.querySelector('.ix-tip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.className = 'ix-tip';
+      tip.hidden = true;
+      card.append(tip);
+    }
+    return tip;
+  }
+
+  function showTip(card, event, lines) {
+    const tip = tipFor(card);
+    tip.replaceChildren(...lines.map((text, i) => {
+      const line = document.createElement('div');
+      if (i === 0) line.className = 'ix-tip-head';
+      line.textContent = text;
+      return line;
+    }));
+    tip.hidden = false;
+    const box = card.getBoundingClientRect();
+    let x = event.clientX - box.left + 12;
+    let y = event.clientY - box.top + 12;
+    if (x + tip.offsetWidth > box.width - 8) x = event.clientX - box.left - tip.offsetWidth - 12;
+    if (y + tip.offsetHeight > box.height - 8) y = event.clientY - box.top - tip.offsetHeight - 12;
+    tip.style.left = Math.max(8, x) + 'px';
+    tip.style.top = Math.max(8, y) + 'px';
+  }
+
+  const hideTip = (card) => { tipFor(card).hidden = true; };
+
+  function measure(svg, texts, cls) {
+    const probe = svg.append('text').attr('class', cls || null);
+    let widest = 0;
+    for (const t of texts) {
+      probe.text(t);
+      widest = Math.max(widest, probe.node().getComputedTextLength());
+    }
+    probe.remove();
+    return widest;
+  }
+
+  function drawWeekly() {
+    const el = document.getElementById('merged-weekly-chart');
+    const card = document.getElementById('merged-weekly');
+    const d = dash.data('merged_weekly');
+    if (d.status !== 'ok') {
+      el.replaceChildren(...(d.status === 'error' ? [failedLine()] : []));
+      el.classList.toggle('dash-skeleton', d.status === 'loading');
+      return;
+    }
+    el.classList.remove('dash-skeleton');
+    el.replaceChildren();
+    const rows = d.data;
+    const width = Math.max(280, el.clientWidth);
+    const height = 220;
+    const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${width} ${height}`)
+      .attr('role', 'img').attr('aria-label', 'Pull requests merged per week');
+    const y = d3.scaleLinear([0, d3.max(rows, (r) => r.merged) || 1], [height - 28, 12]).nice();
+    const ticks = y.ticks(4);
+    const left = measure(svg, ticks.map(fmtInt)) + 10;
+    const x = d3.scaleBand(rows.map((r) => r.week), [left, width - 4]).padding(0.3);
+    svg.append('g').selectAll('line').data(ticks).join('line')
+      .attr('x1', left).attr('x2', width - 4).attr('y1', (t) => y(t)).attr('y2', (t) => y(t))
+      .style('stroke', (t) => (t === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)')).attr('stroke-width', 1);
+    svg.append('g').selectAll('text').data(ticks).join('text')
+      .attr('x', left - 8).attr('y', (t) => y(t)).attr('dy', '0.32em').attr('text-anchor', 'end').text(fmtInt);
+    const barWidth = Math.min(32, x.bandwidth());
+    const lastWeek = rows[rows.length - 1].week;
+    svg.append('g').selectAll('rect').data(rows).join('rect')
+      .attr('x', (r) => x(r.week) + (x.bandwidth() - barWidth) / 2).attr('width', barWidth)
+      .attr('y', (r) => y(r.merged)).attr('height', (r) => Math.max(0, y(0) - y(r.merged))).attr('rx', 4)
+      .style('fill', (r) => (r.week === lastWeek ? 'var(--cds-chart-muted)' : dash.colors[0]))
+      .on('mousemove', (event, r) => showTip(card, event, [`Week of ${fmtDay(new Date(r.week + 'T00:00:00Z'))}${r.week === lastWeek ? ' (so far)' : ''}`, `${fmtInt(r.merged)} merged`]))
+      .on('mouseleave', () => hideTip(card));
+    const labelWidth = measure(svg, ['Sep 29']) + 12;
+    const every = Math.max(1, Math.ceil(rows.length / Math.max(1, Math.floor((width - left) / labelWidth))));
+    svg.append('g').selectAll('text').data(rows.filter((r, i) => (rows.length - 1 - i) % every === 0)).join('text')
+      .attr('x', (r) => x(r.week) + x.bandwidth() / 2).attr('y', height - 8).attr('text-anchor', 'middle')
+      .text((r) => fmtDay(new Date(r.week + 'T00:00:00Z')));
+  }
+
+  function drawBars(id, dataset, nameKey, valueKey, color) {
+    const el = document.getElementById(id);
+    const d = dash.data(dataset);
+    if (d.status !== 'ok') {
+      el.replaceChildren(...(d.status === 'error' ? [failedLine()] : []));
+      el.classList.toggle('dash-skeleton', d.status === 'loading');
+      return;
+    }
+    el.classList.remove('dash-skeleton');
+    const max = d3.max(d.data, (r) => r[valueKey]) || 1;
+    el.replaceChildren(...d.data.map((r) => {
+      const row = document.createElement('div');
+      row.className = 'ix-bar';
+      const name = document.createElement('span');
+      name.className = 'ix-bar-name';
+      name.textContent = r[nameKey];
+      name.title = r[nameKey];
+      const track = document.createElement('div');
+      track.className = 'ix-bar-track';
+      const fill = document.createElement('div');
+      fill.className = 'ix-bar-fill';
+      fill.style.width = `${(100 * r[valueKey]) / max}%`;
+      fill.style.background = color;
+      track.append(fill);
+      const value = document.createElement('span');
+      value.className = 'ix-bar-value';
+      value.textContent = fmtInt(r[valueKey]);
+      row.append(name, track, value);
+      return row;
+    }));
+  }
+
+  function drawRuns() {
+    const el = document.getElementById('runs-chart');
+    const card = document.getElementById('main-ci');
+    const runs = dash.data('main_runs');
+    const health = dash.data('workflow_health');
+    const surface = dash.data('surface');
+    if (runs.status !== 'ok' || health.status !== 'ok' || surface.status !== 'ok') {
+      const failed = [runs, health, surface].some((d) => d.status === 'error');
+      el.replaceChildren(...(failed ? [failedLine()] : []));
+      el.classList.toggle('dash-skeleton', !failed);
+      return;
+    }
+    el.classList.remove('dash-skeleton');
+    el.replaceChildren();
+    const lanes = health.data;
+    const width = Math.max(280, el.clientWidth);
+    const laneHeight = 38;
+    const top = 4;
+    const height = top + lanes.length * laneHeight + 24;
+    const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${width} ${height}`)
+      .attr('role', 'img').attr('aria-label', 'Workflow runs on main');
+    const stamps = runs.data.map((r) => new Date(r.created_at));
+    const end = new Date(surface.data[0].read_at);
+    const x = d3.scaleUtc([d3.min(stamps), end], [8, width - 8]);
+    const counts = lanes.map((lane) => `${fmtInt(lane.runs)} runs · ${fmtInt(lane.failures)} failed`);
+    const nameRoom = width - measure(svg, counts) - 16;
+    lanes.forEach((lane, i) => {
+      const y0 = top + i * laneHeight;
+      const g = svg.append('g');
+      const name = g.append('text').attr('class', 'ix-lane-name').attr('x', 0).attr('y', y0 + 12).text(lane.workflow);
+      let shown = lane.workflow;
+      while (shown.length > 4 && name.node().getComputedTextLength() > nameRoom) {
+        shown = shown.slice(0, -1);
+        name.text(shown.trimEnd() + '…');
+      }
+      if (shown !== lane.workflow) name.append('title').text(lane.workflow);
+      g.append('text').attr('x', width).attr('y', y0 + 12).attr('text-anchor', 'end').text(counts[i]);
+      g.append('line').attr('x1', 8).attr('x2', width - 8).attr('y1', y0 + 26).attr('y2', y0 + 26)
+        .style('stroke', 'var(--cds-chart-grid)').attr('stroke-width', 1);
+      g.selectAll('circle').data(runs.data.filter((r) => r.workflow === lane.workflow)).join('circle')
+        .attr('cx', (r) => x(new Date(r.created_at))).attr('cy', y0 + 26).attr('r', 4)
+        .style('fill', (r) => RESULT_FILL(r.result))
+        .on('mousemove', (event, r) => showTip(card, event, [fmtWhen(new Date(r.created_at)) + ' UTC', `${r.workflow}: ${r.result} (${r.event})`]))
+        .on('mouseleave', () => hideTip(card));
+    });
+    const axisTicks = x.ticks(Math.max(2, Math.floor(width / 110)));
+    svg.append('g').selectAll('text').data(axisTicks).join('text')
+      .attr('x', (t) => x(t)).attr('y', height - 6).attr('text-anchor', 'middle').text(fmtDay);
+  }
+
+  function fillIndigo() {
+    const table = document.getElementById('indigo-table');
+    const tbody = table.querySelector('tbody');
+    const work = dash.data('indigo_work');
+    const heads = [...table.querySelectorAll('thead th')];
+    if (work.status !== 'ok') {
+      tbody.replaceChildren();
+      if (work.status === 'error') {
+        const td = tbody.insertRow().insertCell();
+        td.colSpan = heads.length;
+        td.append(failedLine());
+      }
+      return;
+    }
+    tbody.replaceChildren(...work.data.map((r) => {
+      const tr = document.createElement('tr');
+      tr.dataset.key = r.id;
+      for (const th of heads) {
+        const td = tr.insertCell();
+        td.className = th.className;
+        const v = r[th.dataset.field];
+        const text = v === null || v === undefined ? '—' : typeof v === 'number' ? fmtInt(v) : String(v);
+        if (th.dataset.field === 'verdict') {
+          const pill = document.createElement('span');
+          pill.className = 'ix-pill';
+          pill.dataset.tone = v == null ? 'muted' : /correction|reject|block/i.test(text) ? 'bad' : /pending|request/i.test(text) ? 'warn' : 'ok';
+          pill.textContent = text;
+          td.append(pill);
+        } else if (th.dataset.field === 'where' && /^exp\/[A-Za-z0-9._-]+$/.test(text)) {
+          const link = document.createElement('a');
+          link.href = 'https://github.com/GuitarAlchemist/ix/tree/' + text;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = text;
+          td.append(link);
+        } else {
+          td.textContent = text;
+        }
+      }
+      return tr;
+    }));
+  }
+
+  let drawnOnce = false;
+  dash.onData(() => {
+    fillValues();
+    fillTable();
+    fillIndigo();
+    drawWeekly();
+    drawBars('maturity-bars', 'tier_counts', 'tier', 'crates', dash.colors[0]);
+    drawBars('issue-bars', 'issue_labels', 'label', 'issues', dash.colors[1]);
+    drawRuns();
+    if (!drawnOnce && dash.data('open_prs').status === 'ok') {
+      drawnOnce = true;
+      const named = location.hash ? document.getElementById(location.hash.slice(1)) : null;
+      if (named) { named.scrollIntoView(); dash.setLink(named.id); }
+    }
+  });
+</script>
