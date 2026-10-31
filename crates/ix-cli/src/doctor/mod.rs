@@ -297,13 +297,14 @@ fn check_registry_snapshot(root: &Path, write: bool) -> CheckResult {
         };
     }
 
-    let snapshot =
-        match registry_snapshot::Snapshot::load(root) {
-            Ok(s) => s,
-            Err(e) => return CheckResult::new(NAME, Status::Fail, e).with_remedy(
+    let snapshot = match registry_snapshot::Snapshot::load(root) {
+        Ok(s) => s,
+        Err(e) => {
+            return CheckResult::new(NAME, Status::Fail, e).with_remedy(
                 "run `cargo run -p ix-cli --bin ix -- doctor --write` and commit the snapshot",
-            ),
-        };
+            )
+        }
+    };
 
     let drift = registry_snapshot::diff(&snapshot, &live);
     if drift.is_clean() {
