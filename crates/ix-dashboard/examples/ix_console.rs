@@ -588,4 +588,144 @@ mod tests {
         let plan_after = compute_layout_plan(&state, area);
         assert_eq!(plan_before.icicle_cells, plan_after.icicle_cells);
     }
+
+    #[test]
+    fn the_two_panes_split_the_width_in_half() {
+        let state = load_synthetic_demo_state();
+        for width in [80u16, 108, 120, 161, 200] {
+            let plan = compute_layout_plan(&state, Rect::new(0, 0, width, 30));
+            let (l, r) = (plan.left_area.width, plan.right_area.width);
+            assert_eq!(width, l + r, "width {width}");
+            assert!(l.abs_diff(r) <= 1, "width {width}: left {l}, right {r}");
+        }
+    }
+
+    /// The columns the icicle draws, by relative depth: `(rel_depth, col_start, col_width)`.
+    fn columns(state: &ConsoleState, area: Rect) -> Vec<(usize, u16, u16)> {
+        let mut cols: Vec<(usize, u16, u16)> = compute_layout_plan(state, area)
+            .icicle_cells
+            .iter()
+            .map(|c| (c.rel_depth, c.col_start, c.col_width))
+            .collect();
+        cols.sort();
+        cols.dedup();
+        cols
+    }
+
+    #[test]
+    fn the_levels_shown_share_the_whole_left_pane() {
+        let area = Rect::new(0, 0, 160, 16);
+        let mut state = load_synthetic_demo_state();
+        // Three levels under plane.ixctl, four under the root: no empty column either way.
+        for (zoom, levels) in [("plane.ixctl", 3usize), ("root.factory", 4)] {
+            state.apply_action(ConsoleAction::ZoomTo(zoom.to_string()));
+            let cols = columns(&state, area);
+            assert_eq!(levels, cols.len(), "{zoom}: {cols:?}");
+            let widths: Vec<u16> = cols.iter().map(|c| c.2).collect();
+            let (min, max) = (*widths.iter().min().unwrap(), *widths.iter().max().unwrap());
+            assert!(max - min <= 1, "{zoom}: {widths:?}");
+            for pair in cols.windows(2) {
+                assert_eq!(
+                    pair[0].1 + pair[0].2,
+                    pair[1].1,
+                    "{zoom}: gap or overlap {cols:?}"
+                );
+            }
+            let left = compute_layout_plan(&state, area).left_area;
+            let (_, start, width) = cols[cols.len() - 1];
+            assert_eq!(left.x + left.width - 1, start + width, "{zoom}: {cols:?}");
+        }
+    }
+
+    #[test]
+    fn arrows_walk_the_tree_and_zoom_only_to_keep_the_selection_in_view() {
+        let mut state = load_synthetic_demo_state();
+        state.apply_action(ConsoleAction::ZoomTo("root.factory".to_string()));
+        state.apply_action(ConsoleAction::Select("svc.desk.loop".to_string()));
+        let sel = |s: &ConsoleState| s.selected_id.clone().unwrap();
+        let zoom = |s: &ConsoleState| s.zoom_root_id.clone().unwrap();
+
+        state.apply_action(ConsoleAction::SelectChild);
+        assert_eq!(
+            (
+                "run.desk.loop.step1".to_string(),
+                "root.factory".to_string()
+            ),
+            (sel(&state), zoom(&state))
+        );
+        // A leaf has no child: the selection stays.
+        state.apply_action(ConsoleAction::SelectChild);
+        assert_eq!("run.desk.loop.step1", sel(&state));
+        state.apply_action(ConsoleAction::SelectParent);
+        state.apply_action(ConsoleAction::SelectParent);
+        assert_eq!(
+            ("plane.ixctl".to_string(), "root.factory".to_string()),
+            (sel(&state), zoom(&state))
+        );
+        state.apply_action(ConsoleAction::SelectParent);
+        state.apply_action(ConsoleAction::SelectParent);
+        assert_eq!(
+            ("root.factory".to_string(), "root.factory".to_string()),
+            (sel(&state), zoom(&state))
+        );
+
+        // Leaving the zoom root upward zooms out with it.
+        state.apply_action(ConsoleAction::ZoomTo("plane.ixctl".to_string()));
+        state.apply_action(ConsoleAction::Select("plane.ixctl".to_string()));
+        state.apply_action(ConsoleAction::SelectParent);
+        assert_eq!(
+            ("root.factory".to_string(), "root.factory".to_string()),
+            (sel(&state), zoom(&state))
+        );
+
+        // A child past the four levels shown brings the zoom down to its parent.
+        let mut deep = state.nodes["run.desk.loop.step1"].spec.clone();
+        deep.id = "run.desk.loop.step1.sub".to_string();
+        deep.parent_id = Some("run.desk.loop.step1".to_string());
+        state.apply_feed(FeedEvent::UpsertNode(deep));
+        state.apply_action(ConsoleAction::Select("run.desk.loop.step1".to_string()));
+        state.apply_action(ConsoleAction::SelectChild);
+        assert_eq!(
+            (
+                "run.desk.loop.step1.sub".to_string(),
+                "run.desk.loop.step1".to_string()
+            ),
+            (sel(&state), zoom(&state))
+        );
+    }
+
+    #[test]
+    fn arrow_keys_select_while_enter_and_backspace_zoom() {
+        let key = |code| action_from_key(KeyEvent::new(code, KeyModifiers::NONE));
+        assert_eq!(Some(ConsoleAction::SelectChild), key(KeyCode::Right));
+        assert_eq!(Some(ConsoleAction::SelectChild), key(KeyCode::Char('l')));
+        assert_eq!(Some(ConsoleAction::SelectParent), key(KeyCode::Left));
+        assert_eq!(Some(ConsoleAction::SelectParent), key(KeyCode::Char('h')));
+        assert_eq!(Some(ConsoleAction::ZoomIn), key(KeyCode::Enter));
+        assert_eq!(Some(ConsoleAction::Back), key(KeyCode::Backspace));
+        assert_eq!(
+            Ok(ConsoleAction::SelectChild),
+            action_from_json(r#"{"action":"select_child"}"#)
+        );
+        assert_eq!(
+            Ok(ConsoleAction::SelectParent),
+            action_from_json(r#"{"action":"select_parent"}"#)
+        );
+        assert_eq!(
+            Ok(ConsoleAction::SelectChild),
+            action_from_voice(&VoiceIntent::ChildNode)
+        );
+        assert_eq!(
+            Ok(ConsoleAction::SelectParent),
+            action_from_voice(&VoiceIntent::ParentNode)
+        );
+
+        let state = load_synthetic_demo_state();
+        let area = Rect::new(0, 0, 160, 16);
+        let mut buf = Buffer::empty(area);
+        render_console(&state, area, &mut buf);
+        let screen = buffer_to_ascii_string(&buf);
+        assert!(screen.contains("Right/l=Child"), "{screen}");
+        assert!(screen.contains("Left/h=Parent"), "{screen}");
+    }
 }

@@ -1,4 +1,4 @@
-use crate::state::{ConsoleState, NodeHealth, NodeId};
+use crate::state::{ConsoleState, NodeHealth, NodeId, VISIBLE_LEVELS};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -59,7 +59,7 @@ pub fn compute_layout_plan(state: &ConsoleState, area: Rect) -> ConsoleLayoutPla
 
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(vertical[2]);
 
     let left_area = panes[0];
@@ -75,8 +75,10 @@ pub fn compute_layout_plan(state: &ConsoleState, area: Rect) -> ConsoleLayoutPla
             .or_else(|| state.roots.first())
             .filter(|id| state.nodes.contains_key(*id))
         {
-            let max_cols = ((inner_left.width / 12) as usize).clamp(1, 4);
-            let col_w = inner_left.width / (max_cols as u16);
+            // As many columns as levels to show: a shallow branch leaves no column empty.
+            let max_cols = ((inner_left.width / 12) as usize)
+                .clamp(1, VISIBLE_LEVELS)
+                .min(levels_below(state, root_id, VISIBLE_LEVELS));
             partition_icicle_recursive(
                 state,
                 root_id,
@@ -85,7 +87,6 @@ pub fn compute_layout_plan(state: &ConsoleState, area: Rect) -> ConsoleLayoutPla
                 inner_left.y,
                 inner_left.height,
                 inner_left.x,
-                col_w,
                 inner_left.x + inner_left.width,
                 &mut icicle_cells,
             );
@@ -104,6 +105,30 @@ pub fn compute_layout_plan(state: &ConsoleState, area: Rect) -> ConsoleLayoutPla
     }
 }
 
+/// How many levels the icicle would draw under `root_id`, itself included, at most `cap`:
+/// the same nodes `partition_icicle_recursive` keeps.
+fn levels_below(state: &ConsoleState, root_id: &str, cap: usize) -> usize {
+    let mut level: Vec<&str> = vec![root_id];
+    let mut levels = 0;
+    while !level.is_empty() && levels < cap {
+        levels += 1;
+        level = level
+            .iter()
+            .filter_map(|id| state.nodes.get(*id))
+            .flat_map(|e| e.children.iter())
+            .filter(|cid| {
+                state
+                    .nodes
+                    .get(*cid)
+                    .map(|c| c.removed_at_ms.is_none() || state.selected_id.as_ref() == Some(*cid))
+                    .unwrap_or(false)
+            })
+            .map(String::as_str)
+            .collect();
+    }
+    levels.max(1)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn partition_icicle_recursive(
     state: &ConsoleState,
@@ -113,7 +138,6 @@ fn partition_icicle_recursive(
     row_start: u16,
     row_span: u16,
     col_base_x: u16,
-    col_w: u16,
     right_edge: u16,
     out: &mut Vec<IcicleCell>,
 ) {
@@ -124,12 +148,11 @@ fn partition_icicle_recursive(
         return;
     };
 
-    let col_start = col_base_x + (rel_depth as u16) * col_w;
-    let col_width = if rel_depth + 1 == max_cols {
-        right_edge.saturating_sub(col_start)
-    } else {
-        col_w
-    };
+    // Column edges spread the rounding over the columns: no two widths differ by more than one.
+    let total = right_edge.saturating_sub(col_base_x) as usize;
+    let edge = |d: usize| col_base_x + (d * total / max_cols) as u16;
+    let col_start = edge(rel_depth);
+    let col_width = edge(rel_depth + 1) - col_start;
     if col_width == 0 {
         return;
     }
@@ -229,7 +252,6 @@ fn partition_icicle_recursive(
             curr_y,
             span,
             col_base_x,
-            col_w,
             right_edge,
             out,
         );
@@ -321,7 +343,7 @@ pub fn render_console(state: &ConsoleState, area: Rect, buf: &mut Buffer) -> Con
     render_right_detail(state, &plan, &cov, buf);
 
     // 5. Footer help bar
-    let footer_text = " KEYS: j/k/Up/Down=Select | Enter/l=ZoomIn | Backspace/h=Back | 0=Root | f=FollowLogs | PgUp/PgDn=Scroll | q=Quit";
+    let footer_text = " KEYS: Up/Down=Next/Prev | Right/l=Child | Left/h=Parent | Enter=Zoom | Backspace=Unzoom | 0=Root | f=Follow | PgUp/PgDn=Logs | q=Quit";
     write_ascii_clipped(
         buf,
         plan.footer_area.x,

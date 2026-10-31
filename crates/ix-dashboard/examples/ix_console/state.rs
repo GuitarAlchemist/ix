@@ -3,6 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
+/// The most levels the icicle shows under its zoom root, the root included.
+pub const VISIBLE_LEVELS: usize = 4;
+
 pub type NodeId = String;
 pub type IncarnationId = String;
 
@@ -103,6 +106,8 @@ pub enum ConsoleAction {
     Select(NodeId),
     SelectNextVisible,
     SelectPrevVisible,
+    SelectChild,
+    SelectParent,
     ZoomIn,
     ZoomTo(NodeId),
     Back,
@@ -118,6 +123,8 @@ pub enum VoiceIntent {
     SelectNode { target_id: String },
     NextNode,
     PreviousNode,
+    ChildNode,
+    ParentNode,
     ZoomBranch,
     ZoomToNode { target_id: String },
     GoParent,
@@ -409,6 +416,8 @@ impl ConsoleState {
                 };
                 self.selected_id = Some(prev_id);
             }
+            ConsoleAction::SelectChild => self.select_child(),
+            ConsoleAction::SelectParent => self.select_parent(),
             ConsoleAction::ZoomIn => {
                 if let Some(sel) = self.selected_id.clone() {
                     if self.nodes.contains_key(&sel) {
@@ -495,6 +504,60 @@ impl ConsoleState {
                 }
             }
         }
+    }
+
+    /// Selects the selected node's first child still present. When that child would sit past
+    /// the levels the icicle shows, the zoom moves down to the node just left, so the new
+    /// selection stays in view. A leaf keeps the selection.
+    fn select_child(&mut self) {
+        let Some(sel) = self.selected_id.clone() else {
+            return;
+        };
+        let Some(entry) = self.nodes.get(&sel) else {
+            return;
+        };
+        let Some(child) = entry
+            .children
+            .iter()
+            .find(|c| {
+                self.nodes
+                    .get(*c)
+                    .is_some_and(|n| n.removed_at_ms.is_none())
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let zoom_depth = self
+            .zoom_root_id
+            .as_ref()
+            .and_then(|z| self.nodes.get(z))
+            .map_or(0, |z| z.depth);
+        let child_depth = self.nodes[&child].depth;
+        if child_depth.saturating_sub(zoom_depth) >= VISIBLE_LEVELS {
+            self.zoom_root_id = Some(sel);
+        }
+        self.selected_id = Some(child);
+    }
+
+    /// Selects the selected node's parent. Leaving the zoom root upward zooms out with it; a
+    /// node without a parent keeps the selection.
+    fn select_parent(&mut self) {
+        let Some(sel) = self.selected_id.clone() else {
+            return;
+        };
+        let Some(parent) = self
+            .nodes
+            .get(&sel)
+            .and_then(|n| n.spec.parent_id.clone())
+            .filter(|p| self.nodes.contains_key(p))
+        else {
+            return;
+        };
+        if self.zoom_root_id.as_ref() == Some(&sel) {
+            self.zoom_root_id = Some(parent.clone());
+        }
+        self.selected_id = Some(parent);
     }
 
     /// Breadcrumb chain from the top ancestor down to `zoom_root_id`.
@@ -676,12 +739,10 @@ pub fn action_from_key(key: KeyEvent) -> Option<ConsoleAction> {
         KeyCode::Char('q') | KeyCode::Esc => Some(ConsoleAction::Quit),
         KeyCode::Down | KeyCode::Char('j') => Some(ConsoleAction::SelectNextVisible),
         KeyCode::Up | KeyCode::Char('k') => Some(ConsoleAction::SelectPrevVisible),
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('z') => {
-            Some(ConsoleAction::ZoomIn)
-        }
-        KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('b') => {
-            Some(ConsoleAction::Back)
-        }
+        KeyCode::Right | KeyCode::Char('l') => Some(ConsoleAction::SelectChild),
+        KeyCode::Left | KeyCode::Char('h') => Some(ConsoleAction::SelectParent),
+        KeyCode::Enter | KeyCode::Char('z') => Some(ConsoleAction::ZoomIn),
+        KeyCode::Backspace | KeyCode::Char('b') => Some(ConsoleAction::Back),
         KeyCode::Home | KeyCode::Char('0') => Some(ConsoleAction::ResetZoom),
         KeyCode::Char('f') => Some(ConsoleAction::ToggleFollowLogs),
         KeyCode::PageDown => Some(ConsoleAction::ScrollLogs(5)),
@@ -701,6 +762,8 @@ pub fn action_from_voice(intent: &VoiceIntent) -> Result<ConsoleAction, ActionPa
         }
         VoiceIntent::NextNode => Ok(ConsoleAction::SelectNextVisible),
         VoiceIntent::PreviousNode => Ok(ConsoleAction::SelectPrevVisible),
+        VoiceIntent::ChildNode => Ok(ConsoleAction::SelectChild),
+        VoiceIntent::ParentNode => Ok(ConsoleAction::SelectParent),
         VoiceIntent::ZoomBranch => Ok(ConsoleAction::ZoomIn),
         VoiceIntent::ZoomToNode { target_id } => {
             if target_id.trim().is_empty() {
@@ -746,6 +809,8 @@ pub fn action_from_json(json: &str) -> Result<ConsoleAction, ActionParseError> {
         }
         "select_next" | "next" => Ok(ConsoleAction::SelectNextVisible),
         "select_prev" | "prev" => Ok(ConsoleAction::SelectPrevVisible),
+        "select_child" | "child" => Ok(ConsoleAction::SelectChild),
+        "select_parent" => Ok(ConsoleAction::SelectParent),
         "zoom_in" | "zoom" => Ok(ConsoleAction::ZoomIn),
         "zoom_to" => {
             let id = env
