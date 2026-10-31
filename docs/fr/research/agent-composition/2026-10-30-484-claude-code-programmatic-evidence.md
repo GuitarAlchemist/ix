@@ -90,8 +90,9 @@ succès, et il porte le nombre de `permission_denials`. Tout le reste est un non
 `result_error`, `malformed` (toute ligne illisible annule le tour ouvert, même avant un résultat de
 succès), `truncated` (une dernière ligne sans saut de ligne, même si elle se lit), `limit_exceeded`,
 `terminated` (sortie non nulle avant le résultat, 143 compris), `no_result`. Les lignes d'une autre
-session sont comptées `stale` et ignorées ; les résultats au-delà des tours envoyés sont
-`unexpected_result`. Limites : 1 Mio par ligne, 100 000 lignes, 8 diagnostics d'au plus 200 octets, le
+session sont comptées `stale` et ignorées ; un résultat qui ne porte pas le `session_id` attendu sous
+forme de chaîne est `unattributed_result` et ne clôt aucun tour ; les résultats au-delà des tours
+envoyés sont `unexpected_result`. Limites : 1 Mio par ligne, 100 000 lignes, 8 diagnostics d'au plus 200 octets, le
 reste compté. L'acceptation de la requête et la fin d'entrée restent non classées : aucun signal
 documenté. La corrélation se fait par l'ordre seulement, car aucun champ documenté ne porte l'id de
 tâche de l'appelant.

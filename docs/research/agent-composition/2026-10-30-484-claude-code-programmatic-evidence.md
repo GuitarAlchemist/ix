@@ -84,8 +84,9 @@ session. Only `subtype: "success"` with `is_error: false` is a success, and it c
 `permission_denials`. Everything else is a typed non-success: `result_error`, `malformed` (any
 unparsable line voids the open turn, even before a success result), `truncated` (a last line without
 newline, even when it parses), `limit_exceeded`, `terminated` (non-zero exit before the result, 143
-included), `no_result`. Lines of another session are counted `stale` and ignored; results beyond the
-turns sent are `unexpected_result`. Limits: 1 MiB per line, 100,000 lines, 8 diagnostics of at most
+included), `no_result`. Lines of another session are counted `stale` and ignored; a result that does
+not carry the expected `session_id` as a string is `unattributed_result` and closes no turn; results
+beyond the turns sent are `unexpected_result`. Limits: 1 MiB per line, 100,000 lines, 8 diagnostics of at most
 200 bytes, the rest counted. Request acceptance and end of input stay unclassified: no documented
 signal. Correlation is by order only, since no documented field carries a caller's task id.
 

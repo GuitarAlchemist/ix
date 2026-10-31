@@ -115,7 +115,10 @@ fn classify(stdout: &str, exit: Option<i32>, expect: &Expect, limits: &Limits) -
         let class = match (v["type"].as_str(), v["subtype"].as_str()) {
             (Some("result"), _) => {
                 r.bump("result");
-                if r.turns.len() >= expect.turns {
+                // A result must name its session: one that does not cannot close a turn.
+                if v["session_id"].as_str() != Some(expect.session_id) {
+                    r.bump("unattributed_result");
+                } else if r.turns.len() >= expect.turns {
                     r.bump("unexpected_result");
                 } else {
                     let outcome = open_fault.take().unwrap_or_else(|| result_outcome(&v));
@@ -306,6 +309,19 @@ mod tests {
         let r = classify(&out, Some(0), &one(S), &LIMITS);
         assert_eq!(r.turns, vec![Turn::NoResult]);
         assert_eq!(r.events.get("stale"), Some(&2));
+    }
+
+    #[test]
+    fn test_result_without_its_session_is_unattributed_and_consumes_no_turn() {
+        let mut unattributed = ok(S, "unattributed");
+        unattributed.as_object_mut().unwrap().remove("session_id");
+        let mut null_session = ok(S, "null");
+        null_session["session_id"] = Value::Null;
+        let out = jsonl(&[init(S), unattributed, null_session, ok(S, "genuine")]);
+        let r = classify(&out, Some(0), &one(S), &LIMITS);
+        assert_eq!(r.turns, vec![success("genuine")]);
+        assert_eq!(r.events.get("unattributed_result"), Some(&2));
+        assert_eq!(r.events.get("unexpected_result"), None);
     }
 
     #[test]
