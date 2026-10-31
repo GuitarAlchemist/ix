@@ -429,6 +429,12 @@ func TestTheInstallPlanIsExplicitAndStoresNoSecret(t *testing.T) {
 	if strings.Index(un, "WaitForStatus('Stopped'") > strings.Index(un, "sc.exe delete ixctl") {
 		t.Errorf("uninstall deletes before it stops:\n%s", p)
 	}
+	// Status shows where the plane listens, never its bearer token on the operator's screen.
+	status := p[strings.Index(p, "# status"):strings.Index(p, "# stop")]
+	if !strings.Contains(status, `Get-Content -Raw "C:\ProgramData\ixctl\solo.json" | ConvertFrom-Json | Select-Object name, addr, pid`) ||
+		strings.Contains(status, "token") {
+		t.Errorf("status prints the state file's token:\n%s", status)
+	}
 }
 
 // The plane refuses what it is asked once a host stop was received.

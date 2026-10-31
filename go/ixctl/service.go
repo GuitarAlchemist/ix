@@ -449,7 +449,7 @@ func installPlan(o planOptions) string {
 	w("# status")
 	w("%s", prefs)
 	w(`sc.exe query %s`, o.service)
-	w(`Get-Content "%s\%s.json"   # addr and token: the service, SYSTEM, Administrators and %s read it`, o.dir, o.name, o.clientUser)
+	w(`Get-Content -Raw "%s\%s.json" | ConvertFrom-Json | Select-Object name, addr, pid   # the file also holds the plane's secret: only the service, SYSTEM, Administrators and %s read it`, o.dir, o.name, o.clientUser)
 	w(`Get-Content -Tail 20 "%s\%s.service.log"`, o.dir, o.name)
 	w("")
 	w("# stop")
