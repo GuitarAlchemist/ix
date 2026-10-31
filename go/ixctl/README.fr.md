@@ -676,8 +676,12 @@ donc au premier échec, celui d'une commande native compris. Un démarrage ou un
 demander au SCM : chacun est suivi d'un `WaitForStatus` borné (30 s pour running, 60 s pour stopped)
 dont l'expiration termine la section ; un service qui échoue dans sa préparation finit arrêté, et
 l'attente du démarrage le dit. Le plan lit la spec pour le nom de l'instance, et désigne la spec et
-le binaire qui l'a affiché par des chemins absolus. Un test en vérifie le contenu, mais rien n'en a
-encore été exécuté sur un Windows installé. Limite connue : la borne d'arrêt part de la demande,
+le binaire qui l'a affiché par des chemins absolus. Un test en vérifie le contenu ; ses sections
+d'installation, de démarrage et de statut ont tourné une fois sur Windows 11 (2026-10-31), pas encore
+celles d'arrêt et de désinstallation. `--delta-journal FICHIER`, sur les deux commandes, donne au
+service le journal de Delta pour le type de sonde `delta@1`, comme `ixctl up --delta-journal` : le
+plan le passe dans la ligne de commande du service, accorde au compte du service la lecture de ce
+seul fichier, et retire cet accord à la désinstallation. Limite connue : la borne d'arrêt part de la demande,
 mais l'hôte écrit ses rapports, ses événements et son journal sur la même goroutine, de sorte qu'une
 écriture du journal qui ne revient jamais retient l'hôte au-delà de la borne. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
 `ixctl up` de la session de l'utilisateur, pair du service.

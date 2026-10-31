@@ -73,7 +73,9 @@ type hostOptions struct {
 	addr        string
 	stateDir    string
 	stopTimeout time.Duration
-	log         io.Writer
+	// deltaJournal is the JSONL journal the delta@1 probe kind tails, as for `ixctl up`.
+	deltaJournal string
+	log          io.Writer
 	// close ends the instance (a test seam; (*instance).close when nil).
 	close func(*instance)
 }
@@ -130,6 +132,8 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 		log.event("host.failed", map[string]any{"error": err.Error()})
 		return stopped(exitStartFailed)
 	}
+	// Before the plane starts: no client knows the token yet, so no node can exist.
+	in.plane.SetDeltaJournal(o.deltaJournal)
 	in.plane.Start()
 	log.event("host.ready", map[string]any{"name": in.ready.Name, "addr": in.addr, "pid": in.ready.Pid,
 		"epoch": in.plane.Epoch(), "state_file": in.stateFile, "version": version})
@@ -301,6 +305,7 @@ func cmdServiceRun(args []string) error {
 	fs.StringVar(&o.stateDir, "state", "", "state directory (required)")
 	fs.DurationVar(&o.stopTimeout, "stop-timeout", defaultStopTimeout, "bound on a stop, past which the host exits unobserved")
 	fs.StringVar(&serviceName, "service-name", "ixctl", "the name the SCM knows the service by")
+	fs.StringVar(&o.deltaJournal, "delta-journal", "", "JSONL journal the delta@1 probe kind tails (Delta's brain writes it); unset refuses the kind")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -361,6 +366,8 @@ type planOptions struct {
 	name string
 	// from is the binary to install: the one printing the plan.
 	from string
+	// deltaJournal, when set, is passed to the service, whose account may read that one file.
+	deltaJournal string
 }
 
 func cmdServicePlan(args []string, stdout io.Writer) error {
@@ -371,6 +378,7 @@ func cmdServicePlan(args []string, stdout io.Writer) error {
 	fs.StringVar(&o.dir, "dir", `C:\ProgramData\ixctl`, "state directory of the service")
 	fs.StringVar(&o.spec, "spec", "", "spec file to copy into the state directory (required)")
 	fs.StringVar(&o.clientUser, "client-user", "", `the one user who may read the state file, DOMAIN\USER (required)`)
+	fs.StringVar(&o.deltaJournal, "delta-journal", "", "Delta's JSONL journal, for the delta@1 probe kind (optional)")
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
@@ -389,6 +397,11 @@ func cmdServicePlan(args []string, stdout io.Writer) error {
 	if o.from, err = os.Executable(); err != nil {
 		return err
 	}
+	if o.deltaJournal != "" {
+		if o.deltaJournal, err = filepath.Abs(o.deltaJournal); err != nil {
+			return err
+		}
+	}
 	fmt.Fprint(stdout, installPlan(o))
 	return nil
 }
@@ -406,6 +419,9 @@ func installPlan(o planOptions) string {
 	acct := `NT SERVICE\` + o.service
 	bin := fmt.Sprintf(`"%s" service run "%s" --state "%s" --addr 127.0.0.1:0 --service-name %s`,
 		o.exe, svcSpec, o.dir, o.service)
+	if o.deltaJournal != "" {
+		bin += fmt.Sprintf(` --delta-journal "%s"`, o.deltaJournal)
+	}
 	var b strings.Builder
 	w := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
 	w("# ixctl as a Windows service: run these in an elevated PowerShell 7.4 or later, one section at a")
@@ -440,6 +456,9 @@ func installPlan(o planOptions) string {
 	w(`sc.exe sidtype %s unrestricted`, o.service)
 	w(`icacls "%s" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "BUILTIN\Administrators:(OI)(CI)F" "%s:(OI)(CI)M" "%s:(OI)(CI)RX"`,
 		o.dir, acct, o.clientUser)
+	if o.deltaJournal != "" {
+		w(`icacls "%s" /grant "%s:R"   # Delta's journal: read, that one file`, o.deltaJournal, acct)
+	}
 	w("")
 	w("# start")
 	w("%s", prefs)
@@ -463,5 +482,8 @@ func installPlan(o planOptions) string {
 	w(`sc.exe delete %s`, o.service)
 	w(`Remove-Item -Recurse "%s"   # after reading what it holds: journal and log`, o.dir)
 	w(`Remove-Item "%s"`, o.exe)
+	if o.deltaJournal != "" {
+		w(`icacls "%s" /remove "%s"`, o.deltaJournal, acct)
+	}
 	return b.String()
 }

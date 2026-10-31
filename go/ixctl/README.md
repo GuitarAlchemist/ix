@@ -632,8 +632,11 @@ at its first failure, a native command's included. A start or a stop only asks t
 followed by a bounded `WaitForStatus` (30 s for running, 60 s for stopped) whose timeout ends the
 section: a service that fails in its setup ends stopped and the start's wait says so. The plan
 reads the spec for the instance name, and names the spec and the binary that printed it by
-absolute paths. A test checks its contents, but nothing of it has been run on an installed Windows
-yet. Known limit: the stop bound runs from the request, but the host writes its reports, events
+absolute paths. A test checks its contents; its install, start and status sections ran once on
+Windows 11 (2026-10-31), its stop and uninstall not yet. `--delta-journal FILE` on both commands
+gives the service Delta's journal for the `delta@1` probe kind, as `ixctl up --delta-journal`
+does: the plan passes it in the service's command line, grants the service account read on that
+one file, and takes the grant back at uninstall. Known limit: the stop bound runs from the request, but the host writes its reports, events
 and log lines on the same goroutine, so a log write that never returns holds the host past it. The service account has no Claude credentials, so work that needs them stays in an
 `ixctl up` of the user's session, a peer of the service.
 

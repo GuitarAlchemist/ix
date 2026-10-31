@@ -343,6 +343,52 @@ func TestAStopPastItsBoundSaysItWasNotObserved(t *testing.T) {
 }
 
 // The state file of a host that died is not a running instance: the next host starts.
+// A host told where Delta's journal is lets a delta@1 node read it, as `ixctl up
+// --delta-journal` does; without it the kind stays refused.
+func TestAHostGivenDeltasJournalAcceptsADeltaNode(t *testing.T) {
+	for _, tc := range []struct {
+		journal string
+		want    int
+	}{{fixtureJournal(t), http.StatusOK}, {"", http.StatusBadRequest}} {
+		dir := t.TempDir()
+		o := hostOpts(fakeSpec(t, "local", nil, fakeSvc{name: "task"}), dir, &syncBuffer{})
+		o.deltaJournal = tc.journal
+		scm, done := startHost(o)
+		scm.waitState(t, hostRunning, 10*time.Second)
+		in := hostClient(t, dir, "local")
+		code, _, body := httpDo(t, in, "POST", "/v1/probe/create",
+			map[string]any{"name": "d", "kind": "delta@1", "every_ms": 10}, nil)
+		if code != tc.want {
+			t.Errorf("journal %q: create answered %d, want %d: %s", tc.journal, code, tc.want, body)
+		}
+		scm.controls <- hostControl{Cmd: controlStop, Source: "scm"}
+		waitExit(t, done, 20*time.Second)
+	}
+}
+
+// The plan passes the journal to the service and lets its account read that one file.
+func TestThePlanGivesTheServiceDeltasJournalToRead(t *testing.T) {
+	journal := `C:\Users\stef\delta\delta-events.jsonl`
+	p := installPlan(planOptions{service: "ixctl", exe: `C:\Program Files\ixctl\ixctl.exe`,
+		dir: `C:\ProgramData\ixctl`, clientUser: `HOST\stef`, name: "solo", deltaJournal: journal})
+	for _, want := range []string{
+		`--delta-journal "` + journal + `"`,
+		`icacls "` + journal + `" /grant "NT SERVICE\ixctl:R"`,
+		`icacls "` + journal + `" /remove "NT SERVICE\ixctl"`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("plan lacks %q:\n%s", want, p)
+		}
+	}
+	if strings.Index(p, `/remove "NT SERVICE\ixctl"`) < strings.Index(p, "# uninstall") {
+		t.Errorf("the grant is taken back outside the uninstall section:\n%s", p)
+	}
+	if bare := installPlan(planOptions{service: "ixctl", exe: `C:\x\ixctl.exe`, dir: `C:\d`,
+		clientUser: `HOST\stef`, name: "solo"}); strings.Contains(bare, "delta") {
+		t.Errorf("a plan without a journal names one:\n%s", bare)
+	}
+}
+
 func TestAStaleStateFileDoesNotBlockTheNextHost(t *testing.T) {
 	dir := t.TempDir()
 	stale, _ := json.Marshal(stateFile{Name: "solo", Addr: "127.0.0.1:1", Pid: 1, Token: strings.Repeat("0", 64)})
