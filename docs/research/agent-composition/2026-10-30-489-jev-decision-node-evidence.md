@@ -34,6 +34,14 @@ unchanged code: none was seen red, so each guards against a regression, not agai
 | digest mismatch | `Invalid::DigestMismatch`; an unanswered prompt is `Invalid::Missing` | new `test_digest_mismatch_and_missing_answer_are_invalid` | — |
 | duplicate return | the whole scoring aborts (panic), never last-wins; an unplanned id aborts too | new `test_duplicate_receipt_id_aborts_scoring`, `test_unplanned_receipt_id_aborts_scoring` | — (fail-closed, but all-or-nothing) |
 
+**Update (slice D4 of the #483 synthesis):** the three gaps are closed on branch
+`feat/jev-outcome-classifier`. A receipt keeps `Invalid::Timeout` and
+`Invalid::ProviderUnavailable(status or exception)` apart, an answer carries `tied`, and the usage
+total reports `receipts_without_usage` instead of adding them as zero. The three pins became
+`test_timeout_and_provider_failure_are_distinct_outcomes`, `test_argmax_tie_is_flagged` and
+`test_usage_totals_count_receipts_without_usage`; each failed on a mutant restoring the old
+behaviour.
+
 Every failure is fail-closed: none becomes a correct decline (existing
 `test_invalid_response_is_never_a_correct_decline`). What is missing is the **kind** of failure:
 #489 asks for explicit timeout and provider-unavailable outcomes, and the spike has one `Contract`
