@@ -165,6 +165,10 @@ pub struct Event {
     pub epoch: String,
     /// The instance that produced it (a peer's name for a mirrored event).
     pub origin: String,
+    /// The run it belongs to, on a service's channel (`svc/<name>`): every envelope there,
+    /// `ixctl.run.begin` and `ixctl.run.end` among them, names its run. It is not the event's
+    /// own `seq`: the plane counts runs apart.
+    pub run: Option<RunId>,
     /// What happened: `converged`, `diverged`, `service.started`, ...
     pub kind: String,
     /// When, in Unix milliseconds on the emitter's clock, when the emitter said.
@@ -182,12 +186,16 @@ pub struct Event {
 
 impl From<&Event> for Value {
     /// The event as JSON, the envelope's fields flattened: `{channel, seq, epoch, origin,
-    /// kind, t, data}`, plus `src_seq` and `src_epoch` on a mirrored event only.
+    /// kind, t, data}`, plus `run` when the envelope names one, and `src_seq` and `src_epoch`
+    /// on a mirrored event only.
     fn from(e: &Event) -> Value {
         let mut v = json!({
             "channel": e.channel, "seq": e.seq, "epoch": e.epoch, "origin": e.origin,
             "kind": e.kind, "t": e.t, "data": e.data,
         });
+        if let Some(run) = &e.run {
+            v["run"] = run.json();
+        }
         if let (Some(seq), Some(epoch)) = (e.src_seq, &e.src_epoch) {
             v["src_seq"] = json!(seq);
             v["src_epoch"] = json!(epoch);
@@ -212,6 +220,9 @@ pub struct Events {
 
 /// How long one read of the stream may wait: past the plane's 15 s keep-alive ping.
 const STREAM_IDLE: Duration = Duration::from_secs(40);
+
+/// The status `contract` of a plane that delivers run markers (`markers=run`).
+const RUN_CONTRACT: &str = "run/1";
 
 impl Iterator for Events {
     type Item = Result<Event, CtlError>;
@@ -301,11 +312,21 @@ impl Iterator for Events {
             }
             _ => None,
         };
+        // A run the plane names but this client cannot read is the plane's error, not a
+        // run-less event.
+        let run = match doc.get("run") {
+            None | Some(Value::Null) => None,
+            Some(run) => match RunId::decode(run, "run") {
+                Ok(run) => Some(run),
+                Err(e) => return Some(Err(e)),
+            },
+        };
         Some(Ok(Event {
             channel: text("ch"),
             seq,
             epoch: text("epoch"),
             origin: text("origin"),
+            run,
             kind: doc["ev"]["kind"].as_str().unwrap_or("").to_string(),
             t: doc["ev"].get("t").and_then(Value::as_i64),
             data: doc["ev"].get("data").cloned().unwrap_or(Value::Null),
@@ -659,7 +680,7 @@ impl Ctl {
         since: Option<u64>,
         epoch: Option<&str>,
     ) -> Result<Events, CtlError> {
-        self.open_events(channel, since, epoch, None)
+        self.open_events(channel, since, epoch, None, false)
     }
 
     /// [`Ctl::events`] with each event waited for at most `next_within`: past it, the next
@@ -672,7 +693,30 @@ impl Ctl {
         epoch: Option<&str>,
         next_within: Duration,
     ) -> Result<Events, CtlError> {
-        self.open_events(channel, since, epoch, Some(next_within))
+        self.open_events(channel, since, epoch, Some(next_within), false)
+    }
+
+    /// [`Ctl::events`] with the run markers, `ixctl.run.begin` and `ixctl.run.end`
+    /// (`markers=run`). The plane's status must announce contract `run/1` first, and the
+    /// plane must acknowledge the request (`Ixctl-Markers: run`): a plane that ignores it,
+    /// as one older than the markers does, is a [`CtlError::Protocol`], never a stream
+    /// silently without them. `next_within` bounds the status read and each event, as in
+    /// [`Ctl::events_within`].
+    pub fn run_events(
+        &self,
+        channel: &str,
+        since: Option<u64>,
+        epoch: Option<&str>,
+        next_within: Option<Duration>,
+    ) -> Result<Events, CtlError> {
+        let status = self.status_within(None, next_within)?;
+        let contract = status.get("contract").and_then(Value::as_str);
+        if contract != Some(RUN_CONTRACT) {
+            return Err(CtlError::Protocol(format!(
+                "run markers need contract {RUN_CONTRACT}; the plane announces {contract:?}"
+            )));
+        }
+        self.open_events(channel, since, epoch, next_within, true)
     }
 
     fn open_events(
@@ -681,6 +725,7 @@ impl Ctl {
         since: Option<u64>,
         epoch: Option<&str>,
         next_within: Option<Duration>,
+        run_markers: bool,
     ) -> Result<Events, CtlError> {
         if since.is_none() && epoch.is_some() {
             return Err(CtlError::Argument(
@@ -693,6 +738,9 @@ impl Ctl {
         }
         if let Some(e) = epoch {
             path.push_str(&format!("&epoch={}", percent(e)));
+        }
+        if run_markers {
+            path.push_str("&markers=run");
         }
         let addr = self.loopback()?;
         // A bounded stream is bounded from the connect on: a plane that accepts and withholds
@@ -710,6 +758,14 @@ impl Ctl {
                 status: s.status,
                 message,
             });
+        }
+        // An older plane ignores `markers` and streams without them: only its acknowledgement
+        // says the markers will come.
+        if run_markers && s.markers.as_deref() != Some("run") {
+            return Err(CtlError::Protocol(format!(
+                "the plane did not acknowledge markers=run (Ixctl-Markers: {:?})",
+                s.markers
+            )));
         }
         Ok(Events {
             body: s.body,

@@ -62,10 +62,11 @@ pub(crate) fn request(
     read_response(BufReader::new(stream))
 }
 
-/// A stream the plane keeps open (`/v1/events`): the status, and the body as it comes, chunks
-/// undone.
+/// A stream the plane keeps open (`/v1/events`): the status, the `Ixctl-Markers` header the
+/// plane acknowledged a `markers` request with, and the body as it comes, chunks undone.
 pub(crate) struct Stream {
     pub status: u16,
+    pub markers: Option<String>,
     pub body: Box<dyn BufRead>,
 }
 
@@ -128,12 +129,18 @@ pub(crate) fn open_stream(
         sock: stream,
         deadline: deadline.clone(),
     });
-    let (status, length, chunked) = read_head(&mut r)?;
+    let Head {
+        status,
+        length,
+        chunked,
+        markers,
+    } = read_head(&mut r)?;
     if status != 200 {
         // The refusal is a short JSON body: hand it over whole.
         let body = read_body(&mut r, length, chunked)?;
         return Ok(Stream {
             status,
+            markers,
             body: Box::new(io::Cursor::new(body)),
         });
     }
@@ -146,7 +153,11 @@ pub(crate) fn open_stream(
     } else {
         Box::new(r)
     };
-    Ok(Stream { status, body })
+    Ok(Stream {
+        status,
+        markers,
+        body,
+    })
 }
 
 /// Undoes HTTP chunked transfer encoding as the bytes come: Go's server streams `/v1/events`
@@ -190,13 +201,26 @@ impl<R: BufRead> io::Read for Dechunk<R> {
 }
 
 fn read_response(mut r: impl BufRead) -> io::Result<Response> {
-    let (status, length, chunked) = read_head(&mut r)?;
+    let Head {
+        status,
+        length,
+        chunked,
+        ..
+    } = read_head(&mut r)?;
     let body = read_body(&mut r, length, chunked)?;
     Ok(Response { status, body })
 }
 
-/// The status line and headers: the status, `Content-Length` and whether the body is chunked.
-fn read_head(mut r: impl BufRead) -> io::Result<(u16, Option<usize>, bool)> {
+/// The status line and the headers this client reads.
+struct Head {
+    status: u16,
+    length: Option<usize>,
+    chunked: bool,
+    /// `Ixctl-Markers`: which markers the plane agreed to deliver.
+    markers: Option<String>,
+}
+
+fn read_head(mut r: impl BufRead) -> io::Result<Head> {
     let status_line = read_line(&mut r)?;
     // `HTTP/1.1 200 OK`
     let status = status_line
@@ -208,6 +232,7 @@ fn read_head(mut r: impl BufRead) -> io::Result<(u16, Option<usize>, bool)> {
 
     let mut length = None;
     let mut chunked = false;
+    let mut markers = None;
     loop {
         let line = read_line(&mut r)?;
         if line.is_empty() {
@@ -225,9 +250,16 @@ fn read_head(mut r: impl BufRead) -> io::Result<(u16, Option<usize>, bool)> {
             );
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
             chunked = value.to_ascii_lowercase().contains("chunked");
+        } else if name.eq_ignore_ascii_case("ixctl-markers") {
+            markers = Some(value.to_string());
         }
     }
-    Ok((status, length, chunked))
+    Ok(Head {
+        status,
+        length,
+        chunked,
+        markers,
+    })
 }
 
 /// The body, by chunks, by `Content-Length`, or to the end of the stream.
