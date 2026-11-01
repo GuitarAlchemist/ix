@@ -50,6 +50,7 @@
 //! reader 2–3 ms after the apply reply, the poll sees it 12–28 ms after, depending on where in
 //! its period it lands. The waits move to the stream when that period matters to a caller.
 
+pub mod admission;
 mod http;
 mod ixql;
 
