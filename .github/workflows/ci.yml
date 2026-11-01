@@ -163,6 +163,23 @@ jobs:
         if: matrix.rust == 'stable'
         run: python go/ixctl/e2e/e2e.py --build --work "${{ runner.temp }}/ixctl-e2e"
 
+      # The Rust client against a real `ixctl up` (crates/ix-ctl/tests/real_plane.rs):
+      # run markers acknowledged by the plane (#450) and a wait after a hard plane stop
+      # ending unknown/other-epoch (#453 B4). Those tests are #[ignore] because they need
+      # a built plane, so `cargo test --workspace` above never runs them: this step builds
+      # ixctl, names it in IXCTL_BIN and runs them with --ignored. It fails unless both
+      # ran, so a renamed or filtered-out test cannot pass with nothing run.
+      - name: ix-ctl against a real plane
+        if: matrix.rust == 'stable'
+        shell: bash
+        run: |
+          exe="$RUNNER_TEMP/ixctl-real/ixctl$([ "$RUNNER_OS" = Windows ] && echo .exe)"
+          (cd go/ixctl && go build -o "$exe" .)
+          export IXCTL_BIN="$exe"
+          cargo test -p ix-ctl --test real_plane -- --ignored 2>&1 | tee "$RUNNER_TEMP/real-plane.txt"
+          grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/real-plane.txt" \
+            || { echo "::error::the real-plane tests did not both run and pass"; exit 1; }
+
       - uses: actions/upload-artifact@v4
         if: failure() && matrix.rust == 'stable'
         with:
