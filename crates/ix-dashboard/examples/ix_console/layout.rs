@@ -16,6 +16,7 @@ pub struct IcicleCell {
     pub col_width: u16,
     pub is_selected: bool,
     pub is_zoom_root: bool,
+    pub hidden_siblings_before: usize,
     pub hidden_siblings_after: usize,
 }
 
@@ -147,6 +148,7 @@ fn partition_icicle_recursive(
         col_width,
         is_selected,
         is_zoom_root,
+        hidden_siblings_before: 0,
         hidden_siblings_after: 0,
     });
 
@@ -176,13 +178,29 @@ fn partition_icicle_recursive(
         return;
     }
 
-    // Ensure the selected node (or ancestor of the selected node) is included in visible slice
+    // Sliding window that always includes the selected child (or ancestor of `selected_id`)
+    let selected_child_idx = state.selected_id.as_deref().and_then(|sel| {
+        active_children
+            .iter()
+            .position(|cid| state.is_same_or_ancestor(cid, sel))
+    });
+
+    let window_start = match selected_child_idx {
+        Some(idx) if idx >= max_visible_children => (idx + 1 - max_visible_children)
+            .min(active_children.len().saturating_sub(max_visible_children)),
+        _ => 0,
+    };
+
     let visible_slice: Vec<&NodeId> = active_children
         .iter()
+        .skip(window_start)
         .take(max_visible_children)
         .copied()
         .collect();
-    let hidden_count = active_children.len().saturating_sub(max_visible_children);
+    let hidden_before = window_start;
+    let hidden_after = active_children
+        .len()
+        .saturating_sub(window_start + visible_slice.len());
 
     let weights: Vec<usize> = visible_slice
         .iter()
@@ -233,9 +251,14 @@ fn partition_icicle_recursive(
             right_edge,
             out,
         );
-        if i + 1 == visible_slice.len() && hidden_count > 0 {
+        if i == 0 && hidden_before > 0 {
             if let Some(cell) = out.get_mut(prev_len) {
-                cell.hidden_siblings_after = hidden_count;
+                cell.hidden_siblings_before = hidden_before;
+            }
+        }
+        if i + 1 == visible_slice.len() && hidden_after > 0 {
+            if let Some(cell) = out.get_mut(prev_len) {
+                cell.hidden_siblings_after = hidden_after;
             }
         }
         curr_y = curr_y.saturating_add(span);
@@ -384,8 +407,13 @@ fn render_left_icicle(state: &ConsoleState, plan: &ConsoleLayoutPlan, buf: &mut 
                 } else {
                     eff_health.badge()
                 };
+                let prefix_more = if cell.hidden_siblings_before > 0 {
+                    format!("^+{}:", cell.hidden_siblings_before)
+                } else {
+                    String::new()
+                };
                 format!(
-                    "|{marker}[{badge}] {} (d{})",
+                    "|{marker}[{badge}] {prefix_more}{} (d{})",
                     entry.spec.label, cell.abs_depth
                 )
             } else if dy + 1 == cell.row_span && cell.hidden_siblings_after > 0 {
@@ -488,8 +516,11 @@ fn render_right_detail(
 
     let inc_line = match &entry.previous_incarnation {
         Some(prev) => format!(
-            "Incarnat. : {} (REPLACED prev={} transitions={})",
-            entry.spec.incarnation, prev, entry.incarnation_transitions
+            "Incarnat. : {} (REPLACED prev={} transitions={} stale_ign={})",
+            entry.spec.incarnation,
+            prev,
+            entry.incarnation_transitions,
+            entry.stale_incarnation_events_ignored
         ),
         None => format!("Incarnat. : {}", entry.spec.incarnation),
     };
@@ -552,29 +583,46 @@ fn render_right_detail(
 
     // Bounded & escaped logs section
     lines.push(Line::from(format!(
-        "--- Bounded Logs (kept={}/{} evicted={} follow={}) ---",
+        "--- Bounded Logs (kept={}/{} bytes={}/{} evicted={} follow={}) ---",
         entry.logs.len(),
         state.max_logs_per_node,
+        entry.retained_log_bytes,
+        state.max_node_log_bytes,
         entry.evicted_log_count,
         if state.follow_logs { "ON" } else { "OFF" }
     )));
 
+    if let Some(ev_seq) = entry.evicted_anchor_seq {
+        lines.push(Line::from(Span::styled(
+            format!("[ANCHOR EVICTED: seq #{ev_seq:04} was evicted from ring]"),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+    }
+
     let remaining_rows = (inner.height as usize).saturating_sub(lines.len());
-    if remaining_rows > 0 {
+    if remaining_rows > 0 && !entry.logs.is_empty() {
         let total_logs = entry.logs.len();
         let start_idx = if state.follow_logs {
             total_logs.saturating_sub(remaining_rows)
         } else {
+            // Preserve the exact reading anchor sequence `log_anchor_seq` when Follow is OFF
             entry
-                .log_scroll_offset
-                .min(total_logs.saturating_sub(remaining_rows))
+                .log_anchor_seq
+                .and_then(|anchor| entry.logs.iter().position(|l| l.seq == anchor))
+                .unwrap_or(entry.log_scroll_offset)
+                .min(total_logs.saturating_sub(1))
         };
 
         for log in entry.logs.iter().skip(start_idx).take(remaining_rows) {
-            let esc_flag = if log.was_escaped { "[ESC]" } else { "     " };
+            let flags = match (log.was_escaped, log.was_truncated) {
+                (true, true) => "[ESC+TRN]",
+                (true, false) => "[ESC]    ",
+                (false, true) => "[TRUNC]  ",
+                (false, false) => "         ",
+            };
             lines.push(Line::from(format!(
-                "#{:04} @{:06}ms {esc_flag} {}",
-                log.seq, log.timestamp_ms, log.text
+                "#{:04} @{:06}ms [{}] {flags} {}",
+                log.seq, log.timestamp_ms, log.incarnation, log.text
             )));
         }
     }
