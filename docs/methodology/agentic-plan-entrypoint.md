@@ -65,10 +65,17 @@ level,stage_count,stages
 ```
 
 The accompanying [existing-crate regression test](../../crates/ix-ixql/tests/baseline_plan_doc_tests.rs)
-checks exact output, repeatability, data-only stages and a negative mutation:
-replacing a binding reference with its quoted name loses the dependency. This
-prevents prose inside a string from masquerading as a compiler-enforced edge.
-These checks validate structure only, **not operational safety or acceptance**.
+checks exact output, repeatability and data-only stages. It also invokes the real
+compiled `ixql-plan` binary: the valid fixture must emit the exact plan/schedule,
+and a temporary malformed source must exit with code 1, a parse diagnostic and
+no plan. This is a real CLI rejection check, not a simulated validator.
+
+A separate semantic mutation replaces a binding reference with its quoted name:
+that input intentionally still compiles but loses the dependency. This prevents
+prose inside a string from masquerading as a compiler-enforced edge; it is not
+the invalid-input rejection test. These checks validate structure and CLI
+behavior only, **not operational safety or acceptance**. Their execution remains
+pending until CI or the owner supplies a passing result for the exact commit.
 
 ## Exact implementation gaps and next decision
 
