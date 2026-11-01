@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -20,8 +21,9 @@ import (
 // `session_id` is the stable identity; `declared` is the status (or state) as listed;
 // `incarnation` is `pid:creation_ms`, set only when the process at that pid was created at most
 // incarnationSlack before the session's `startedAt` (a process created after it holds a reused
-// pid). `availability` is `idle` or `busy` only for a verified incarnation, `blocked` for a
-// declared wait, and `unknown` with a `reason` otherwise. A session missing from a later list
+// pid; a correlation, not an authentication: it does not prove the process is Claude Code, and
+// it trusts the list as written). `availability` is `idle` or `busy` only for a verified
+// incarnation, `blocked` for a declared wait, and `unknown` with a `reason` otherwise. A session missing from a later list
 // is said once under `gone`, `unknown`, reason `absent`. A failed or slow read is an error
 // record: it carries no availability, and no earlier one is repeated. Availability grants no
 // authority to dispatch work: it is an observation, read_at_ms says how old.
@@ -32,8 +34,12 @@ const (
 	// claudeSessionsMinEveryMs bounds the kind's interval: one read starts a process that takes
 	// seconds (3 to 8 s measured on 2026-10-31), and a faster tick would only queue reads.
 	claudeSessionsMinEveryMs = 5000
-	// claudeReadTimeout bounds one read; past it the process is killed and the tick is an error.
+	// claudeReadTimeout bounds one read; past it the CLI's whole tree is killed and the tick is
+	// an error. A probe stop or the plane's shutdown cancels the read sooner.
 	claudeReadTimeout = 20 * time.Second
+	// claudeWaitDelay bounds how long the CLI's output may stay open once the CLI has ended (a
+	// descendant inheriting it): past it the pipe is closed and the read refused.
+	claudeWaitDelay = time.Second
 	// claudeMaxOutput bounds what one read may return.
 	claudeMaxOutput = 4 << 20
 	// incarnationSlack is how long before its session's startedAt a process may have been
@@ -67,24 +73,47 @@ type claudeSeen struct {
 }
 
 func newClaudeSessions(bin string) *claudeSessions {
-	return &claudeSessions{
-		read: func(ctx context.Context) ([]byte, error) {
-			cmd := exec.CommandContext(ctx, bin, "agents", "--json")
-			var out bytes.Buffer
-			cmd.Stdout = &limitedBuffer{buf: &out, max: claudeMaxOutput}
-			err := cmd.Run()
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return out.Bytes(), err
-		},
-		procStart: procStartMs,
-		timeout:   claudeReadTimeout,
+	return &claudeSessions{read: func(ctx context.Context) ([]byte, error) { return readAgents(ctx, bin) },
+		procStart: procStartMs, timeout: claudeReadTimeout}
+}
+
+// readAgents runs `bin agents --json` as a process tree of its own (a job object on Windows, a
+// process group on Linux, as a service runs), so that nothing it starts outlives the read: the
+// tree is killed when ctx ends and once the CLI has ended. Its output must close within
+// claudeWaitDelay of the CLI's end; an output a descendant kept open is refused, not trusted.
+func readAgents(ctx context.Context, bin string) ([]byte, error) {
+	cmd := exec.Command(bin, "agents", "--json")
+	var out bytes.Buffer
+	cmd.Stdout = &limitedBuffer{buf: &out, max: claudeMaxOutput}
+	cmd.WaitDelay = claudeWaitDelay
+	tree, err := startTree(cmd, nil)
+	if err != nil {
+		return nil, err
 	}
+	defer func() { tree.kill(); tree.close() }()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		tree.kill()
+		<-done // the tree is dead: its pipe closes, and WaitDelay bounds the rest
+		return nil, ctx.Err()
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return nil, fmt.Errorf("its output stayed open %s after it ended (a descendant held it)", claudeWaitDelay)
+	}
+	return out.Bytes(), err
 }
 
 func (c *claudeSessions) sample() (map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	return c.sampleCtx(context.Background())
+}
+
+// sampleCtx is a sample tied to ctx: the probe tree passes the node's context, so a probe stop
+// or the plane's shutdown cancels a read in flight instead of waiting for its bound.
+func (c *claudeSessions) sampleCtx(parent context.Context) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	defer cancel()
 	t0 := time.Now()
 	raw, err := c.read(ctx)
@@ -94,6 +123,16 @@ func (c *claudeSessions) sample() (map[string]any, error) {
 	var agents []claudeAgent
 	if err := json.Unmarshal(raw, &agents); err != nil {
 		return nil, fmt.Errorf("claude agents --json: not a list of sessions: %v", err)
+	}
+	if agents == nil { // `null`: no list at all, which must not read as every session gone
+		return nil, errors.New("claude agents --json: null, not a list of sessions")
+	}
+	ids := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		if a.SessionID != "" && ids[a.SessionID] {
+			return nil, fmt.Errorf("claude agents --json: session %s listed twice", a.SessionID)
+		}
+		ids[a.SessionID] = true
 	}
 	readAt := time.Now()
 
@@ -105,8 +144,10 @@ func (c *claudeSessions) sample() (map[string]any, error) {
 			prev.incarnation != s["incarnation"] {
 			s["incarnation_changed"] = true
 		}
-		inc, _ := s["incarnation"].(string)
-		now[a.SessionID] = claudeSeen{name: a.Name, incarnation: inc}
+		if a.SessionID != "" { // an entry without an id is listed, unknown, and never tracked
+			inc, _ := s["incarnation"].(string)
+			now[a.SessionID] = claudeSeen{name: a.Name, incarnation: inc}
+		}
 		sessions = append(sessions, s)
 	}
 	gone := []map[string]any{}

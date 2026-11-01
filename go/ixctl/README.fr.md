@@ -503,16 +503,23 @@ fichier.
 
 `claude-sessions@1` dit quelles sessions Claude Code pourraient prendre du travail, sans jamais
 le dire sur une supposition. Un enregistrement par tick est un instantané de
-`claude agents --json` (aucun appel de modèle ; une lecture prend des secondes et est tuée au-delà
-de 20 s). Chaque entrée de `sessions` sépare ce que Claude Code déclare de ce que le plan a
+`claude agents --json` (aucun appel de modèle). Une lecture prend des secondes ; elle tourne dans
+un arbre de processus à elle (un job object sous Windows, un groupe de processus sous Linux), tué
+avec tout ce qu'il a lancé à 20 s, à l'arrêt de la sonde ou du plan, et dès que le CLI a fini ;
+une sortie qu'un descendant garde ouverte plus d'1 s après la fin du CLI est refusée. Chaque entrée de `sessions` sépare ce que Claude Code déclare de ce que le plan a
 vérifié : `session_id` (l'identité stable), `name`, `kind`, `declared` (le statut listé, sinon
 l'état), `pid`, `started_at_ms` et, seulement quand le processus de ce pid a été créé au plus
 60 s avant le début de la session, `identity: "verified"`, `proc_start_ms` et `incarnation`
-(`pid:creation_ms`, qui change à une reprise : `incarnation_changed: true`). `availability`
+(`pid:creation_ms`, qui change à une reprise : `incarnation_changed: true`). Ce rapprochement est
+une corrélation, pas une authentification : il montre qu'un processus vivant (pas un zombie) au
+pid listé a été créé au plus 60 s avant le début listé, ce qu'un pid repris par un processus
+plus récent ne passe pas ; il ne prouve pas que ce processus est Claude Code, et il fait
+confiance à la liste telle que Claude Code l'a écrite. `availability`
 vaut `idle` ou `busy` pour une incarnation vérifiée seulement, `blocked` pour une attente
 déclarée, et sinon `unknown` avec une `reason` : `no-pid`, `no-started-at`,
 `process-unreadable`, `pid-reused` (un processus créé après le début de la session tient le
-pid), `start-mismatch` ou `declared "…"`. Une session absente d'une lecture suivante est dite
+pid), `start-mismatch` ou `declared "…"`. Une réponse `null` ou une liste qui nomme deux fois la même session est un enregistrement
+d'erreur, jamais une liste vide. Une session absente d'une lecture suivante est dite
 une fois dans `gone` (`unknown`, `absent`, sa `last_incarnation`). Une lecture ratée ou trop
 lente est un enregistrement d'erreur sans disponibilité, et aucune ancienne n'est répétée : un
 silence, une erreur ou un `read_at_ms` ancien ne veulent jamais dire libre. Le plan doit tourner

@@ -51,6 +51,12 @@ type sampler interface {
 	sample() (map[string]any, error)
 }
 
+// contextSampler is a sampler whose read can take long enough (an external process) to be
+// cancelled: the tree passes the node's context, which a stop or the plane's shutdown ends.
+type contextSampler interface {
+	sampleCtx(ctx context.Context) (map[string]any, error)
+}
+
 // heartbeat counts its own ticks: the kind tests and demonstrations use.
 type heartbeat struct{ n int64 }
 
@@ -644,7 +650,13 @@ func (t *probeTree) run(ctx context.Context, n *probeNode, s sampler, done chan 
 			return
 		case <-tick.C:
 		}
-		fields, err := s.sample()
+		var fields map[string]any
+		var err error
+		if cs, ok := s.(contextSampler); ok {
+			fields, err = cs.sampleCtx(ctx)
+		} else {
+			fields, err = s.sample()
+		}
 		if errors.Is(err, errNoDelta) {
 			continue
 		}

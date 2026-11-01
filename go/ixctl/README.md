@@ -471,16 +471,23 @@ stamps and win over a line field of the same name. A consumer dedups on the writ
 to the file.
 
 `claude-sessions@1` tells which Claude Code sessions could take work, without ever saying so on
-a guess. One record per tick is a snapshot of `claude agents --json` (no model call; a read
-takes seconds and is killed past 20 s). Each entry of `sessions` keeps apart what Claude Code
+a guess. One record per tick is a snapshot of `claude agents --json` (no model call). A read
+takes seconds; it runs as a process tree of its own (a job object on Windows, a process group on
+Linux) that is killed with everything it started at 20 s, on a probe stop or at the plane's
+shutdown, and once the CLI has ended; an output a descendant keeps open more than 1 s after the
+CLI's end is refused. Each entry of `sessions` keeps apart what Claude Code
 declares and what the plane verified: `session_id` (the stable identity), `name`, `kind`,
 `declared` (the listed status, else state), `pid`, `started_at_ms`, and, only when the process
 at that pid was created at most 60 s before the session's start, `identity: "verified"`,
 `proc_start_ms` and `incarnation` (`pid:creation_ms`, which changes on a resume:
-`incarnation_changed: true`). `availability` is `idle` or `busy` for a verified incarnation
+`incarnation_changed: true`). That match is a correlation, not an authentication: it shows that a
+live process (not a zombie) at the listed pid was created within 60 s before the listed start,
+which a pid reused by a later process fails; it does not prove that process is Claude Code, and
+it trusts the list as Claude Code wrote it. `availability` is `idle` or `busy` for a verified incarnation
 only, `blocked` for a declared wait, and otherwise `unknown` with a `reason`: `no-pid`,
 `no-started-at`, `process-unreadable`, `pid-reused` (a process created after the session
-started holds the pid), `start-mismatch`, or `declared "…"`. A session missing from a later
+started holds the pid), `start-mismatch`, or `declared "…"`. A `null` answer or a list naming one session twice is an error record,
+never an empty list. A session missing from a later
 read is said once in `gone` (`unknown`, `absent`, its `last_incarnation`). A failed or slow
 read is an error record with no availability, and no earlier one is repeated: silence, an error
 or an old `read_at_ms` never means idle. The plane must run in that user's session (a desk peer);

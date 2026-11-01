@@ -67,16 +67,13 @@ func cpuCores() int { return runtime.NumCPU() }
 // process a session started from apart from a later one given the same pid. An exited process
 // (its object kept alive by a handle elsewhere) is refused.
 func procStartMs(pid int) (int64, error) {
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
 		return 0, err
 	}
 	defer windows.CloseHandle(h)
-	var code uint32
-	if err := windows.GetExitCodeProcess(h, &code); err != nil {
-		return 0, err
-	}
-	if code != 259 { // STILL_ACTIVE
+	// Signalled means exited; an exit code is no proof of life (a process may exit with 259).
+	if ev, err := windows.WaitForSingleObject(h, 0); err != nil || ev != uint32(windows.WAIT_TIMEOUT) {
 		return 0, fmt.Errorf("process %d has exited", pid)
 	}
 	var created, exited, kernel, user windows.Filetime

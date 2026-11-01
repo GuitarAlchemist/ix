@@ -24,10 +24,34 @@ func TestMain(m *testing.M) {
 	case "grandchild":
 		time.Sleep(60 * time.Second) // a safety net: never outlive a failed test for long
 		os.Exit(0)
+	case "agents-holder", "agents-hang":
+		os.Exit(fakeAgentsCLI(os.Getenv("IXCTL_TEST_ROLE") == "agents-hang"))
 	case "main":
 		os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())
+}
+
+// fakeAgentsCLI stands in for `claude agents --json`: it starts a descendant that inherits its
+// stdout and writes the descendant's pid to IXCTL_TEST_PIDFILE. agents-holder then writes a
+// list and exits, leaving the output held open; agents-hang never answers.
+func fakeAgentsCLI(hang bool) int {
+	gc := exec.Command(os.Args[0])
+	gc.Env = append(os.Environ(), "IXCTL_TEST_ROLE=grandchild")
+	gc.Stdout = os.Stdout
+	if err := gc.Start(); err != nil {
+		return 4
+	}
+	if err := os.WriteFile(os.Getenv("IXCTL_TEST_PIDFILE"), []byte(fmt.Sprint(gc.Process.Pid)), 0o600); err != nil {
+		return 5
+	}
+	if hang {
+		time.Sleep(60 * time.Second)
+		return 0
+	}
+	fmt.Printf(`[{"name":"gc","sessionId":"s-gc","pid":%d,"kind":"background","status":"idle","startedAt":%d}]`+"\n",
+		gc.Process.Pid, time.Now().UnixMilli())
+	return 0
 }
 
 // fakeService prints ix-stream-shaped lines: a log line, a stderr line, a

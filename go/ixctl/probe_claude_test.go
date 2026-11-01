@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -196,5 +198,125 @@ func TestProcStartReadsThisProcessAndRefusesAMissingOne(t *testing.T) {
 	}
 	if _, err := procStartMs(0x7ffffff0); err == nil {
 		t.Fatal("a missing process has a start time")
+	}
+}
+
+// agentsFixture runs the test binary as `claude agents --json` in the given role, and returns
+// a function that reads the pid of the descendant it started.
+func agentsFixture(t *testing.T, role string) func() int {
+	t.Helper()
+	pidfile := filepath.Join(t.TempDir(), "descendant.pid")
+	t.Setenv("IXCTL_TEST_ROLE", role) // the CLI the sampler starts inherits it
+	t.Setenv("IXCTL_TEST_PIDFILE", pidfile)
+	pid := func() int {
+		b, _ := os.ReadFile(pidfile)
+		n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		return n
+	}
+	t.Cleanup(func() {
+		if n := pid(); n > 0 && pidAlive(n) {
+			if p, err := os.FindProcess(n); err == nil {
+				p.Kill()
+			}
+		}
+	})
+	return pid
+}
+
+// sampleWithin runs one sample and fails the test if it has not returned within d.
+func sampleWithin(t *testing.T, s *claudeSessions, d time.Duration) (map[string]any, error, time.Duration) {
+	t.Helper()
+	type result struct {
+		rec map[string]any
+		err error
+	}
+	done := make(chan result, 1)
+	t0 := time.Now()
+	go func() { rec, err := s.sample(); done <- result{rec, err} }()
+	select {
+	case r := <-done:
+		return r.rec, r.err, time.Since(t0)
+	case <-time.After(d):
+		t.Fatalf("the read had not returned after %s", d)
+		return nil, nil, 0
+	}
+}
+
+// The CLI wrote its list and exited, but a descendant keeps its stdout open. The read ends at
+// its bound, refuses an answer it could not see closed, and leaves no process behind.
+func TestAReadWhoseDescendantHoldsTheOutputEndsBoundedAndLeavesNoProcess(t *testing.T) {
+	descendant := agentsFixture(t, "agents-holder")
+	s := newClaudeSessions(testExe(t))
+	s.timeout = 10 * time.Second
+	rec, err, took := sampleWithin(t, s, 6*time.Second)
+	if err == nil || rec != nil {
+		t.Fatalf("held output: %v %v", rec, err)
+	}
+	if n := descendant(); n == 0 || pidAlive(n) {
+		t.Fatalf("descendant %d alive after the read (%s): %v", n, took, err)
+	}
+	t.Logf("held output: %v after %s", err, took)
+}
+
+// A CLI that never answers is killed with its whole tree at the read's bound.
+func TestASlowReadIsKilledWithItsTreeAtItsBound(t *testing.T) {
+	descendant := agentsFixture(t, "agents-hang")
+	s := newClaudeSessions(testExe(t))
+	s.timeout = 8 * time.Second // past the CLI's start and its descendant's (seconds on Windows)
+	rec, err, took := sampleWithin(t, s, 15*time.Second)
+	if err == nil || rec != nil || !strings.Contains(err.Error(), "deadline") || took > s.timeout+3*time.Second {
+		t.Fatalf("hung read: %v %v after %s", rec, err, took)
+	}
+	if n := descendant(); n == 0 || pidAlive(n) {
+		t.Fatalf("descendant %d alive after the read (%s)", n, took)
+	}
+	t.Logf("hung read ended after %s", took)
+}
+
+// A probe stop during a read cancels it: the stop returns at once and the CLI's tree is gone.
+func TestAProbeStopCancelsTheReadInFlight(t *testing.T) {
+	descendant := agentsFixture(t, "agents-hang")
+	p := probePlane(t)
+	p.SetClaudeBin(testExe(t))
+	mustCreate(t, p, node("c", "claude-sessions@1", claudeSessionsMinEveryMs, nil))
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(15 * time.Second); descendant() == 0; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the first read never started")
+		}
+	}
+	t0 := time.Now()
+	if _, err := probeOp(t, p, Request{Op: "probe.stop", Node: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(t0); took > 3*time.Second {
+		t.Fatalf("stop took %s with a read in flight", took)
+	}
+	if n := descendant(); pidAlive(n) {
+		t.Fatalf("descendant %d alive after the stop", n)
+	}
+}
+
+// `null`, or a list naming one session twice, is not a list of sessions: an error record, and
+// nothing said absent because of it.
+func TestANullOrDuplicatedListIsAnErrorAndFabricatesNoAbsence(t *testing.T) {
+	f := (&fakeAgents{starts: map[int]int64{100: 1000000 - startedAfter, 200: 2000000 - startedAfter}}).
+		then(`[`+idleSession+`,`+busySession+`]`, nil).
+		then(`null`, nil).
+		then(`[`+idleSession+`,`+idleSession+`]`, nil).
+		then(`[`+idleSession+`,`+busySession+`]`, nil)
+	s := f.sampler()
+	s.sample()
+	if rec, err := s.sample(); err == nil || rec != nil {
+		t.Fatalf("null: %v %v", rec, err)
+	}
+	if rec, err := s.sample(); err == nil || rec != nil || !strings.Contains(err.Error(), "s-a") {
+		t.Fatalf("duplicate: %v %v", rec, err)
+	}
+	rec, err := s.sample()
+	if err != nil || len(sessionsOf(t, rec, "gone")) != 0 || len(sessionsOf(t, rec, "sessions")) != 2 {
+		t.Fatalf("after the bad reads: %v %v", rec, err)
 	}
 }

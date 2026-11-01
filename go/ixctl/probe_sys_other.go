@@ -107,6 +107,9 @@ func procStartMs(pid int) (int64, error) {
 	if len(f) < 20 {
 		return 0, fmt.Errorf("/proc/%d/stat: %d fields after the name", pid, len(f))
 	}
+	if f[0] == "Z" || f[0] == "X" { // field 3: a zombie or a dead task is no live process
+		return 0, fmt.Errorf("process %d has exited (state %s)", pid, f[0])
+	}
 	ticks, err := strconv.ParseInt(f[19], 10, 64) // field 22: starttime
 	if err != nil {
 		return 0, err
