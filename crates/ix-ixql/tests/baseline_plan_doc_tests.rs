@@ -46,7 +46,10 @@ fn a_quoted_requirement_is_not_a_dependency_or_enforced_gate() {
         .iter()
         .find(|s| s.id == "parent_resume")
         .unwrap();
-    assert!(parent.deps.is_empty(), "text does not establish the dependency");
+    assert!(
+        parent.deps.is_empty(),
+        "text does not establish the dependency"
+    );
     assert_ne!(
         plan.to_schedule_csv(),
         compile(SOURCE).unwrap().to_schedule_csv()
@@ -114,6 +117,12 @@ fn the_real_cli_rejects_invalid_source_without_a_plan() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty(), "invalid input must emit no plan");
     let error = String::from_utf8(output.stderr).expect("UTF-8 diagnostic");
-    assert!(error.contains("invalid.ixql"), "diagnostic identifies input");
-    assert!(error.contains("parse error"), "diagnostic identifies rejection");
+    assert!(
+        error.contains("invalid.ixql"),
+        "diagnostic identifies input"
+    );
+    assert!(
+        error.contains("parse error"),
+        "diagnostic identifies rejection"
+    );
 }
