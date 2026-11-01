@@ -77,4 +77,17 @@ as one of #484's classes or as not-a-success. Fixtures are hand-written from the
 above, so they are labelled synthetic until a recorded stream replaces them, and a recorded
 stream needs a separately admitted live run.
 
+**Done (tested), still synthetic:** `crates/ix-router-spike/src/bin/claude_stream.rs` (binary
+`claude-stream`, 12 tests, each rule seen red under a mutant). What the caller can prove from one
+process's stdout: which of the turns it sent ended, in order, on a `result` line of its own
+session. Only `subtype: "success"` with `is_error: false` is a success, and it carries the count of
+`permission_denials`. Everything else is a typed non-success: `result_error`, `malformed` (any
+unparsable line voids the open turn, even before a success result), `truncated` (a last line without
+newline, even when it parses), `limit_exceeded`, `terminated` (non-zero exit before the result, 143
+included), `no_result`. Lines of another session are counted `stale` and ignored; a result that does
+not carry the expected `session_id` as a string is `unattributed_result` and closes no turn; results
+beyond the turns sent are `unexpected_result`. Limits: 1 MiB per line, 100,000 lines, 8 diagnostics of at most
+200 bytes, the rest counted. Request acceptance and end of input stay unclassified: no documented
+signal. Correlation is by order only, since no documented field carries a caller's task id.
+
 French: [`docs/fr/research/agent-composition/2026-10-30-484-claude-code-programmatic-evidence.md`](../../fr/research/agent-composition/2026-10-30-484-claude-code-programmatic-evidence.md).
