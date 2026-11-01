@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -319,4 +323,135 @@ func TestANullOrDuplicatedListIsAnErrorAndFabricatesNoAbsence(t *testing.T) {
 	if err != nil || len(sessionsOf(t, rec, "gone")) != 0 || len(sessionsOf(t, rec, "sessions")) != 2 {
 		t.Fatalf("after the bad reads: %v %v", rec, err)
 	}
+}
+
+// `ixctl up --claude-bin` is what gives the plane its CLI: the real cmdUp, a claude-sessions@1
+// node created and started over HTTP, and the read a consumer does (the SSE stream of
+// probe/<node> from since=0, with the bearer token of the plane's state file) sees one sample.
+func TestUpWithClaudeBinServesTheDocumentedRead(t *testing.T) {
+	t.Setenv("IXCTL_TEST_ROLE", "agents-list") // the CLI the sampler starts inherits it
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.json")
+	if err := os.WriteFile(specPath, []byte(`{"name":"claude-up","services":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := cmdUp([]string{"--state", filepath.Join(dir, "state"), "--claude-bin", testExe(t), specPath}, pw)
+		pw.Close()
+		done <- err
+	}()
+	line, err := bufio.NewReader(pr).ReadString('\n')
+	if err != nil {
+		t.Fatalf("ready line: %v", err)
+	}
+	go io.Copy(io.Discard, pr)
+	var ready readyLine
+	if err := json.Unmarshal([]byte(line), &ready); err != nil || ready.Addr == "" || ready.StateFile == "" {
+		t.Fatalf("ready line %q: %v", line, err)
+	}
+	b, err := os.ReadFile(ready.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st stateFile
+	if err := json.Unmarshal(b, &st); err != nil || st.Token == "" {
+		t.Fatalf("state file: %v", err)
+	}
+	base := "http://" + ready.Addr
+	post := func(path, body string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", base+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+st.Token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		msg, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			t.Fatalf("%s refused: %d %s", path, resp.StatusCode, msg)
+		}
+	}
+	stopped := false
+	t.Cleanup(func() { // a failed test still stops the plane before its state dir is removed
+		if !stopped {
+			req, _ := http.NewRequest("POST", base+"/v1/shutdown", strings.NewReader(`{}`))
+			req.Header.Set("Authorization", "Bearer "+st.Token)
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				resp.Body.Close()
+				select {
+				case <-done:
+				case <-time.After(15 * time.Second):
+				}
+			}
+		}
+	})
+	shutdown := func() {
+		post("/v1/shutdown", `{}`)
+		stopped = true
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("cmdUp: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("cmdUp had not returned 15 s after /v1/shutdown")
+		}
+	}
+	post("/v1/probe/create", `{"name":"c","kind":"claude-sessions@1","every_ms":5000}`)
+	post("/v1/probe/start", `{"node":"c"}`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/v1/events?ch=probe/c&since=0", nil)
+	req.Header.Set("Authorization", "Bearer "+st.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("events: %d", resp.StatusCode)
+	}
+	var env struct {
+		Ch     string `json:"ch"`
+		Seq    uint64 `json:"seq"`
+		Epoch  string `json:"epoch"`
+		Origin string `json:"origin"`
+		Ev     struct {
+			Kind string         `json:"kind"`
+			Data map[string]any `json:"data"`
+		} `json:"ev"`
+	}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 1<<16), 1<<20)
+	found := false
+	for !found && sc.Scan() {
+		data, ok := strings.CutPrefix(sc.Text(), "data:")
+		if !ok {
+			continue
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(data)), &env); err != nil {
+			t.Fatalf("envelope %q: %v", data, err)
+		}
+		found = env.Ch == "probe/c" && env.Ev.Kind == "sample"
+	}
+	resp.Body.Close()
+	if !found {
+		t.Fatalf("no sample on probe/c: %v", sc.Err())
+	}
+	if env.Origin != "claude-up" || env.Epoch == "" || env.Seq == 0 {
+		t.Fatalf("envelope origin %q epoch %q seq %d", env.Origin, env.Epoch, env.Seq)
+	}
+	d := env.Ev.Data
+	sessions, _ := d["sessions"].([]any)
+	if d["kind"] != "claude-sessions@1" || d["count"] != float64(1) || len(sessions) != 1 {
+		t.Fatalf("sample data: %v", d)
+	}
+	if s, _ := sessions[0].(map[string]any); s["session_id"] != "s1" {
+		t.Fatalf("session: %v", sessions[0])
+	}
+	shutdown()
 }

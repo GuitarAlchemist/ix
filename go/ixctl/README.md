@@ -494,6 +494,18 @@ or an old `read_at_ms` never means idle. The plane must run in that user's sessi
 a service in session 0 sees no session. Availability is an observation, not an authority to
 dispatch.
 
+A consumer (Gaia, for one) reads a `claude-sessions@1` node `c` as one SSE request, plain HTTP on
+the plane's loopback `addr`: `GET http://<addr>/v1/events?ch=probe/c&since=0` with
+`Authorization: Bearer <token>`, the token being the
+`token` field of the plane's state file (the `state_file` of `ixctl up`'s ready line; the ready
+line itself never carries it). `since=0` replays what the ring still holds, then the stream
+follows; each `data:` line is an envelope (`ch`, `seq`, `epoch`, `origin`, `t`) whose `ev` is
+`{"kind": "sample", "data": {...}}` with the fields above. Key on the envelope's (`origin`, `epoch`,
+`seq`), not on `data`'s `seq`, which is the node's own counter, and resume with `Last-Event-ID`,
+the `id:` line (`epoch:seq`). A `since=0` read replays the whole ring, each record with the full
+list. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
+bound); past that, the node says nothing, which is never idle.
+
 A **node** is one instance of a kind in the tree:
 
 ```json

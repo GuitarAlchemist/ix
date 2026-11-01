@@ -26,6 +26,9 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "agents-holder", "agents-hang":
 		os.Exit(fakeAgentsCLI(os.Getenv("IXCTL_TEST_ROLE") == "agents-hang"))
+	case "agents-list": // `claude agents --json` answering one session with no pid
+		fmt.Println(`[{"sessionId":"s1","name":"one","kind":"interactive","status":"idle"}]`)
+		os.Exit(0)
 	case "main":
 		os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr))
 	}

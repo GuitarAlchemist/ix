@@ -526,6 +526,19 @@ silence, une erreur ou un `read_at_ms` ancien ne veulent jamais dire libre. Le p
 dans la session de cet utilisateur (un pair desk) ; un service en session 0 ne voit aucune
 session. La disponibilité est une observation, pas une autorité pour confier du travail.
 
+Un consommateur (Gaia, par exemple) lit un nœud `claude-sessions@1` `c` par une seule requête
+SSE en HTTP simple sur l'`addr` de bouclage du plan : `GET http://<addr>/v1/events?ch=probe/c&since=0`
+avec `Authorization: Bearer <jeton>`, le jeton étant le
+champ `token` du fichier d'état du plan (le `state_file` de la ligne ready d'`ixctl up` ; la
+ligne ready elle-même ne le porte jamais). `since=0` rejoue ce que l'anneau garde encore, puis le
+flux suit ; chaque ligne `data:` est une enveloppe (`ch`, `seq`, `epoch`, `origin`, `t`) dont
+l'`ev` vaut `{"kind": "sample", "data": {...}}` avec les champs ci-dessus. On indexe sur
+(`origin`, `epoch`, `seq`) de l'enveloppe, pas sur le `seq` de `data`, qui est le compteur propre
+du nœud, et on reprend avec `Last-Event-ID`, qui vaut la ligne `id:` (`epoch:seq`). Un `since=0`
+rejoue tout l'anneau, chaque enregistrement avec la liste complète. Un échantillon est frais pendant
+environ `every_ms` + 20 s (un tick plus la borne de lecture) ; au-delà, le nœud ne dit rien, ce
+qui ne veut jamais dire libre.
+
 Un **nœud** est une instance d'un kind dans l'arbre :
 
 ```json
