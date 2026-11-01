@@ -250,8 +250,9 @@ fn test_an_answer_too_large_is_refused_unread() {
     let (ctl, _) = fake(move |c: &mut TcpStream| {
         let _ = c.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
         for _ in 0..20 {
+            // The client hangs up once past the bound: the server stops writing.
             if write!(c, "{:x}\r\n{chunk}\r\n", chunk.len()).is_err() {
-                return;
+                break;
             }
         }
         let _ = c.write_all(b"0\r\n\r\n");
