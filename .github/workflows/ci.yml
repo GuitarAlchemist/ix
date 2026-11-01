@@ -173,7 +173,10 @@ jobs:
         if: matrix.rust == 'stable'
         shell: bash
         run: |
-          exe="$RUNNER_TEMP/ixctl-real/ixctl$([ "$RUNNER_OS" = Windows ] && echo .exe)"
+          # An `if`, not `$([ ... ] && echo .exe)`: under bash -e that substitution fails
+          # the assignment, and so the step, silently on every OS but Windows.
+          exe="$RUNNER_TEMP/ixctl-real/ixctl"
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
           (cd go/ixctl && go build -o "$exe" .)
           export IXCTL_BIN="$exe"
           cargo test -p ix-ctl --test real_plane -- --ignored 2>&1 | tee "$RUNNER_TEMP/real-plane.txt"
