@@ -11,6 +11,8 @@ description = "Client of ixctl, IX's control plane: blocking HTTP/1.1 over std's
 
 [dependencies]
 ix-ixql = { workspace = true }
+ix-recover = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lib]
