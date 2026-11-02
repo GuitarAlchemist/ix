@@ -16,12 +16,28 @@ Prototype local de navigation hiérarchique ASCII inspiré du [Zoomable Icicle](
 6. **Restauration garantie du terminal (`P2-6`) :** Garde RAII `TerminalSessionGuard` restaurant systématiquement l'écran alternatif et le mode brut en cas d'échec partiel d'initialisation ou de panic (`unwind`).
 7. **Filtrage clavier Windows & bornage en octets (`Phase 2`) :** Ignorance de `KeyEventKind::Release` (et `Repeat` sur les bascules `f`/`q`/zoom) et bornage strict en octets après expansion d'échappement (`max_log_line_bytes`, `max_node_log_bytes`, `max_total_log_bytes`).
 
+## Architecture des modules
+- [`ix_console.rs`](./ix_console.rs) : Point d'entrée CLI (`TUI` interactif, `--snapshot`, `--bench-10k`) et suite de tests comportementaux TDD.
+- [`state.rs`](./state.rs) : État de navigation (`ConsoleState`), contrat d'actions unifié (`ConsoleAction`), adaptateurs d'entrée (`action_from_key`, `action_from_voice`, `action_from_json`), calcul de santé (`Silence != Idle` : `Stale` et `Unknown`), résumé de couverture (`CoverageSummary`), et assainissement ASCII des logs (`sanitize_log_line`).
+- [`layout.rs`](./layout.rs) : Panneaux gauche et droit à parts égales (50/50) ; partitionnement récursif *Zoomable Icicle* à gauche, ses colonnes partagées à égalité entre les niveaux affichés (invariant en profondeur avec fil d'Ariane) et vue de détail focalisée sur un seul nœud à droite (4 dimensions orthogonales : `Depth`, `VisualSpan`, `Progress`, `Quality`).
+- [`feed.rs`](./feed.rs) : Fixture synthétique nominale, générateur de rafales de logs et générateur déterministe de **10 000 nœuds** (`build_synthetic_10k_state`).
+
 ## Commandes de lancement
 
 ### 1. Mode TUI interactif (clavier)
 ```powershell
 cargo run -p ix-dashboard --example ix_console
 ```
+Raccourcis clavier :
+- `j` / `k` ou `Down` / `Up` : Sélectionner le nœud visible suivant / précédent
+- `Right` / `l` : Sélectionner le premier enfant (`SelectChild`) ; le zoom descend seulement si l'enfant sortirait des quatre niveaux affichés
+- `Left` / `h` : Sélectionner le parent (`SelectParent`) ; quitter la racine du zoom par le haut dézoome d'un niveau
+- `Enter` / `z` : Zoomer dans la branche sélectionnée (`ZoomIn`)
+- `Backspace` / `b` : Remonter le zoom au parent (`Back`)
+- `Home` / `0` : Réinitialiser le zoom à la racine (`ResetZoom`)
+- `f` : Activer/désactiver le suivi automatique des logs (`ToggleFollowLogs`)
+- `PageUp` / `PageDown` : Faire défiler les logs bornés du nœud sélectionné
+- `q` / `Esc` / `Ctrl+C` : Quitter
 
 ### 2. Aperçu ASCII déterministe dans le terminal (`--snapshot`)
 ```powershell
