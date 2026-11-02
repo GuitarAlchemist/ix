@@ -103,6 +103,23 @@ test('an external reader report is gated without spawning a resume agent', async
   assert.equal(result.decision, 'Useful')
 })
 
+// An external report skips the agent schema: the gate checks types and bounds itself.
+for (const [name, over, why] of [
+  ['negative counters that still add up', { eventsTotal: -1, eventsReplayed: -2, eventsFresh: 1 }, /count/],
+  ['a counter given as a string', { eventsTotal: '5' }, /count/],
+  ['a fractional counter', { eventsTotal: 5.5, eventsReplayed: 4.5 }, /count/],
+  ['stepDone given as the string "false"', { stepDone: 'false' }, /step/],
+  ['help given as a string, not a list', { helpReceived: 'asked where the token is' }, /help/],
+  ['gaps missing', { gaps: undefined }, /gap/],
+]) {
+  test(`an external report is refused with ${name}`, async () => {
+    const { result } = await run({ ...ARGS, resumeReport: { ...RESUMED, reader: 'Gaia executor', ...over } }, answers())
+    assert.equal(result.taskUnblocked, false)
+    assert.notEqual(result.decision, 'Useful')
+    assert.match(result.resume.reasons.join('; '), why)
+  })
+}
+
 test('an external report with no reader named proves nothing', async () => {
   const { result } = await run({ ...ARGS, resumeReport: { ...RESUMED } }, answers())
   assert.equal(result.taskUnblocked, false)

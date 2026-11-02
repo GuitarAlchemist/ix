@@ -55,17 +55,22 @@ const RESUME = { type: 'object', properties: {
 
 // The task is unblocked only by a resume that did the parent step from the frozen doc alone, saw a fresh event,
 // and needed no help. A doc changed after the resume no longer matches the frozen sha: the proof is void.
+// An external report never went through the RESUME schema, so types and bounds are checked here.
+const isCount = x => Number.isSafeInteger(x) && x >= 0
 function resumeGate(r, reader, frozen) {
   if (!r) return ['no resume report: no step configured, or the reader died']
   const reasons = []
-  if (!reader) reasons.push('no reader named')
+  if (typeof reader !== 'string' || !reader) reasons.push('no reader named')
   if (!frozen) reasons.push('no frozen doc: frozenDocSha256 unset')
   else if (r.docSha256 !== frozen) reasons.push('the doc read is not the frozen doc')
-  if (!r.stepDone) reasons.push('parent step not done')
-  if (r.eventsReplayed + r.eventsFresh !== r.eventsTotal) reasons.push('event counts do not add up')
+  if (r.stepDone !== true) reasons.push('parent step not done')
+  if (![r.eventsTotal, r.eventsReplayed, r.eventsFresh].every(isCount)) reasons.push('event counts are not non-negative integers')
+  else if (r.eventsReplayed + r.eventsFresh !== r.eventsTotal) reasons.push('event counts do not add up')
   if (!(r.eventsFresh >= 1)) reasons.push('no fresh event: replayed history only')
-  if ((r.helpReceived || []).length) reasons.push(`help received: ${r.helpReceived.join(' | ')}`)
-  if ((r.gaps || []).length) reasons.push(`doc gaps: ${r.gaps.join(' | ')} (fix, freeze again, resume again)`)
+  if (!Array.isArray(r.helpReceived)) reasons.push('help received not reported as a list')
+  else if (r.helpReceived.length) reasons.push(`help received: ${r.helpReceived.join(' | ')}`)
+  if (!Array.isArray(r.gaps)) reasons.push('doc gaps not reported as a list')
+  else if (r.gaps.length) reasons.push(`doc gaps: ${r.gaps.join(' | ')} (fix, freeze again, resume again)`)
   return reasons
 }
 
