@@ -401,6 +401,7 @@ func TestUpWithClaudeBinServesTheDocumentedRead(t *testing.T) {
 			t.Fatal("cmdUp had not returned 15 s after /v1/shutdown")
 		}
 	}
+	before := time.Now().UnixMilli() // the reader's clock before the step, compared with the envelope's t
 	post("/v1/probe/create", `{"name":"c","kind":"claude-sessions@1","every_ms":5000}`)
 	post("/v1/probe/start", `{"node":"c"}`)
 
@@ -420,6 +421,7 @@ func TestUpWithClaudeBinServesTheDocumentedRead(t *testing.T) {
 		Seq    uint64 `json:"seq"`
 		Epoch  string `json:"epoch"`
 		Origin string `json:"origin"`
+		T      int64  `json:"t"`
 		Ev     struct {
 			Kind string         `json:"kind"`
 			Data map[string]any `json:"data"`
@@ -452,6 +454,12 @@ func TestUpWithClaudeBinServesTheDocumentedRead(t *testing.T) {
 	}
 	if s, _ := sessions[0].(map[string]any); s["session_id"] != "s1" {
 		t.Fatalf("session: %v", sessions[0])
+	}
+	// The README's clock rule: t is Unix ms on the plane's clock at publish, at or after the read's
+	// read_at_ms, and later than a reader's own clock noted before the step on the same machine.
+	readAt, _ := d["read_at_ms"].(float64)
+	if after := time.Now().UnixMilli(); env.T < before || env.T > after || float64(env.T) < readAt {
+		t.Fatalf("envelope t %d: want Unix ms in [%d, %d] and >= read_at_ms %.0f", env.T, before, after, readAt)
 	}
 	shutdown()
 }

@@ -535,7 +535,15 @@ flux suit ; chaque ligne `data:` est une enveloppe (`ch`, `seq`, `epoch`, `origi
 l'`ev` vaut `{"kind": "sample", "data": {...}}` avec les champs ci-dessus. On indexe sur
 (`origin`, `epoch`, `seq`) de l'enveloppe, pas sur le `seq` de `data`, qui est le compteur propre
 du nœud, et on reprend avec `Last-Event-ID`, qui vaut la ligne `id:` (`epoch:seq`). Un `since=0`
-rejoue tout l'anneau, chaque enregistrement avec la liste complète. Un échantillon est frais pendant
+rejoue tout l'anneau, chaque enregistrement avec la liste complète. Le `t` de l'enveloppe est
+l'horloge du plan au moment où il publie l'échantillon, en millisecondes Unix, égal ou postérieur
+au `read_at_ms` de `data` (la même horloge à la fin de la lecture) ; ce n'est pas le `t` qu'un
+service peut mettre dans son propre événement (`ev.t`, sur l'horloge de l'émetteur, voir
+`svc/<name>`). Pour distinguer un échantillon publié pendant votre lecture d'un échantillon rejoué,
+notez votre propre horloge en millisecondes Unix juste avant la requête : un échantillon dont le `t`
+est postérieur a été publié après ce moment, les autres sont rejoués. ixctl ne synchronise aucune
+horloge : la comparaison tient parce que le lecteur tourne sur la machine du plan (`addr` est en
+bouclage) et lit la même horloge système. Un échantillon est frais pendant
 environ `every_ms` + 20 s (un tick plus la borne de lecture) ; au-delà, le nœud ne dit rien, ce
 qui ne veut jamais dire libre.
 

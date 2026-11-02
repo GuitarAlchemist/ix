@@ -503,7 +503,13 @@ follows; each `data:` line is an envelope (`ch`, `seq`, `epoch`, `origin`, `t`) 
 `{"kind": "sample", "data": {...}}` with the fields above. Key on the envelope's (`origin`, `epoch`,
 `seq`), not on `data`'s `seq`, which is the node's own counter, and resume with `Last-Event-ID`,
 the `id:` line (`epoch:seq`). A `since=0` read replays the whole ring, each record with the full
-list. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
+list. The envelope's `t` is the plane's clock when it published the sample, in Unix milliseconds,
+at or after `data`'s `read_at_ms` (the same clock when the read ended); it is not the `t` a service
+may put in its own event (`ev.t`, on the emitter's clock, see `svc/<name>`). To tell a sample
+published during your read from a replayed one, note your own clock in Unix milliseconds just
+before the request: a sample whose `t` is later was published after that moment, the others are
+replay. ixctl synchronises no clock: the comparison holds because the reader runs on the plane's
+machine (`addr` is loopback) and reads the same system clock. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
 bound); past that, the node says nothing, which is never idle.
 
 A **node** is one instance of a kind in the tree:
