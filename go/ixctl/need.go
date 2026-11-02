@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,14 +30,21 @@ import (
 // rewrites the file whole (a temporary, fsync, rename) and is adopted only once written. A write
 // whose outcome is uncertain, or a file that cannot be read, makes every need op answer
 // "unknown" until the file reads back; nothing is replayed from memory.
+//
+// A need may carry a token budget (see reserve and settle): accounting and admission only. The
+// plane runs no responder and enforces no provider's cap, so it admits deterministic runners only.
 const (
 	maxNeeds       = 256
 	maxNeedBody    = 4096 // bytes of the body, and of an answer
 	maxNeedReason  = 256  // characters of a refusal
 	maxNeedHorizon = 7 * 24 * time.Hour
-	maxNeedsFile   = maxNeeds * (3*maxNeedBody + 2048) // a full store's bound, checked before decoding
 	maxNeedLease   = time.Hour
 	needPoll       = 20 * time.Millisecond // a wait re-reads the clock this often, to see an expiry
+
+	maxNeedTokens       = 1 << 40 // a budget's total, a reservation, and each usage count
+	maxNeedReservations = 64      // per need
+	// a full store's bound, checked before decoding
+	maxNeedsFile = maxNeeds * (3*maxNeedBody + 2048 + maxNeedReservations*1024)
 
 	needsSchema = "ixctl-needs/0"
 )
@@ -53,6 +61,60 @@ type needSubmit struct {
 	Incarnation string          `json:"incarnation"`
 	Body        json.RawMessage `json:"body"`
 	DeadlineMS  int64           `json:"deadline_ms"`
+	Budget      *needBudget     `json:"budget,omitempty"`
+}
+
+// needBudget is a need's token total and, for a child, the need of this store it is carved
+// from. A root total is what its submitter declares: the plane does not authenticate it as
+// anyone's authority, and a budget grants nothing.
+type needBudget struct {
+	TotalTokens int64  `json:"total_tokens"`
+	Parent      string `json:"parent,omitempty"`
+}
+
+// needReservation is tokens set aside before a runner starts, then settled with what it used.
+// Until a known usage settles it, the whole reservation stays committed: reserved (no usage
+// reported yet) and unknown (reported as unknown) both count as spent.
+type needReservation struct {
+	ID       string     `json:"id"`
+	Digest   string     `json:"digest"` // resolver, fence, runner and tokens: a retry with the same id must match
+	Resolver string     `json:"resolver"`
+	Fence    uint64     `json:"fence"`
+	Runner   string     `json:"runner"`
+	Tokens   int64      `json:"tokens"`
+	AtMS     int64      `json:"at_ms"`
+	State    string     `json:"state"` // reserved, unknown, settled
+	Usage    *needUsage `json:"usage,omitempty"`
+}
+
+// needUsage is one run's own consumption, never a running total, in four disjoint counts: input
+// excludes the cache's writes and reads. Unknown carries no count; a known usage settling an
+// unknown one must say its effects were clarified.
+type needUsage struct {
+	Unit             string `json:"unit"`
+	Source           string `json:"source"`
+	Unknown          bool   `json:"unknown,omitempty"`
+	EffectsClarified bool   `json:"effects_clarified,omitempty"`
+	InputTokens      *int64 `json:"input_tokens,omitempty"`
+	OutputTokens     *int64 `json:"output_tokens,omitempty"`
+	CacheWriteTokens *int64 `json:"cache_write_tokens,omitempty"`
+	CacheReadTokens  *int64 `json:"cache_read_tokens,omitempty"`
+}
+
+// needBudgetView is a budget as the ops show it. Enforcement is "accounting": the plane admits
+// or refuses reservations, it stops no runner and enforces no provider cap.
+type needBudgetView struct {
+	TotalTokens     int64             `json:"total_tokens"`
+	Parent          string            `json:"parent,omitempty"`
+	CommittedTokens int64             `json:"committed_tokens"` // reserved + unknown + settled + children
+	ReservedTokens  int64             `json:"reserved_tokens"`
+	UnknownTokens   int64             `json:"unknown_tokens"`
+	SettledTokens   int64             `json:"settled_tokens"`
+	ChildrenTokens  int64             `json:"children_tokens"`
+	RemainingTokens int64             `json:"remaining_tokens"`
+	Overrun         bool              `json:"overrun,omitempty"`
+	Enforcement     string            `json:"enforcement"`
+	Reservations    []needReservation `json:"reservations,omitempty"`
 }
 
 type needClaim struct {
@@ -83,6 +145,9 @@ type need struct {
 	Resolution  *needResolution `json:"resolution,omitempty"`
 	Answer      json.RawMessage `json:"answer,omitempty"`
 	Reason      string          `json:"reason,omitempty"`
+
+	Budget       *needBudget       `json:"budget,omitempty"`
+	Reservations []needReservation `json:"reservations,omitempty"`
 }
 
 func (n *need) terminal() bool {
@@ -112,6 +177,7 @@ type needReply struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 	Answer     json.RawMessage `json:"answer,omitempty"`
 	Reason     string          `json:"reason,omitempty"`
+	Budget     *needBudgetView `json:"budget,omitempty"`
 }
 
 type needStore struct {
@@ -183,15 +249,24 @@ func checkNeeds(f needFile) error {
 	if len(f.Needs) > maxNeeds {
 		return fmt.Errorf("%d needs, over %d", len(f.Needs), maxNeeds)
 	}
-	ids, fences := map[string]bool{}, map[uint64]bool{}
+	budgets, fences := map[string]*needBudget{}, map[uint64]bool{} // the needs seen so far, by id
 	for i, n := range f.Needs {
-		if n == nil || !nameRE.MatchString(n.ID) || ids[n.ID] {
-			return fmt.Errorf("needs[%d]: missing, badly named or repeated id", i)
+		if n == nil || !nameRE.MatchString(n.ID) {
+			return fmt.Errorf("needs[%d]: missing or badly named", i)
 		}
-		ids[n.ID] = true
+		if _, seen := budgets[n.ID]; seen {
+			return fmt.Errorf("needs[%d]: repeated id %q", i, n.ID)
+		}
 		if err := checkNeed(n, f.Fence, fences); err != nil {
 			return fmt.Errorf("needs[%d] (%s): %v", i, n.ID, err)
 		}
+		// A child comes after its parent, which has a budget at least as large.
+		if b := n.Budget; b != nil && b.Parent != "" {
+			if pb := budgets[b.Parent]; pb == nil || b.TotalTokens > pb.TotalTokens {
+				return fmt.Errorf("needs[%d] (%s): parent %q missing, after it, without a budget or smaller", i, n.ID, b.Parent)
+			}
+		}
+		budgets[n.ID] = n.Budget
 	}
 	return nil
 }
@@ -201,8 +276,11 @@ func checkNeed(n *need, fileFence uint64, fences map[uint64]bool) error {
 		return fmt.Errorf("bad kind, requester or incarnation")
 	}
 	body, err := checkJSON("body", n.Body)
-	if err != nil || n.Digest != needDigest(n.Kind, n.Requester, n.Incarnation, n.DeadlineMS, body) {
+	if err != nil || n.Digest != needDigest(n.Kind, n.Requester, n.Incarnation, n.DeadlineMS, body, n.Budget) {
 		return fmt.Errorf("body or digest does not match")
+	}
+	if err := checkReservations(n, fileFence); err != nil {
+		return err
 	}
 	if n.Rev < 1 || n.CreatedMS <= 0 || n.DeadlineMS <= n.CreatedMS || n.DeadlineMS > n.CreatedMS+maxNeedHorizon.Milliseconds() {
 		return fmt.Errorf("rev, created_ms or deadline_ms out of bounds")
@@ -242,8 +320,14 @@ func checkNeed(n *need, fileFence uint64, fences map[uint64]bool) error {
 	return nil
 }
 
-func needDigest(kind, requester, incarnation string, deadlineMS int64, body []byte) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\n%s\n%s\n%d\n%s", kind, requester, incarnation, deadlineMS, body)))
+// needDigest covers what a submit declares. A budget is added only when there is one, so a need
+// without a budget keeps the digest it had before budgets existed.
+func needDigest(kind, requester, incarnation string, deadlineMS int64, body []byte, budget *needBudget) string {
+	s := fmt.Sprintf("%s\n%s\n%s\n%d\n%s", kind, requester, incarnation, deadlineMS, body)
+	if budget != nil {
+		s += fmt.Sprintf("\nbudget %d %s", budget.TotalTokens, budget.Parent)
+	}
+	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -348,7 +432,7 @@ func (s *needStore) get(id string) (int, *need, error) {
 
 // reply shows the need; the question (body) to its asker or its claim holder, the answer only
 // to its asker. Both are declared names (see the README): correlation, not authentication.
-func reply(n *need, asker, holder bool) needReply {
+func (s *needStore) reply(n *need, asker, holder bool) needReply {
 	r := needReply{ID: n.ID, Rev: n.Rev, State: n.State, Kind: n.Kind, Digest: n.Digest, CreatedMS: n.CreatedMS,
 		DeadlineMS: n.DeadlineMS, Claim: n.Claim, Resolution: n.Resolution, Reason: n.Reason}
 	if asker || holder {
@@ -357,7 +441,132 @@ func reply(n *need, asker, holder bool) needReply {
 	if asker {
 		r.Answer = n.Answer
 	}
+	if n.Budget != nil {
+		v := s.spend(n)
+		r.Budget = &v
+	}
 	return r
+}
+
+// spend sums a budgeted need's commitments: each reservation (its usage once a known usage
+// settles it, all of it while reserved or unknown) and each child of this store, at the larger of
+// the child's total and its own commitments, so a child is debited once and its overrun shows.
+// A child always comes after its parent in the store (submit order), so this ends.
+func (s *needStore) spend(n *need) needBudgetView {
+	v := needBudgetView{TotalTokens: n.Budget.TotalTokens, Parent: n.Budget.Parent, Enforcement: "accounting",
+		Reservations: n.Reservations}
+	for _, r := range n.Reservations {
+		switch r.State {
+		case "settled":
+			v.SettledTokens += r.Usage.total()
+		case "unknown":
+			v.UnknownTokens += r.Tokens
+		default:
+			v.ReservedTokens += r.Tokens
+		}
+	}
+	for _, c := range s.needs {
+		if c.Budget != nil && c.Budget.Parent == n.ID && c.ID != n.ID {
+			cv := s.spend(c)
+			v.ChildrenTokens += max(cv.TotalTokens, cv.CommittedTokens)
+		}
+	}
+	v.CommittedTokens = v.ReservedTokens + v.UnknownTokens + v.SettledTokens + v.ChildrenTokens
+	v.RemainingTokens = max(0, v.TotalTokens-v.CommittedTokens)
+	v.Overrun = v.CommittedTokens > v.TotalTokens
+	return v
+}
+
+func (u *needUsage) total() int64 {
+	return *u.InputTokens + *u.OutputTokens + *u.CacheWriteTokens + *u.CacheReadTokens
+}
+
+// clone copies a usage with its own counts, so the store never shares a caller's memory.
+func (u needUsage) clone() *needUsage {
+	for _, p := range []**int64{&u.InputTokens, &u.OutputTokens, &u.CacheWriteTokens, &u.CacheReadTokens} {
+		if *p != nil {
+			v := **p
+			*p = &v
+		}
+	}
+	return &u
+}
+
+func checkBudget(b *needBudget) error {
+	if b.TotalTokens < 1 || b.TotalTokens > maxNeedTokens {
+		return badRequest("budget.total_tokens must be 1 to %d", int64(maxNeedTokens))
+	}
+	if b.Parent != "" && !nameRE.MatchString(b.Parent) {
+		return badRequest("budget.parent must be a need id of this plane (%s)", nameRE)
+	}
+	return nil
+}
+
+// checkUsage refuses a usage before any effect: the unit, a source, and either no count at all
+// (unknown) or the four counts, each 0 to maxNeedTokens, so their sum cannot overflow.
+func checkUsage(u needUsage) error {
+	if u.Unit != "tokens" {
+		return badRequest("usage.unit must be tokens")
+	}
+	if !partyRE.MatchString(u.Source) {
+		return badRequest("usage.source must match %s", partyRE)
+	}
+	counts := []*int64{u.InputTokens, u.OutputTokens, u.CacheWriteTokens, u.CacheReadTokens}
+	if u.Unknown {
+		for _, c := range counts {
+			if c != nil {
+				return badRequest("an unknown usage carries no count")
+			}
+		}
+		if u.EffectsClarified {
+			return badRequest("an unknown usage cannot have clarified effects")
+		}
+		return nil
+	}
+	for _, c := range counts {
+		if c == nil || *c < 0 || *c > maxNeedTokens {
+			return badRequest("usage needs input_tokens, output_tokens, cache_write_tokens and cache_read_tokens, each 0 to %d",
+				int64(maxNeedTokens))
+		}
+	}
+	return nil
+}
+
+func reservationDigest(resolver string, fence uint64, runner string, tokens int64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\n%d\n%s\n%d", resolver, fence, runner, tokens)))
+	return hex.EncodeToString(sum[:])
+}
+
+// checkReservations holds a loaded need's reservations to what reserve and settle write.
+func checkReservations(n *need, fileFence uint64) error {
+	if n.Budget != nil && checkBudget(n.Budget) != nil {
+		return fmt.Errorf("bad budget")
+	}
+	if len(n.Reservations) > 0 && n.Budget == nil || len(n.Reservations) > maxNeedReservations {
+		return fmt.Errorf("reservations without a budget, or too many")
+	}
+	ids := map[string]bool{}
+	for _, r := range n.Reservations {
+		if !partyRE.MatchString(r.ID) || ids[r.ID] || !partyRE.MatchString(r.Resolver) || r.Runner != "deterministic" ||
+			r.Tokens < 1 || r.Tokens > maxNeedTokens || r.Fence == 0 || r.Fence > fileFence ||
+			r.AtMS < n.CreatedMS || r.AtMS >= n.DeadlineMS || r.Digest != reservationDigest(r.Resolver, r.Fence, r.Runner, r.Tokens) {
+			return fmt.Errorf("bad reservation %q", r.ID)
+		}
+		ids[r.ID] = true
+		var ok bool
+		switch r.State {
+		case "reserved":
+			ok = r.Usage == nil
+		case "unknown":
+			ok = r.Usage != nil && r.Usage.Unknown && checkUsage(*r.Usage) == nil
+		case "settled":
+			ok = r.Usage != nil && !r.Usage.Unknown && checkUsage(*r.Usage) == nil
+		}
+		if !ok {
+			return fmt.Errorf("reservation %q: state %q inconsistent with its usage", r.ID, r.State)
+		}
+	}
+	return nil
 }
 
 func checkJSON(field string, raw json.RawMessage) (json.RawMessage, error) {
@@ -386,7 +595,15 @@ func (s *needStore) submit(r needSubmit) (needReply, error) {
 	if err != nil {
 		return needReply{}, err
 	}
-	digest := needDigest(r.Kind, r.Requester, r.Incarnation, r.DeadlineMS, body)
+	var budget *needBudget
+	if r.Budget != nil {
+		if err := checkBudget(r.Budget); err != nil {
+			return needReply{}, err
+		}
+		b := *r.Budget
+		budget = &b
+	}
+	digest := needDigest(r.Kind, r.Requester, r.Incarnation, r.DeadlineMS, body, budget)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -402,7 +619,7 @@ func (s *needStore) submit(r needSubmit) (needReply, error) {
 		if err != nil {
 			return needReply{}, err
 		}
-		rep := reply(n, true, false)
+		rep := s.reply(n, true, false)
 		rep.Duplicate = true
 		return rep, nil
 	}
@@ -413,12 +630,34 @@ func (s *needStore) submit(r needSubmit) (needReply, error) {
 	if len(s.needs) >= maxNeeds {
 		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("the store holds %d needs, its maximum", maxNeeds)}
 	}
+	// A child's total is carved from its parent's remainder, now: the parent never gives more than
+	// it has, and no later submit can raise it.
+	if budget != nil && budget.Parent != "" {
+		pi, p := s.find(budget.Parent)
+		if p == nil {
+			return needReply{}, &opError{status: 404, msg: fmt.Sprintf("parent need %q is not in this store: a parent outside it is unsupported", budget.Parent)}
+		}
+		p, err := s.expire(pi, p)
+		if err != nil {
+			return needReply{}, err
+		}
+		switch {
+		case p.terminal():
+			return needReply{}, &opError{status: 409, msg: fmt.Sprintf("parent need %q is %s", p.ID, p.State)}
+		case p.Budget == nil:
+			return needReply{}, &opError{status: 409, msg: fmt.Sprintf("parent need %q has no budget", p.ID)}
+		}
+		if v := s.spend(p); v.CommittedTokens+budget.TotalTokens > v.TotalTokens {
+			return needReply{}, &opError{status: 409, msg: fmt.Sprintf("over budget: parent need %q has committed %d of %d tokens",
+				p.ID, v.CommittedTokens, v.TotalTokens)}
+		}
+	}
 	n := &need{ID: r.ID, Kind: r.Kind, Requester: r.Requester, Incarnation: r.Incarnation, Body: body, Digest: digest,
-		CreatedMS: now.UnixMilli(), DeadlineMS: r.DeadlineMS, Rev: 1, State: "open"}
+		CreatedMS: now.UnixMilli(), DeadlineMS: r.DeadlineMS, Rev: 1, State: "open", Budget: budget}
 	if err := s.commit(-1, n, s.fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(n, true, false), nil
+	return s.reply(n, true, false), nil
 }
 
 // status shows the need; resolver, when it names the claim holder, gets the question too.
@@ -431,7 +670,7 @@ func (s *needStore) status(id, requester, incarnation, resolver string) (needRep
 	}
 	holder := resolver != "" && n.Claim != nil && n.Claim.Resolver == resolver && !n.terminal() &&
 		s.now().UnixMilli() < n.Claim.LeaseUntilMS
-	return reply(n, n.Requester == requester && n.Incarnation == incarnation, holder), nil
+	return s.reply(n, n.Requester == requester && n.Incarnation == incarnation, holder), nil
 }
 
 func (s *needStore) claim(id, resolver string, leaseMS int64) (needReply, error) {
@@ -463,7 +702,7 @@ func (s *needStore) claim(id, resolver string, leaseMS int64) (needReply, error)
 	if err := s.commit(i, &next, fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(&next, false, true), nil
+	return s.reply(&next, false, true), nil
 }
 
 // answerable checks that resolver holds the live claim fenced by fence.
@@ -506,7 +745,7 @@ func (s *needStore) resolve(id, resolver string, fence uint64, answer json.RawMe
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(&next, false, false), nil
+	return s.reply(&next, false, false), nil
 }
 
 func (s *needStore) refuse(id, resolver string, fence uint64, reason string) (needReply, error) {
@@ -525,7 +764,115 @@ func (s *needStore) refuse(id, resolver string, fence uint64, reason string) (ne
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(&next, false, false), nil
+	return s.reply(&next, false, false), nil
+}
+
+// reserve sets tokens aside on a budgeted need before a runner starts: admitted only for the
+// live claim's resolver and fence, and only if the need's commitments leave room. The plane
+// accounts, it enforces no cap on a runner: a runner other than a deterministic one, which a
+// hard total cap would have to bound, is unsupported rather than promised.
+func (s *needStore) reserve(id, resolver string, fence uint64, rid, runner string, tokens int64) (needReply, error) {
+	switch {
+	case runner != "deterministic":
+		return needReply{}, &opError{status: 501, msg: fmt.Sprintf("runner %q unsupported: ixctl only accounts for tokens and no adapter here enforces a hard total cap, so only a deterministic runner is admitted", runner)}
+	case !partyRE.MatchString(rid):
+		return needReply{}, badRequest("reservation_id must match %s", partyRE)
+	case tokens < 1 || tokens > maxNeedTokens:
+		return needReply{}, badRequest("tokens must be 1 to %d", int64(maxNeedTokens))
+	}
+	digest := reservationDigest(resolver, fence, runner, tokens)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, n, err := s.get(id)
+	if err != nil {
+		return needReply{}, err
+	}
+	// A retry finds its reservation first, whatever the claim or the clock say now: its receipt.
+	for _, r := range n.Reservations {
+		if r.ID == rid {
+			if r.Digest != digest {
+				return needReply{}, &opError{status: 409, msg: fmt.Sprintf("reservation %q exists with another digest", rid)}
+			}
+			rep := s.reply(n, false, false)
+			rep.Duplicate = true
+			return rep, nil
+		}
+	}
+	if n.Budget == nil {
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("need %q has no budget", id)}
+	}
+	i, n, err := s.answerable(id, resolver, fence)
+	if err != nil {
+		return needReply{}, err
+	}
+	if len(n.Reservations) >= maxNeedReservations {
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("need %q holds %d reservations, its maximum", id, maxNeedReservations)}
+	}
+	if v := s.spend(n); v.CommittedTokens+tokens > v.TotalTokens {
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("over budget: need %q has committed %d of %d tokens", id, v.CommittedTokens, v.TotalTokens)}
+	}
+	next := *n
+	next.Rev = n.Rev + 1
+	next.Reservations = append(append([]needReservation(nil), n.Reservations...), needReservation{ID: rid, Digest: digest,
+		Resolver: resolver, Fence: fence, Runner: runner, Tokens: tokens, AtMS: s.now().UnixMilli(), State: "reserved"})
+	if err := s.commit(i, &next, s.fence); err != nil {
+		return needReply{}, err
+	}
+	return s.reply(&next, false, true), nil
+}
+
+// settle records what a reservation's run used, once: the same usage again is a duplicate,
+// another is refused, so a running total re-sent cannot be counted twice. An unknown usage keeps
+// the whole reservation committed; only a known usage whose effects were clarified replaces it.
+// A settle needs no live claim or deadline: consumption is a fact, reported when it is known.
+func (s *needStore) settle(id, resolver, rid string, u needUsage) (needReply, error) {
+	if err := checkUsage(u); err != nil {
+		return needReply{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i, n, err := s.get(id)
+	if err != nil {
+		return needReply{}, err
+	}
+	k := -1
+	for j, r := range n.Reservations {
+		if r.ID == rid {
+			k = j
+		}
+	}
+	if k < 0 {
+		return needReply{}, &opError{status: 404, msg: fmt.Sprintf("reservation %q not found on need %q", rid, id)}
+	}
+	r := n.Reservations[k]
+	if resolver != r.Resolver {
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("resolver %q did not make reservation %q", resolver, rid)}
+	}
+	if r.Usage != nil && reflect.DeepEqual(*r.Usage, u) {
+		rep := s.reply(n, false, false)
+		rep.Duplicate = true
+		return rep, nil
+	}
+	switch {
+	case r.State == "settled":
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("reservation %q is already settled with another usage", rid)}
+	case r.State == "unknown" && u.Unknown:
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("reservation %q is already unknown, from another source", rid)}
+	case r.State == "unknown" && !u.EffectsClarified:
+		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("reservation %q was reported unknown: a known usage must come with effects_clarified", rid)}
+	}
+	next := *n
+	next.Rev = n.Rev + 1
+	next.Reservations = append([]needReservation(nil), n.Reservations...)
+	r.Usage, r.State = u.clone(), "settled"
+	if u.Unknown {
+		r.State = "unknown"
+	}
+	next.Reservations[k] = r
+	if err := s.commit(i, &next, s.fence); err != nil {
+		return needReply{}, err
+	}
+	return s.reply(&next, false, false), nil
 }
 
 // wait returns once the need is terminal (outcome = its state) or after timeout (outcome
@@ -542,11 +889,14 @@ func (s *needStore) wait(ctx context.Context, id, requester, incarnation string,
 		s.mu.Lock()
 		_, n, err := s.get(id)
 		wake := s.wake
+		var r needReply
+		if err == nil { // the reply reads the store (a budget's children): under the lock
+			r = s.reply(n, n.Requester == requester && n.Incarnation == incarnation, false)
+		}
 		s.mu.Unlock()
 		if err != nil {
 			return needReply{}, err
 		}
-		r := reply(n, n.Requester == requester && n.Incarnation == incarnation, false)
 		if n.terminal() {
 			r.Outcome = n.State
 			return r, nil
@@ -577,9 +927,15 @@ type needOp struct {
 	Answer      json.RawMessage `json:"answer,omitempty"`
 	Reason      string          `json:"reason,omitempty"`
 	TimeoutMS   int64           `json:"timeout_ms,omitempty"`
+
+	Budget        *needBudget `json:"budget,omitempty"`
+	ReservationID string      `json:"reservation_id,omitempty"`
+	Runner        string      `json:"runner,omitempty"`
+	Tokens        int64       `json:"tokens,omitempty"`
+	Usage         *needUsage  `json:"usage,omitempty"`
 }
 
-var needOps = []string{"submit", "status", "claim", "resolve", "refuse", "wait"}
+var needOps = []string{"submit", "status", "claim", "resolve", "refuse", "reserve", "settle", "wait"}
 
 // SetNeedStore keeps the plane's needs in the file at path (`<state>/<name>.needs.json`); the
 // instance lock makes this plane the file's only writer. A plane without it refuses need ops.
@@ -598,7 +954,7 @@ func (p *Plane) needRequest(ctx context.Context, req Request) (any, error) {
 	switch req.Op {
 	case "need.submit":
 		return p.needs.submit(needSubmit{ID: o.ID, Kind: o.Kind, Requester: o.Requester, Incarnation: o.Incarnation,
-			Body: o.Body, DeadlineMS: o.DeadlineMS})
+			Body: o.Body, DeadlineMS: o.DeadlineMS, Budget: o.Budget})
 	case "need.status":
 		return p.needs.status(o.ID, o.Requester, o.Incarnation, o.Resolver)
 	case "need.claim":
@@ -607,6 +963,13 @@ func (p *Plane) needRequest(ctx context.Context, req Request) (any, error) {
 		return p.needs.resolve(o.ID, o.Resolver, o.Fence, o.Answer)
 	case "need.refuse":
 		return p.needs.refuse(o.ID, o.Resolver, o.Fence, o.Reason)
+	case "need.reserve":
+		return p.needs.reserve(o.ID, o.Resolver, o.Fence, o.ReservationID, o.Runner, o.Tokens)
+	case "need.settle":
+		if o.Usage == nil {
+			return nil, badRequest("need.settle needs a `usage`")
+		}
+		return p.needs.settle(o.ID, o.Resolver, o.ReservationID, *o.Usage)
 	}
 	// need.wait holds a waiter slot like wait does, and ends with the plane.
 	timeout, err := needTimeout(o.TimeoutMS)

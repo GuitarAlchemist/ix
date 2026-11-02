@@ -695,30 +695,65 @@ le renomme par-dessus l'ancien. L'op ne répond qu'une fois le renommage revenu.
 - Quand un renommage échoue, l'issue de l'op est inconnue (503). L'op suivante relit le fichier ;
   rien n'est rejoué de mémoire.
 
-**Aucun répondant ne tourne ici, et aucun budget de tokens n'existe.**
-- Les ops need enregistrent une question et sa réponse. Aucune ne lance ni n'appelle un répondant :
-  le répondant est le processus, quel qu'il soit, qui prend le besoin.
-- Un besoin ne porte aucun budget de tokens. Un champ qui en demande un (`token_budget`, ou tout
-  autre champ inconnu) est refusé en 400 avant toute écriture. Un test fige ce refus, pour
-  qu'aucun appelant ne croie bornés les tokens d'un répondant.
-- Une échéance borne le temps, pas les tokens. Quand des agents répondront aux besoins, le budget
-  de tokens sera une tranche future, non implémentée. Sa frontière obligatoire :
-  - **Total partagé.** Un seul total par besoin, partagé entre ses répondants, leurs sous-agents et
-    leurs reprises. Il est dérivé du budget du parent, et jamais augmenté.
-  - **Pas de remise à zéro.** Une reprise, un bail renouvelé, une nouvelle prise en charge ou un
-    nouvel essai le laissent tel quel.
-  - **Admission, puis réconciliation.** Les tokens sont réservés avant qu'un répondant tourne, et la
-    consommation est réconciliée après.
-    - Une consommation inconnue n'est pas zéro.
-    - Entrée, sortie, écriture de cache et lecture de cache sont comptées à part, chacune avec son
-      unité et sa provenance.
-    - Un compteur cumulatif n'est jamais additionné deux fois.
-  - **Imposé ou estimé, jamais confondus.**
-    - Ce qu'un runtime ou un adaptateur impose reste à part de ce qui n'est qu'estimé.
-    - Un plafond de sortie n'est pas un plafond total.
-    - Un fournisseur qui ne peut pas imposer un plafond dur reçoit une admission refusée, ou un
-      `unsupported` explicite : jamais une promesse.
-  - **Aucune autorité.** Un budget n'accorde rien.
+**Aucun répondant ne tourne ici.** Les ops need enregistrent une question, sa réponse et ses
+comptes de tokens. Aucune ne lance ni n'appelle un répondant : le répondant est le processus,
+quel qu'il soit, qui prend le besoin.
+
+### Budget de tokens : comptabilité et admission, pas un plafond fournisseur
+
+Une échéance borne le temps ; un budget borne les tokens. Ce sont deux limites distinctes,
+vérifiées à part.
+
+```text
+ixctl need submit  --name desk < q.json   # ... "budget":{"total_tokens":1000}  (enfant : "parent":"<id de besoin>")
+ixctl need reserve --name desk < v.json   # {"id","resolver","fence","reservation_id","runner":"deterministic","tokens"}
+ixctl need settle  --name desk < u.json   # {"id","resolver","reservation_id","usage":{...}}
+```
+
+- **Un total par besoin.** Il entre dans le digest du besoin. Un resubmit avec un autre total sous
+  le même `id` est un 409. Un nouvel essai, un redémarrage, un bail renouvelé ou une nouvelle prise
+  en charge ne le remettent jamais à zéro.
+- **Un enfant est prélevé sur son parent.**
+  - Un besoin soumis avec `budget.parent` prend son total sur ce qui reste au parent, au submit.
+    S'il reste trop peu, le submit est un 409.
+  - Le parent compte chaque enfant une fois : à son total, ou à ce que l'enfant a réellement
+    consommé quand c'est plus. Le dépassement d'un enfant se voit aussi sur son parent.
+  - Le parent doit être un besoin budgété du même magasin. Un parent ailleurs est refusé (404,
+    non supporté).
+- **Réserver avant de lancer.**
+  - Seul le répondant de la prise en charge vivante, avec son fence, peut réserver.
+  - Une réservation n'est admise que si les engagements du besoin laissent de la place. Deux
+    réservations concurrentes ne peuvent pas prendre toutes deux les derniers tokens.
+  - `reservation_id` rend un nouvel essai idempotent : le même contenu est un doublon, un autre
+    contenu un 409.
+- **Régler après le lancement.**
+  - Un règlement porte l'`usage` de ce seul lancement, jamais un total cumulé : `unit` `tokens`,
+    une `source`, et quatre comptes disjoints : `input_tokens` (hors cache), `output_tokens`,
+    `cache_write_tokens` et `cache_read_tokens`, chacun un entier de 0 à 2⁴⁰.
+  - Le même usage une seconde fois est un doublon. Un autre usage est un 409 : un compteur
+    cumulatif ne peut pas être compté deux fois.
+  - Des comptes négatifs, fractionnaires, absents ou trop grands sont refusés avant toute écriture.
+  - Un règlement n'exige ni prise en charge vivante ni échéance future : la consommation est un fait.
+- **Inconnu n'est pas zéro.**
+  - Une réservation pas encore réglée, ou réglée avec `"unknown": true`, garde tous ses tokens
+    engagés.
+  - Seul un usage connu avec `"effects_clarified": true` remplace un usage inconnu.
+- **Tokens engagés.** Engagé = réservé + inconnu + réglé + enfants. Chaque réponse montre ces
+  sommes, le reste et un éventuel dépassement.
+- **Durabilité.** Budgets et réservations vivent dans l'enregistrement du besoin et s'écrivent
+  comme toute transition. Les tests interrompent une réservation et un règlement au renommage et
+  après, puis rouvrent : rien n'est réservé ni crédité deux fois.
+- **Ce qui est imposé.**
+  - `enforcement` vaut `accounting`. Le plan admet ou refuse des réservations ; il n'arrête aucun
+    lanceur et n'impose le plafond d'aucun fournisseur.
+  - `runner` doit valoir `deterministic`. Toute autre valeur, comme `model`, est un 501
+    `unsupported` : aucun adaptateur ici n'impose de plafond total dur, donc un lancement de
+    modèle est refusé plutôt que promis borné.
+  - Aucun fournisseur, modèle ni API n'est branché. Les tests utilisent des fixtures : ils prouvent
+    le noyau comptable, pas qu'une consommation réelle de modèle est bornée.
+- **Aucune autorité.** Le total d'un besoin racine est ce que déclare celui qui le soumet, avec le
+  même jeton bearer que toute op, pas une autorisation authentifiée. Un budget n'accorde rien.
+- Un champ inconnu, comme `token_budget`, est refusé en 400 avant toute écriture.
 
 ## Journal
 

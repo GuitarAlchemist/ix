@@ -565,8 +565,8 @@ func TestNeedFailedRenameAdoptsNothing(t *testing.T) {
 
 // At the real entry points: a second plane on the same state dir is refused (the instance lock
 // keeps one writer of the needs file), a need op needs the bearer, and none is forwarded.
-// A need carries no token budget: a field asking for one is refused before anything is written,
-// never silently dropped, so no caller can believe a responder's tokens are bounded.
+// A budget field the plane does not know (`token_budget` rather than `budget`) is refused before
+// anything is written, never silently dropped, so no caller believes in a budget that is not kept.
 func TestNeedTokenBudgetIsRefusedNotIgnored(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := upPlane(t, dir)
@@ -782,5 +782,382 @@ func TestNeedQuestionHiddenFromTheHolderOnceItsLeaseLapses(t *testing.T) {
 	}
 	if r, _ := s.status("n1", "task-a", "inc-1", ""); string(r.Body) != string(sub.Body) {
 		t.Fatalf("the asker after the lease: body %s, want the question", r.Body)
+	}
+}
+
+// --- token budget: accounting and admission, no provider (fixtures prove the core, not a cap) ---
+
+func budgetOf(clk *fakeClock, id string, total int64, parent string) needSubmit {
+	sub := submitOf(clk, id, time.Hour)
+	sub.Budget = &needBudget{TotalTokens: total, Parent: parent}
+	return sub
+}
+
+func i64(v int64) *int64 { return &v }
+
+func usageOf(in, out, cacheWrite, cacheRead int64) needUsage {
+	return needUsage{Unit: "tokens", Source: "fixture:deterministic", InputTokens: i64(in), OutputTokens: i64(out),
+		CacheWriteTokens: i64(cacheWrite), CacheReadTokens: i64(cacheRead)}
+}
+
+// budgetedClaim submits a budgeted need and claims it for resolver; it returns the claim's fence.
+func budgetedClaim(t *testing.T, s *needStore, clk *fakeClock, id string, total int64, parent, resolver string) uint64 {
+	t.Helper()
+	if _, err := s.submit(budgetOf(clk, id, total, parent)); err != nil {
+		t.Fatalf("submit %s: %v", id, err)
+	}
+	c, err := s.claim(id, resolver, 60_000)
+	if err != nil {
+		t.Fatalf("claim %s: %v", id, err)
+	}
+	return c.Claim.Fence
+}
+
+func budgetOfNeed(t *testing.T, s *needStore, id string) needBudgetView {
+	t.Helper()
+	r, err := s.status(id, "", "", "")
+	if err != nil || r.Budget == nil {
+		t.Fatalf("status %s: %+v %v, want a budget", id, r, err)
+	}
+	return *r.Budget
+}
+
+func TestNeedBudgetConcurrentReservationsNeverOverAllocate(t *testing.T) {
+	s, clk, _ := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	won, refused := 0, 0
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			_, err := s.reserve("n1", "res-x", fence, fmt.Sprintf("r%d", g), "deterministic", 30)
+			mu.Lock()
+			defer mu.Unlock()
+			var oe *opError
+			switch {
+			case err == nil:
+				won++
+			case errors.As(err, &oe) && oe.status == 409 && strings.Contains(oe.msg, "over budget"):
+				refused++
+			}
+		}(g)
+	}
+	wg.Wait()
+	b := budgetOfNeed(t, s, "n1")
+	if won != 3 || refused != 5 || b.CommittedTokens != 90 || b.ReservedTokens != 90 || b.RemainingTokens != 10 || len(b.Reservations) != 3 {
+		t.Fatalf("8 x 30 against 100: %d won, %d refused, budget %+v; want 3 won, 5 refused, 90 committed", won, refused, b)
+	}
+	if b.Enforcement != "accounting" {
+		t.Fatalf("enforcement %q, want accounting", b.Enforcement)
+	}
+}
+
+func TestNeedBudgetReservationDuplicateAndConflict(t *testing.T) {
+	s, clk, _ := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	a, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 40)
+	if err != nil || a.Duplicate {
+		t.Fatalf("reserve: %+v %v", a, err)
+	}
+	b, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 40)
+	if err != nil || !b.Duplicate || b.Rev != a.Rev {
+		t.Fatalf("same reservation again: %+v %v, want a duplicate at rev %d", b, err, a.Rev)
+	}
+	_, err = s.reserve("n1", "res-x", fence, "r1", "deterministic", 41)
+	wantStatus(t, err, 409, "another digest")
+	if v := budgetOfNeed(t, s, "n1"); v.CommittedTokens != 40 || len(v.Reservations) != 1 {
+		t.Fatalf("after a duplicate and a conflict: %+v, want 40 committed once", v)
+	}
+}
+
+func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+
+	s.failRename = errors.New("crash at rename")
+	_, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 60)
+	wantStatus(t, err, 503, "unknown")
+	s = newNeedStore(path, clk.now) // restart: the reservation was not written
+	if v := budgetOfNeed(t, s, "n1"); v.CommittedTokens != 0 {
+		t.Fatalf("after a reserve lost at rename: %+v, want nothing committed", v)
+	}
+	if _, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 60); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	s.failAfterRename = errors.New("crash after commit")
+	_, err = s.reserve("n1", "res-x", fence, "r2", "deterministic", 30)
+	wantStatus(t, err, 503, "unknown")
+	s = newNeedStore(path, clk.now) // committed, reply lost
+	r, err := s.reserve("n1", "res-x", fence, "r2", "deterministic", 30)
+	if err != nil || !r.Duplicate {
+		t.Fatalf("retried reserve after a lost reply: %+v %v, want the duplicate", r, err)
+	}
+	if v := budgetOfNeed(t, s, "n1"); v.CommittedTokens != 90 {
+		t.Fatalf("after the retry: %+v, want 90 committed (no double reservation)", v)
+	}
+
+	s.failAfterRename = errors.New("crash after commit")
+	_, err = s.settle("n1", "res-x", "r1", usageOf(10, 5, 0, 0))
+	wantStatus(t, err, 503, "unknown")
+	s = newNeedStore(path, clk.now)
+	r, err = s.settle("n1", "res-x", "r1", usageOf(10, 5, 0, 0))
+	if err != nil || !r.Duplicate {
+		t.Fatalf("retried settle after a lost reply: %+v %v, want the duplicate", r, err)
+	}
+	if v := budgetOfNeed(t, s, "n1"); v.SettledTokens != 15 || v.ReservedTokens != 30 || v.CommittedTokens != 45 {
+		t.Fatalf("after the settle: %+v, want 15 settled + 30 reserved, counted once", v)
+	}
+}
+
+func TestNeedBudgetSurvivesRestartRenewAndRetry(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	big := budgetOf(clk, "n1", 1000, "") // the same submit, deadline included, with a larger total
+	if _, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 60); err != nil {
+		t.Fatal(err)
+	}
+	s = newNeedStore(path, clk.now)
+	clk.add(61 * time.Second) // the lease lapses; another resolver claims: a new fence, the same budget
+	c, err := s.claim("n1", "res-y", 60_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.reserve("n1", "res-y", c.Claim.Fence, "r2", "deterministic", 50)
+	wantStatus(t, err, 409, "over budget")
+	_, err = s.reserve("n1", "res-x", fence, "r3", "deterministic", 10)
+	wantStatus(t, err, 409, "stale fence")
+	if _, err := s.reserve("n1", "res-y", c.Claim.Fence, "r2", "deterministic", 40); err != nil {
+		t.Fatalf("reserve inside what is left: %v", err)
+	}
+	// A larger total under the same id cannot raise the limit.
+	_, err = s.submit(big)
+	wantStatus(t, err, 409, "another digest")
+	if v := budgetOfNeed(t, s, "n1"); v.TotalTokens != 100 || v.CommittedTokens != 100 || v.RemainingTokens != 0 {
+		t.Fatalf("after restart, renew and retries: %+v", v)
+	}
+}
+
+func TestNeedBudgetExhaustionRefusedBeforeEffect(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	if _, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 100); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	_, err := s.reserve("n1", "res-x", fence, "r2", "deterministic", 1)
+	wantStatus(t, err, 409, "over budget")
+	for _, bad := range []int64{0, -1, maxNeedTokens + 1} {
+		_, err := s.reserve("n1", "res-x", fence, "r3", "deterministic", bad)
+		wantStatus(t, err, 400, "tokens")
+	}
+	_, err = s.reserve("n1", "res-x", fence, "bad id!", "deterministic", 1)
+	wantStatus(t, err, 400, "reservation_id")
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("a refused reservation touched the file")
+	}
+	// A need without a budget admits no reservation.
+	s.submit(submitOf(clk, "plain", time.Hour))
+	c, _ := s.claim("plain", "res-x", 60_000)
+	_, err = s.reserve("plain", "res-x", c.Claim.Fence, "r1", "deterministic", 1)
+	wantStatus(t, err, 409, "no budget")
+	// Bad budgets are refused at submit.
+	for _, total := range []int64{0, -5, maxNeedTokens + 1} {
+		_, err := s.submit(budgetOf(clk, "bad-total", total, ""))
+		wantStatus(t, err, 400, "total_tokens")
+	}
+}
+
+func TestNeedBudgetChildDrawsFromItsParent(t *testing.T) {
+	s, clk, _ := newNeedTest(t)
+	pf := budgetedClaim(t, s, clk, "parent", 100, "", "res-p")
+	cf := budgetedClaim(t, s, clk, "child-a", 60, "parent", "res-a")
+	_, err := s.submit(budgetOf(clk, "child-b", 50, "parent"))
+	wantStatus(t, err, 409, "over budget")
+	_, err = s.reserve("parent", "res-p", pf, "p1", "deterministic", 41)
+	wantStatus(t, err, 409, "over budget")
+	if _, err := s.reserve("parent", "res-p", pf, "p1", "deterministic", 40); err != nil {
+		t.Fatal(err)
+	}
+	// The child spends inside its own total; the parent counts the child's total once, or what the
+	// child really used when that is more.
+	if _, err := s.reserve("child-a", "res-a", cf, "a1", "deterministic", 60); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.reserve("child-a", "res-a", cf, "a2", "deterministic", 1)
+	wantStatus(t, err, 409, "over budget")
+	if v := budgetOfNeed(t, s, "parent"); v.CommittedTokens != 100 || v.ChildrenTokens != 60 {
+		t.Fatalf("parent with a 60-token child: %+v, want 100 committed, 60 from children", v)
+	}
+	if _, err := s.settle("child-a", "res-a", "a1", usageOf(50, 20, 0, 0)); err != nil { // 70 used: an overrun
+		t.Fatal(err)
+	}
+	if v := budgetOfNeed(t, s, "child-a"); !v.Overrun || v.CommittedTokens != 70 {
+		t.Fatalf("child after an overrun: %+v", v)
+	}
+	if v := budgetOfNeed(t, s, "parent"); v.CommittedTokens != 110 || !v.Overrun || v.RemainingTokens != 0 {
+		t.Fatalf("parent after its child's overrun: %+v, want 110 committed, overrun", v)
+	}
+	// A parent outside this store, or one without a budget, is refused.
+	_, err = s.submit(budgetOf(clk, "orphan", 10, "elsewhere"))
+	wantStatus(t, err, 404, "unsupported")
+	_, err = s.submit(budgetOf(clk, "self", 10, "self"))
+	wantStatus(t, err, 404, "unsupported")
+	s.submit(submitOf(clk, "plain", time.Hour))
+	_, err = s.submit(budgetOf(clk, "under-plain", 10, "plain"))
+	wantStatus(t, err, 409, "no budget")
+}
+
+func TestNeedBudgetUnknownUsageKeepsTheReservation(t *testing.T) {
+	s, clk, _ := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	s.reserve("n1", "res-x", fence, "r1", "deterministic", 50)
+	unknown := needUsage{Unit: "tokens", Source: "fixture:deterministic", Unknown: true}
+	if _, err := s.settle("n1", "res-x", "r1", unknown); err != nil {
+		t.Fatal(err)
+	}
+	if v := budgetOfNeed(t, s, "n1"); v.UnknownTokens != 50 || v.CommittedTokens != 50 || v.RemainingTokens != 50 {
+		t.Fatalf("after an unknown usage: %+v, want the 50 still committed as unknown", v)
+	}
+	if r, err := s.settle("n1", "res-x", "r1", unknown); err != nil || !r.Duplicate {
+		t.Fatalf("unknown again: %+v %v, want a duplicate", r, err)
+	}
+	_, err := s.settle("n1", "res-x", "r1", usageOf(10, 0, 0, 0))
+	wantStatus(t, err, 409, "effects")
+	_, err = s.settle("n1", "res-y", "r1", usageOf(10, 0, 0, 0))
+	wantStatus(t, err, 409, "resolver")
+	known := usageOf(10, 0, 0, 0)
+	known.EffectsClarified = true
+	if _, err := s.settle("n1", "res-x", "r1", known); err != nil {
+		t.Fatal(err)
+	}
+	if v := budgetOfNeed(t, s, "n1"); v.UnknownTokens != 0 || v.SettledTokens != 10 || v.CommittedTokens != 10 {
+		t.Fatalf("after the clarified usage: %+v", v)
+	}
+	_, err = s.settle("n1", "res-x", "r1", unknown)
+	wantStatus(t, err, 409, "settled")
+}
+
+func TestNeedBudgetUsageCategoriesCountedOnce(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	s.reserve("n1", "res-x", fence, "r1", "deterministic", 50)
+	before, _ := os.ReadFile(path)
+	bad := map[string]needUsage{}
+	u := usageOf(1, 1, 1, 1)
+	u.InputTokens = i64(-1)
+	bad["negative"] = u
+	u = usageOf(1, 1, 1, 1)
+	u.CacheReadTokens = nil
+	bad["missing category"] = u
+	u = usageOf(1, 1, 1, 1)
+	u.OutputTokens = i64(maxNeedTokens + 1)
+	bad["over bound"] = u
+	u = usageOf(1, 1, 1, 1)
+	u.Unit = "characters"
+	bad["unit"] = u
+	u = usageOf(1, 1, 1, 1)
+	u.Source = ""
+	bad["no source"] = u
+	u = usageOf(1, 1, 1, 1)
+	u.Unknown = true
+	bad["unknown with counts"] = u
+	for name, u := range bad {
+		_, err := s.settle("n1", "res-x", "r1", u)
+		wantStatus(t, err, 400, "")
+		if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+			t.Fatalf("%s: a refused settle touched the file", name)
+		}
+	}
+	if _, err := s.settle("n1", "res-x", "r1", usageOf(10, 5, 3, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := s.settle("n1", "res-x", "r1", usageOf(10, 5, 3, 2)); err != nil || !r.Duplicate {
+		t.Fatalf("the same usage again: %+v %v", r, err)
+	}
+	_, err := s.settle("n1", "res-x", "r1", usageOf(20, 10, 6, 4)) // a cumulative total re-sent
+	wantStatus(t, err, 409, "settled")
+	if v := budgetOfNeed(t, s, "n1"); v.SettledTokens != 20 || v.CommittedTokens != 20 {
+		t.Fatalf("10+5+3+2 settled: %+v, want 20 counted once", v)
+	}
+	_, err = s.settle("n1", "res-x", "nope", usageOf(1, 0, 0, 0))
+	wantStatus(t, err, 404, "reservation")
+}
+
+func TestNeedBudgetModelRunnerIsUnsupported(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+	before, _ := os.ReadFile(path)
+	for _, runner := range []string{"model", "llm", ""} {
+		_, err := s.reserve("n1", "res-x", fence, "r1", runner, 10)
+		wantStatus(t, err, 501, "unsupported")
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("an unsupported runner touched the file")
+	}
+}
+
+func TestNeedBudgetCorruptRecordsAreUnknown(t *testing.T) {
+	cases := map[string]func(nf *needFile){
+		"reservation digest": func(nf *needFile) { nf.Needs[0].Reservations[0].Tokens = 99 },
+		"reservation state":  func(nf *needFile) { nf.Needs[0].Reservations[0].State = "free" },
+		"settled no usage":   func(nf *needFile) { nf.Needs[0].Reservations[0].State = "settled" },
+		"budget digest":      func(nf *needFile) { nf.Needs[0].Budget.TotalTokens = 1000 },
+		"missing parent":     func(nf *needFile) { nf.Needs = nf.Needs[1:] },
+		"child over parent":  func(nf *needFile) { nf.Needs[1].Budget.TotalTokens = 101 },
+	}
+	for name, corrupt := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, clk, path := newNeedTest(t)
+			fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
+			if _, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 10); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.submit(budgetOf(clk, "kid", 10, "n1")); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(path)
+			var nf needFile
+			if err := json.Unmarshal(b, &nf); err != nil {
+				t.Fatal(err)
+			}
+			corrupt(&nf)
+			b, _ = json.Marshal(nf)
+			os.WriteFile(path, b, 0o600)
+			_, err := newNeedStore(path, clk.now).status("kid", "", "", "")
+			wantStatus(t, err, 503, "unknown")
+		})
+	}
+}
+
+func TestNeedBudgetOverTheCLI(t *testing.T) {
+	dir := t.TempDir()
+	upPlane(t, dir)
+	sub := fmt.Sprintf(`{"id":"b1","kind":"capacity","requester":"task-a","incarnation":"i1","body":{"q":1},"deadline_ms":%d,"budget":{"total_tokens":100}}`,
+		time.Now().Add(time.Hour).UnixMilli())
+	if _, err := needCLI(t, dir, "submit", sub); err != nil {
+		t.Fatal(err)
+	}
+	c, err := needCLI(t, dir, "claim", `{"id":"b1","resolver":"res-x","lease_ms":60000}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserve := `{"id":"b1","resolver":"res-x","fence":%d,"reservation_id":"r1","runner":"%s","tokens":10}`
+	if _, err := needCLI(t, dir, "reserve", fmt.Sprintf(reserve, c.Claim.Fence, "model")); err == nil ||
+		!strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("a model runner over the CLI: %v, want unsupported", err)
+	}
+	if _, err := needCLI(t, dir, "reserve", fmt.Sprintf(reserve, c.Claim.Fence, "deterministic")); err != nil {
+		t.Fatal(err)
+	}
+	settle := `{"id":"b1","resolver":"res-x","reservation_id":"r1","usage":{"unit":"tokens","source":"fixture","input_tokens":%s,"output_tokens":3,"cache_write_tokens":2,"cache_read_tokens":1}}`
+	if _, err := needCLI(t, dir, "settle", fmt.Sprintf(settle, "1.5")); err == nil {
+		t.Fatal("a fractional count was accepted")
+	}
+	r, err := needCLI(t, dir, "settle", fmt.Sprintf(settle, "4"))
+	if err != nil || r.Budget == nil || r.Budget.SettledTokens != 10 || r.Budget.Enforcement != "accounting" {
+		t.Fatalf("settle over the CLI: %+v %v", r, err)
 	}
 }

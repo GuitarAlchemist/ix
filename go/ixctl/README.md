@@ -653,29 +653,62 @@ over the old one. The op answers only once the rename has returned.
 - When a rename fails, the op's outcome is unknown (503). The next op re-reads the file; nothing is
   replayed from memory.
 
-**No responder runs here, and no token budget exists.**
-- The need ops record a question and its answer. None of them starts or calls a responder: a
-  resolver is whatever process claims the need.
-- A need carries no token budget. A field asking for one (`token_budget`, or any other unknown
-  field) is refused with 400 before anything is written. A test pins this refusal, so no caller
-  is led to believe a responder's tokens are bounded.
-- A deadline bounds time, not tokens. When agents answer needs, a token budget is a future slice,
-  not implemented. Its required boundary:
-  - **Shared total.** One total per need, shared by its resolvers, their subagents and their
-    retries. It is derived from the parent's budget, and never raised.
-  - **No reset.** A resume, a renewed lease, a new claim or a retry leaves it as it was.
-  - **Admission, then reconciliation.** Tokens are reserved before a responder runs, and the
-    consumption is reconciled after it.
-    - An unknown consumption is not zero.
-    - Input, output, cache-write and cache-read are counted apart, each with its unit and its
-      source.
-    - A cumulative counter is never summed twice.
-  - **Enforced or estimated, never confused.**
-    - What a runtime or adapter enforces is kept apart from what is only estimated.
-    - An output cap is not a total cap.
-    - A provider that cannot enforce a hard cap gets a refused admission, or an explicit
-      `unsupported`: never a promise.
-  - **No authority.** A budget grants nothing.
+**No responder runs here.** The need ops record a question, its answer and its token accounts.
+None of them starts or calls a responder: a resolver is whatever process claims the need.
+
+### Token budget: accounting and admission, not a provider cap
+
+A deadline bounds time; a budget bounds tokens. They are separate limits, checked apart.
+
+```text
+ixctl need submit  --name desk < q.json   # ... "budget":{"total_tokens":1000}  (child: "parent":"<need id>")
+ixctl need reserve --name desk < v.json   # {"id","resolver","fence","reservation_id","runner":"deterministic","tokens"}
+ixctl need settle  --name desk < u.json   # {"id","resolver","reservation_id","usage":{...}}
+```
+
+- **One total per need.** It is in the need's digest. A resubmit with another total under the
+  same `id` is a 409. A retry, a restart, a renewed lease or a new claim never resets it.
+- **A child is carved from its parent.**
+  - A need submitted with `budget.parent` takes its total from what the parent has left, at
+    submit. When too little is left, the submit is a 409.
+  - The parent counts each child once: at the child's total, or at what the child really used
+    when that is more. A child's overrun shows on its parent too.
+  - The parent must be a budgeted need of the same store. A parent elsewhere is refused (404,
+    unsupported).
+- **Reserve before running.**
+  - Only the live claim's resolver and fence may reserve.
+  - A reservation is admitted only if the need's commitments leave room. Two concurrent
+    reservations cannot both take the last tokens.
+  - `reservation_id` makes a retry idempotent: the same content is a duplicate, other content
+    a 409.
+- **Settle after running.**
+  - A settle carries that run's own `usage`, never a running total: `unit` `tokens`, a `source`,
+    and four disjoint counts: `input_tokens` (without the cache), `output_tokens`,
+    `cache_write_tokens` and `cache_read_tokens`, each an integer from 0 to 2⁴⁰.
+  - The same usage again is a duplicate. Another usage is a 409, so a cumulative counter cannot
+    be counted twice.
+  - Negative, fractional, missing or oversized counts are refused before any write.
+  - A settle needs no live claim and no time before the deadline: consumption is a fact.
+- **Unknown is not zero.**
+  - A reservation not yet settled, or settled with `"unknown": true`, keeps all of its tokens
+    committed.
+  - Only a known usage with `"effects_clarified": true` replaces an unknown one.
+- **Committed tokens.** Committed = reserved + unknown + settled + children. Each reply shows
+  these, the remainder and any overrun.
+- **Durability.** Budgets and reservations live in the need's record and are written like
+  every transition. The tests crash a reserve and a settle at the rename and after it, then
+  reopen: nothing is reserved or credited twice.
+- **What is enforced.**
+  - `enforcement` is `accounting`. The plane admits or refuses reservations; it stops no runner
+    and enforces no provider's cap.
+  - `runner` must be `deterministic`. Any other value, such as `model`, is a 501
+    `unsupported`: no adapter here enforces a hard total cap, so a model run is refused rather
+    than promised a bound.
+  - No provider, model or API is wired. The tests use fixtures: they prove the accounting core,
+    not that a real model's consumption is bounded.
+- **No authority.** A root need's total is what its submitter declares, under the same bearer
+  token as every op, not an authenticated grant. A budget grants nothing.
+- An unknown field, such as `token_budget`, is refused with 400 before anything is written.
 
 ## Journal
 
