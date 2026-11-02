@@ -618,14 +618,16 @@ Each answers with the need at its `rev`, which every transition raises by one.
   its own `timeout_ms` passes first.
   - A timed-out or cancelled wait leaves the need as it was.
   - An expired need says nothing about the task, or about effects already made.
-- **Status** shows the state, claim and resolution to anyone with the token. It shows the `answer`
-  only to the requester and incarnation that asked.
+- **Status** shows the state, claim and resolution to anyone with the token.
+  - The question (`body`) goes to the requester and incarnation that asked, and to the resolver
+    holding a live claim: the claim reply carries it, as does `status` with `resolver`.
+  - The `answer` goes only to the requester and incarnation that asked.
 
 **Identities are declared, not authenticated.**
 - `requester`, `incarnation` and `resolver` are names the caller declares. The plane does not
   authenticate them.
-- Everyone who holds the plane's bearer token is trusted alike. Restricting the answer to the asker
-  is correlation within one trusted owner, not isolation.
+- Everyone who holds the plane's bearer token is trusted alike. Restricting the question and the
+  answer as above is correlation within one trusted owner, not isolation.
 
 **An `authorization` need grants nothing.**
 - It is a record for the asker's own checks, never a permission.
@@ -634,9 +636,13 @@ Each answers with the need at its `rev`, which every transition raises by one.
 
 **Durability.** Every transition writes the whole file to a temporary, syncs it, then renames it
 over the old one. The op answers only once the rename has returned.
-- A crash of the plane leaves the previous state or the new one.
-- A power loss is not covered: `os.Rename` promises no atomicity off Unix, and nothing here syncs
-  the directory.
+- The tests interrupt a write before the rename, at it, and after it. In each case a reopen finds
+  the previous state or the committed one, or answers `unknown`.
+  - A commit whose reply was lost is found on reopen, and a retried answer is refused.
+  - These are injected interruptions: they prove the model, not the OS.
+- Not covered: a power loss, and the rename's own atomicity on Windows. `os.Rename` promises no
+  atomicity off Unix, and nothing here syncs the directory. When a reopen cannot tell, it answers
+  `unknown` (fail-closed), never an empty store.
 - Every need op answers 503 `unknown` until the file is reconciled when the file:
   - cannot be read;
   - breaks the records' invariants;

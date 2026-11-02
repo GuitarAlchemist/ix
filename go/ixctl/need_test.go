@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -64,7 +65,7 @@ func TestNeedRestartKeepsDeadlineClaimAndFence(t *testing.T) {
 	}
 
 	s2 := newNeedStore(path, clk.now) // the plane restarted: same file, same clock
-	r, err := s2.status("n1", "task-a", "inc-1")
+	r, err := s2.status("n1", "task-a", "inc-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestNeedRestartKeepsDeadlineClaimAndFence(t *testing.T) {
 	// The deadline is not extended either: past it, the need is expired, its rev moved once.
 	clk.add(time.Hour)
 	s3 := newNeedStore(path, clk.now)
-	r, err = s3.status("n1", "task-a", "inc-1")
+	r, err = s3.status("n1", "task-a", "inc-1", "")
 	if err != nil || r.State != "expired" || r.DeadlineMS != sub.DeadlineMS || r.Rev != c2.Rev+1 {
 		t.Fatalf("past the deadline: %+v %v, want expired at the same deadline, rev %d", r, err, c2.Rev+1)
 	}
@@ -176,12 +177,12 @@ func TestNeedResolutionCorrelatedRefusedAndLate(t *testing.T) {
 	if _, err := s.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"port":8080}`)); err != nil {
 		t.Fatal(err)
 	}
-	mine, err := s.status("n1", "task-a", "inc-1")
+	mine, err := s.status("n1", "task-a", "inc-1", "")
 	if err != nil || string(mine.Answer) != `{"port":8080}` || mine.Resolution == nil || mine.Resolution.Fence != c.Claim.Fence {
 		t.Fatalf("requester's status: %+v %v", mine, err)
 	}
 	for _, who := range [][2]string{{"task-b", "inc-1"}, {"task-a", "inc-2"}} {
-		r, err := s.status("n1", who[0], who[1])
+		r, err := s.status("n1", who[0], who[1], "")
 		if err != nil || r.State != "resolved" || r.Answer != nil {
 			t.Fatalf("status for %v: %+v %v, want the state without the answer", who, r, err)
 		}
@@ -204,7 +205,7 @@ func TestNeedResolutionCorrelatedRefusedAndLate(t *testing.T) {
 	clk.add(2 * time.Minute)
 	_, err = s.resolve("n3", "resolver-x", c3.Claim.Fence, json.RawMessage(`{"port":1}`))
 	wantStatus(t, err, 409, "expired")
-	r, _ = s.status("n3", "task-a", "inc-1")
+	r, _ = s.status("n3", "task-a", "inc-1", "")
 	if r.State != "expired" || r.Answer != nil {
 		t.Fatalf("late answer: %+v, want expired without answer", r)
 	}
@@ -224,7 +225,7 @@ func TestNeedWaitTimeoutIsNotExpiryNorCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled wait: %v, want context.Canceled", err)
 	}
-	if r, _ := s.status("n1", "task-a", "inc-1"); r.State != "open" {
+	if r, _ := s.status("n1", "task-a", "inc-1", ""); r.State != "open" {
 		t.Fatalf("after a cancelled wait the need is %q, want open", r.State)
 	}
 
@@ -283,7 +284,7 @@ func TestNeedInvalidRefusedBeforeEffect(t *testing.T) {
 	wantStatus(t, err, 400, "answer")
 	_, err = s.refuse("n1", "resolver-x", c.Claim.Fence, strings.Repeat("r", maxNeedReason+1))
 	wantStatus(t, err, 400, "reason")
-	if r, _ := s.status("n1", "task-a", "inc-1"); r.State != "claimed" || r.Rev != c.Rev {
+	if r, _ := s.status("n1", "task-a", "inc-1", ""); r.State != "claimed" || r.Rev != c.Rev {
 		t.Fatalf("refused answers moved the need: %+v", r)
 	}
 }
@@ -380,8 +381,8 @@ func TestNeedCLIOverARealPlaneSurvivesRestart(t *testing.T) {
 		t.Fatalf("short wait: %+v %v", w, err)
 	}
 	c, err := needCLI(t, dir, "claim", `{"id":"port-q","resolver":"res-x","lease_ms":60000}`)
-	if err != nil || c.Claim == nil {
-		t.Fatalf("claim: %+v %v", c, err)
+	if err != nil || c.Claim == nil || string(c.Body) != `{"q":"port"}` {
+		t.Fatalf("claim: %+v %v, want the question in the winner's reply", c, err)
 	}
 	stop() // the plane goes down with the need claimed
 
@@ -390,7 +391,17 @@ func TestNeedCLIOverARealPlaneSurvivesRestart(t *testing.T) {
 	if err != nil || s.State != "claimed" || s.DeadlineMS != deadline || s.Claim.Fence != c.Claim.Fence || s.Rev != c.Rev {
 		t.Fatalf("after restart: %+v %v, want the claim and deadline kept", s, err)
 	}
-	if _, err := needCLI(t, dir, "resolve", fmt.Sprintf(`{"id":"port-q","resolver":"res-x","fence":%d,"answer":{"port":8080}}`, c.Claim.Fence)); err != nil {
+	// The resolver, restarted too, reads the question from the plane and answers from it alone.
+	h, err := needCLI(t, dir, "status", `{"id":"port-q","resolver":"res-x"}`)
+	var q struct{ Q string }
+	if err != nil || json.Unmarshal(h.Body, &q) != nil || q.Q == "" || h.Answer != nil {
+		t.Fatalf("holder's status: %+v %v, want the question and no answer", h, err)
+	}
+	if o, _ := needCLI(t, dir, "status", `{"id":"port-q","resolver":"res-y"}`); o.Body != nil {
+		t.Fatalf("a resolver without the claim read the question: %s", o.Body)
+	}
+	answer := fmt.Sprintf(`{%q:8080}`, q.Q)
+	if _, err := needCLI(t, dir, "resolve", fmt.Sprintf(`{"id":"port-q","resolver":"res-x","fence":%d,"answer":%s}`, h.Claim.Fence, answer)); err != nil {
 		t.Fatal(err)
 	}
 	w, err = needCLI(t, dir, "wait", `{"id":"port-q","requester":"task-a","incarnation":"inc-1","timeout_ms":5000}`)
@@ -413,11 +424,11 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 		s.failTemp = errors.New("disk full")
 		_, err := s.claim("n1", "resolver-x", 60_000)
 		wantStatus(t, err, 500, "not persisted")
-		r, _ := s.status("n1", "task-a", "inc-1")
+		r, _ := s.status("n1", "task-a", "inc-1", "")
 		if r.State != "open" {
 			t.Fatalf("after a failed write the need is %q, want open", r.State)
 		}
-		if r, _ := newNeedStore(path, clk.now).status("n1", "task-a", "inc-1"); r.State != "open" {
+		if r, _ := newNeedStore(path, clk.now).status("n1", "task-a", "inc-1", ""); r.State != "open" {
 			t.Fatalf("reopened: %q, want open", r.State)
 		}
 	})
@@ -428,7 +439,7 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 		_, err := s.claim("n1", "resolver-x", 60_000)
 		wantStatus(t, err, 503, "unknown")
 		s.failRename = nil
-		r, err := s.status("n1", "task-a", "inc-1")
+		r, err := s.status("n1", "task-a", "inc-1", "")
 		if err != nil || r.State != "open" || r.Rev != 1 {
 			t.Fatalf("after reconcile: %+v %v, want the disk's open rev 1 (the claim not replayed)", r, err)
 		}
@@ -439,7 +450,7 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 		s := newNeedStore(path, clk.now)
 		_, err := s.submit(submitOf(clk, "n1", time.Hour))
 		wantStatus(t, err, 503, "unknown")
-		_, err = s.status("n1", "task-a", "inc-1")
+		_, err = s.status("n1", "task-a", "inc-1", "")
 		wantStatus(t, err, 503, "unknown")
 		if b, _ := os.ReadFile(path); string(b) != `{"schema":"ixctl-needs/0","needs":[{` {
 			t.Fatalf("the unreadable file was rewritten: %q", b)
@@ -465,6 +476,11 @@ func TestNeedCorruptRecordsAreUnknownNotPanic(t *testing.T) {
 		"resolution unbound":      func(f *needFile) { f.Needs[0].Resolution.Fence = 99 },
 		"deadline before created": func(f *needFile) { f.Needs[0].DeadlineMS = f.Needs[0].CreatedMS },
 		"rev zero":                func(f *needFile) { f.Needs[0].Rev = 0 },
+		"resolution at zero":      func(f *needFile) { f.Needs[0].Resolution.AtMS = 0 },
+		"resolution past deadline": func(f *needFile) {
+			f.Needs[0].Resolution.AtMS, f.Needs[0].Claim.LeaseUntilMS = f.Needs[0].DeadlineMS, f.Needs[0].DeadlineMS+1
+		},
+		"resolution past lease": func(f *needFile) { f.Needs[0].Resolution.AtMS = f.Needs[0].Claim.LeaseUntilMS },
 	}
 	for name, edit := range edits {
 		t.Run(name, func(t *testing.T) {
@@ -477,7 +493,7 @@ func TestNeedCorruptRecordsAreUnknownNotPanic(t *testing.T) {
 			os.WriteFile(path, b, 0o600)
 			s := newNeedStore(path, clk.now)
 			for _, op := range []func() error{
-				func() error { _, err := s.status("n1", "task-a", "inc-1"); return err },
+				func() error { _, err := s.status("n1", "task-a", "inc-1", ""); return err },
 				func() error { _, err := s.claim("n1", "resolver-y", 60_000); return err },
 				func() error { _, err := s.resolve("n1", "resolver-x", 1, json.RawMessage(`{}`)); return err },
 			} {
@@ -490,7 +506,7 @@ func TestNeedCorruptRecordsAreUnknownNotPanic(t *testing.T) {
 	}
 	t.Run("over the byte bound", func(t *testing.T) {
 		os.WriteFile(path, bytes.Repeat([]byte(" "), maxNeedsFile+1), 0o600)
-		_, err := newNeedStore(path, clk.now).status("n1", "task-a", "inc-1")
+		_, err := newNeedStore(path, clk.now).status("n1", "task-a", "inc-1", "")
 		wantStatus(t, err, 503, "over")
 	})
 }
@@ -588,5 +604,134 @@ func TestNeedEntryPointsLockAuthAndNoForward(t *testing.T) {
 	r, err := needCLI(t, dir, "status", `{"id":"q1","requester":"task-b","incarnation":"i1"}`)
 	if err != nil || r.Answer != nil {
 		t.Fatalf("status for another requester: %+v %v", r, err)
+	}
+}
+
+// timeout_ms is bounded before it becomes a duration, at the plane's entry point and in the CLI
+// (before any dial): huge values must not wrap into a short or negative wait.
+func TestNeedWaitTimeoutBoundedBeforeConversion(t *testing.T) {
+	p, err := NewPlane(&Spec{Name: "x"}, "x", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetNeedStore(filepath.Join(t.TempDir(), "x.needs.json"))
+	ctx := context.Background()
+	if _, err := p.Request(ctx, Request{Op: "need.submit", Need: &needOp{ID: "n1", Kind: "information", Requester: "a",
+		Incarnation: "i", Body: json.RawMessage(`{}`), DeadlineMS: time.Now().Add(time.Hour).UnixMilli()}}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	for _, ms := range []int64{18446744073710, 9223372036856, 0, -1, maxNeedLease.Milliseconds() + 1} {
+		_, err := p.Request(ctx, Request{Op: "need.wait", Need: &needOp{ID: "n1", Requester: "a", Incarnation: "i", TimeoutMS: ms}})
+		wantStatus(t, err, 400, "timeout_ms")
+		err = cmdNeed([]string{"wait", "--state", filepath.Join(t.TempDir(), "none"), "--name", "x"},
+			strings.NewReader(fmt.Sprintf(`{"id":"n1","timeout_ms":%d}`, ms)), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "timeout_ms") {
+			t.Fatalf("CLI wait with timeout_ms %d: %v, want refused before any dial", ms, err)
+		}
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("refusals took %s: one of them waited", d)
+	}
+}
+
+// The single writer is the instance lock: a plane in another process holds it, a second `up`
+// on the same state dir is refused, and a crash (a kill, no shutdown) releases it to the OS;
+// the next plane finds the needs, their claim and fence as committed.
+func TestNeedSingleWriterAcrossProcessesAndCrash(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.json")
+	if err := os.WriteFile(specPath, []byte(`{"name":"need-up","services":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(testExe(t), "up", "--state", filepath.Join(dir, "state"), specPath)
+	cmd.Env = append(os.Environ(), "IXCTL_TEST_ROLE=main")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	if _, err := bufio.NewReader(out).ReadString('\n'); err != nil {
+		t.Fatalf("child plane ready line: %v", err)
+	}
+	go io.Copy(io.Discard, out)
+
+	sub := fmt.Sprintf(`{"id":"q1","kind":"information","requester":"task-a","incarnation":"i1","body":{"q":1},"deadline_ms":%d}`,
+		time.Now().Add(time.Hour).UnixMilli())
+	if _, err := needCLI(t, dir, "submit", sub); err != nil {
+		t.Fatal(err)
+	}
+	c, err := needCLI(t, dir, "claim", `{"id":"q1","resolver":"res-x","lease_ms":60000}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdUp([]string{"--state", filepath.Join(dir, "state"), specPath}, io.Discard); err == nil ||
+		!strings.Contains(err.Error(), "already") {
+		t.Fatalf("an up beside another process's plane: %v, want refused", err)
+	}
+	if err := cmd.Process.Kill(); err != nil { // a crash: no shutdown, no cleanup
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	upPlane(t, dir) // this process now: the OS released the lock
+	s, err := needCLI(t, dir, "status", `{"id":"q1","requester":"task-a","incarnation":"i1"}`)
+	if err != nil || s.State != "claimed" || s.Claim.Fence != c.Claim.Fence || s.Rev != c.Rev {
+		t.Fatalf("after the crash: %+v %v, want claimed with fence %d rev %d", s, err, c.Claim.Fence, c.Rev)
+	}
+}
+
+// Committed on disk, the result lost before memory and reply (a crash right after the rename,
+// injected): a reopen sees the new revision, fence and answer, and a retried answer is refused.
+// This is the model's proof, not a proof of the OS's rename or of a power loss.
+func TestNeedResultLostAfterRenameIsNotAnsweredTwice(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	s.submit(submitOf(clk, "n1", time.Hour))
+	c, _ := s.claim("n1", "resolver-x", 60_000)
+	s.failAfterRename = errors.New("crash after commit")
+	_, err := s.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"port":1}`))
+	wantStatus(t, err, 503, "unknown")
+
+	re := newNeedStore(path, clk.now)
+	r, err := re.status("n1", "task-a", "inc-1", "")
+	if err != nil || r.State != "resolved" || r.Rev != c.Rev+1 || r.Resolution.Fence != c.Claim.Fence || string(r.Answer) != `{"port":1}` {
+		t.Fatalf("reopened: %+v %v, want the committed resolution", r, err)
+	}
+	_, err = re.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"port":2}`))
+	wantStatus(t, err, 409, "resolved")
+	s.failAfterRename = nil
+	if r, err := s.status("n1", "task-a", "inc-1", ""); err != nil || r.State != "resolved" {
+		t.Fatalf("the same store after reconcile: %+v %v", r, err)
+	}
+}
+
+// The question goes to the asker and to the resolver holding the claim, nobody else; the answer
+// only to the asker.
+func TestNeedQuestionGoesToAskerAndHolderOnly(t *testing.T) {
+	s, clk, _ := newNeedTest(t)
+	sub := submitOf(clk, "n1", time.Hour)
+	a, _ := s.submit(sub)
+	if string(a.Body) != string(sub.Body) {
+		t.Fatalf("submit reply body %s", a.Body)
+	}
+	c, _ := s.claim("n1", "resolver-x", 60_000)
+	if string(c.Body) != string(sub.Body) {
+		t.Fatalf("claim winner got body %s, want the question", c.Body)
+	}
+	if r, _ := s.status("n1", "", "", "resolver-x"); string(r.Body) != string(sub.Body) || r.Answer != nil {
+		t.Fatalf("holder's status: body %s answer %s", r.Body, r.Answer)
+	}
+	if r, _ := s.status("n1", "task-b", "inc-1", "resolver-y"); r.Body != nil {
+		t.Fatalf("a stranger read the question: %s", r.Body)
+	}
+	r, _ := s.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"ok":1}`))
+	if r.Body != nil || r.Answer != nil {
+		t.Fatalf("resolve reply carries body %s answer %s", r.Body, r.Answer)
+	}
+	if r, _ := s.status("n1", "", "", "resolver-x"); r.Body != nil {
+		t.Fatalf("the holder still reads the question after the need ended: %s", r.Body)
 	}
 }

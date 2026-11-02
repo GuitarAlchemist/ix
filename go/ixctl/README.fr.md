@@ -658,14 +658,17 @@ bearer. Chacune répond avec le besoin à sa `rev`, que chaque transition augmen
   `timeout_ms` passe d'abord.
   - Une attente expirée ou annulée laisse le besoin tel quel.
   - Un besoin expiré ne dit rien de la tâche, ni des effets déjà produits.
-- **Status** montre l'état, la prise en charge et la résolution à tout détenteur du jeton. Il ne
-  montre la `answer` qu'au requester et à l'incarnation qui ont posé le besoin.
+- **Status** montre l'état, la prise en charge et la résolution à tout détenteur du jeton.
+  - La question (`body`) va au requester et à l'incarnation qui l'ont posée, et au répondant qui
+    détient une prise en charge vivante : la réponse au claim la porte, de même que `status` avec
+    `resolver`.
+  - La `answer` ne va qu'au requester et à l'incarnation qui ont posé le besoin.
 
 **Les identités sont déclarées, pas authentifiées.**
 - `requester`, `incarnation` et `resolver` sont des noms que l'appelant déclare. Le plan ne les
   authentifie pas.
-- Tout détenteur du jeton bearer du plan a la même confiance. Réserver la réponse au demandeur est
-  une corrélation chez un seul propriétaire de confiance, pas une isolation.
+- Tout détenteur du jeton bearer du plan a la même confiance. Réserver la question et la réponse
+  comme ci-dessus est une corrélation chez un seul propriétaire de confiance, pas une isolation.
 
 **Un besoin `authorization` n'accorde rien.**
 - C'est un enregistrement pour les propres contrôles du demandeur, jamais une permission.
@@ -674,9 +677,14 @@ bearer. Chacune répond avec le besoin à sa `rev`, que chaque transition augmen
 
 **Durabilité.** Chaque transition écrit le fichier entier dans un temporaire, le synchronise, puis
 le renomme par-dessus l'ancien. L'op ne répond qu'une fois le renommage revenu.
-- Un crash du plan laisse l'état précédent ou le nouveau.
-- Une coupure de courant n'est pas couverte : `os.Rename` ne promet pas d'atomicité hors Unix, et
-  rien ici ne synchronise le dossier.
+- Les tests interrompent une écriture avant le renommage, pendant, et après. Dans chaque cas, une
+  réouverture trouve l'état précédent ou l'état committé, ou répond `unknown`.
+  - Un commit dont la réponse s'est perdue est retrouvé à la réouverture, et une réponse rejouée est
+    refusée.
+  - Ce sont des interruptions injectées : elles prouvent le modèle, pas le système d'exploitation.
+- Non couvert : une coupure de courant, et l'atomicité du renommage lui-même sous Windows.
+  `os.Rename` ne promet pas d'atomicité hors Unix, et rien ici ne synchronise le dossier. Quand une
+  réouverture ne peut pas trancher, elle répond `unknown` (fail-closed), jamais un magasin vide.
 - Chaque op need répond 503 `unknown` jusqu'à réconciliation quand le fichier :
   - est illisible ;
   - enfreint les invariants des enregistrements ;

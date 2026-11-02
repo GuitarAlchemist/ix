@@ -95,8 +95,8 @@ type needFile struct {
 	Needs  []*need `json:"needs"`
 }
 
-// needReply is what every op answers: the need's state at its revision. The body is never in
-// it; the answer only for the asker.
+// needReply is what every op answers: the need's state at its revision. The body (the question)
+// goes to the asker and to the resolver holding the claim; the answer only to the asker.
 type needReply struct {
 	ID         string          `json:"id"`
 	Rev        uint64          `json:"rev"`
@@ -109,6 +109,7 @@ type needReply struct {
 	DeadlineMS int64           `json:"deadline_ms"`
 	Claim      *needClaim      `json:"claim,omitempty"`
 	Resolution *needResolution `json:"resolution,omitempty"`
+	Body       json.RawMessage `json:"body,omitempty"`
 	Answer     json.RawMessage `json:"answer,omitempty"`
 	Reason     string          `json:"reason,omitempty"`
 }
@@ -123,7 +124,8 @@ type needStore struct {
 	unknown string        // non-empty: the file's state is not known; ops reconcile first
 	wake    chan struct{} // closed and replaced on every adopted transition
 
-	failTemp, failRename error // tests: interrupt a write before or at the rename
+	// Tests: interrupt a write before the rename, at it, or after it (committed, result lost).
+	failTemp, failRename, failAfterRename error
 }
 
 // newNeedStore opens the store at path; it never fails, an unreadable file makes it unknown.
@@ -206,7 +208,7 @@ func checkNeed(n *need, fileFence uint64, fences map[uint64]bool) error {
 		return fmt.Errorf("rev, created_ms or deadline_ms out of bounds")
 	}
 	if c := n.Claim; c != nil {
-		if !partyRE.MatchString(c.Resolver) || c.Fence == 0 || c.Fence > fileFence || fences[c.Fence] || c.LeaseUntilMS <= 0 {
+		if !partyRE.MatchString(c.Resolver) || c.Fence == 0 || c.Fence > fileFence || fences[c.Fence] || c.LeaseUntilMS <= n.CreatedMS {
 			return fmt.Errorf("bad claim")
 		}
 		fences[c.Fence] = true
@@ -214,6 +216,11 @@ func checkNeed(n *need, fileFence uint64, fences map[uint64]bool) error {
 	answered := n.Resolution != nil
 	if answered && (n.Claim == nil || n.Resolution.Resolver != n.Claim.Resolver || n.Resolution.Fence != n.Claim.Fence) {
 		return fmt.Errorf("resolution not bound to the claim")
+	}
+	// An answer is only ever written after the need's creation, before its deadline and inside
+	// its lease: a resolution dated otherwise was not written by an op.
+	if r := n.Resolution; answered && (r.AtMS < n.CreatedMS || r.AtMS >= n.DeadlineMS || r.AtMS >= n.Claim.LeaseUntilMS) {
+		return fmt.Errorf("resolution at_ms outside the need's life or its lease")
 	}
 	var ok bool
 	switch n.State {
@@ -281,8 +288,11 @@ func (s *needStore) commit(i int, next *need, fence uint64) error {
 	if err == nil {
 		err = os.Rename(tmp, s.path)
 	}
+	if err == nil {
+		err = s.failAfterRename // committed on disk, the result lost before memory and reply
+	}
 	if err != nil {
-		s.unknown = "write interrupted at rename: " + err.Error()
+		s.unknown = "write interrupted at or after rename: " + err.Error()
 		return &opError{status: 503, msg: "need state unknown after an interrupted write; the next op reconciles from disk"}
 	}
 	s.needs, s.fence = list, fence
@@ -336,9 +346,14 @@ func (s *needStore) get(id string) (int, *need, error) {
 	return i, n, err
 }
 
-func reply(n *need, asker bool) needReply {
+// reply shows the need; the question (body) to its asker or its claim holder, the answer only
+// to its asker. Both are declared names (see the README): correlation, not authentication.
+func reply(n *need, asker, holder bool) needReply {
 	r := needReply{ID: n.ID, Rev: n.Rev, State: n.State, Kind: n.Kind, Digest: n.Digest, CreatedMS: n.CreatedMS,
 		DeadlineMS: n.DeadlineMS, Claim: n.Claim, Resolution: n.Resolution, Reason: n.Reason}
+	if asker || holder {
+		r.Body = n.Body
+	}
 	if asker {
 		r.Answer = n.Answer
 	}
@@ -387,7 +402,7 @@ func (s *needStore) submit(r needSubmit) (needReply, error) {
 		if err != nil {
 			return needReply{}, err
 		}
-		rep := reply(n, true)
+		rep := reply(n, true, false)
 		rep.Duplicate = true
 		return rep, nil
 	}
@@ -403,17 +418,19 @@ func (s *needStore) submit(r needSubmit) (needReply, error) {
 	if err := s.commit(-1, n, s.fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(n, true), nil
+	return reply(n, true, false), nil
 }
 
-func (s *needStore) status(id, requester, incarnation string) (needReply, error) {
+// status shows the need; resolver, when it names the claim holder, gets the question too.
+func (s *needStore) status(id, requester, incarnation, resolver string) (needReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, n, err := s.get(id)
 	if err != nil {
 		return needReply{}, err
 	}
-	return reply(n, n.Requester == requester && n.Incarnation == incarnation), nil
+	holder := resolver != "" && n.Claim != nil && n.Claim.Resolver == resolver && !n.terminal()
+	return reply(n, n.Requester == requester && n.Incarnation == incarnation, holder), nil
 }
 
 func (s *needStore) claim(id, resolver string, leaseMS int64) (needReply, error) {
@@ -445,7 +462,7 @@ func (s *needStore) claim(id, resolver string, leaseMS int64) (needReply, error)
 	if err := s.commit(i, &next, fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(&next, false), nil
+	return reply(&next, false, true), nil
 }
 
 // answerable checks that resolver holds the live claim fenced by fence.
@@ -488,7 +505,7 @@ func (s *needStore) resolve(id, resolver string, fence uint64, answer json.RawMe
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(&next, false), nil
+	return reply(&next, false, false), nil
 }
 
 func (s *needStore) refuse(id, resolver string, fence uint64, reason string) (needReply, error) {
@@ -507,7 +524,7 @@ func (s *needStore) refuse(id, resolver string, fence uint64, reason string) (ne
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
-	return reply(&next, false), nil
+	return reply(&next, false, false), nil
 }
 
 // wait returns once the need is terminal (outcome = its state) or after timeout (outcome
@@ -528,7 +545,7 @@ func (s *needStore) wait(ctx context.Context, id, requester, incarnation string,
 		if err != nil {
 			return needReply{}, err
 		}
-		r := reply(n, n.Requester == requester && n.Incarnation == incarnation)
+		r := reply(n, n.Requester == requester && n.Incarnation == incarnation, false)
 		if n.terminal() {
 			r.Outcome = n.State
 			return r, nil
@@ -582,7 +599,7 @@ func (p *Plane) needRequest(ctx context.Context, req Request) (any, error) {
 		return p.needs.submit(needSubmit{ID: o.ID, Kind: o.Kind, Requester: o.Requester, Incarnation: o.Incarnation,
 			Body: o.Body, DeadlineMS: o.DeadlineMS})
 	case "need.status":
-		return p.needs.status(o.ID, o.Requester, o.Incarnation)
+		return p.needs.status(o.ID, o.Requester, o.Incarnation, o.Resolver)
 	case "need.claim":
 		return p.needs.claim(o.ID, o.Resolver, o.LeaseMS)
 	case "need.resolve":
@@ -591,6 +608,10 @@ func (p *Plane) needRequest(ctx context.Context, req Request) (any, error) {
 		return p.needs.refuse(o.ID, o.Resolver, o.Fence, o.Reason)
 	}
 	// need.wait holds a waiter slot like wait does, and ends with the plane.
+	timeout, err := needTimeout(o.TimeoutMS)
+	if err != nil {
+		return nil, err
+	}
 	select {
 	case <-p.quit:
 		return nil, &opError{status: 503, msg: "shutting down"}
@@ -605,11 +626,20 @@ func (p *Plane) needRequest(ctx context.Context, req Request) (any, error) {
 		stop()
 		cancel()
 	}()
-	r, err := p.needs.wait(wctx, o.ID, o.Requester, o.Incarnation, time.Duration(o.TimeoutMS)*time.Millisecond)
+	r, err := p.needs.wait(wctx, o.ID, o.Requester, o.Incarnation, timeout)
 	if err != nil && p.stopping.Err() != nil {
 		return nil, &opError{status: 503, msg: "shutting down"}
 	}
 	return r, err
+}
+
+// needTimeout bounds a wait's timeout_ms before it becomes a duration: a huge value must be
+// refused, not wrapped by the multiplication into a small or negative one.
+func needTimeout(ms int64) (time.Duration, error) {
+	if ms < 1 || ms > maxNeedLease.Milliseconds() {
+		return 0, badRequest("timeout_ms must be 1 to %d", maxNeedLease.Milliseconds())
+	}
+	return time.Duration(ms) * time.Millisecond, nil
 }
 
 // cmdNeed is `ixctl need <op> [--state DIR] --name NAME`: the op's JSON body on stdin, sent to
@@ -636,13 +666,17 @@ func cmdNeed(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err := decodeStrict(io.LimitReader(stdin, 1<<20), &o); err != nil {
 		return fmt.Errorf("need %s: stdin: %v", op, err)
 	}
+	bound := 30 * time.Second
+	if op == "wait" {
+		timeout, err := needTimeout(o.TimeoutMS)
+		if err != nil {
+			return fmt.Errorf("need wait: %v", err)
+		}
+		bound += timeout
+	}
 	st, err := readStateFile(filepath.Join(*state, *name+".json"))
 	if err != nil {
 		return fmt.Errorf("need %s: %v", op, err)
-	}
-	bound := 30 * time.Second
-	if op == "wait" {
-		bound += time.Duration(o.TimeoutMS) * time.Millisecond
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
