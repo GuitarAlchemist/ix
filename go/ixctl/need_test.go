@@ -565,6 +565,31 @@ func TestNeedFailedRenameAdoptsNothing(t *testing.T) {
 
 // At the real entry points: a second plane on the same state dir is refused (the instance lock
 // keeps one writer of the needs file), a need op needs the bearer, and none is forwarded.
+// A need carries no token budget: a field asking for one is refused before anything is written,
+// never silently dropped, so no caller can believe a responder's tokens are bounded.
+func TestNeedTokenBudgetIsRefusedNotIgnored(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := upPlane(t, dir)
+	sub := fmt.Sprintf(`{"id":"budget-q","kind":"information","requester":"task-a","incarnation":"i1","body":{},"deadline_ms":%d,"token_budget":{"total":1000}}`,
+		time.Now().Add(time.Hour).UnixMilli())
+	if _, err := needCLI(t, dir, "submit", sub); err == nil || !strings.Contains(err.Error(), "token_budget") {
+		t.Fatalf("CLI submit with a token budget: %v, want refused naming the field", err)
+	}
+	req, _ := http.NewRequest("POST", "http://"+st.Addr+"/v1/need/submit", strings.NewReader(sub))
+	req.Header.Set("Authorization", "Bearer "+st.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("HTTP submit with a token budget: %d, want 400", resp.StatusCode)
+	}
+	if _, err := needCLI(t, dir, "status", `{"id":"budget-q"}`); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("status after the refusals: %v, want not found", err)
+	}
+}
+
 func TestNeedEntryPointsLockAuthAndNoForward(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := upPlane(t, dir)
@@ -733,5 +758,29 @@ func TestNeedQuestionGoesToAskerAndHolderOnly(t *testing.T) {
 	}
 	if r, _ := s.status("n1", "", "", "resolver-x"); r.Body != nil {
 		t.Fatalf("the holder still reads the question after the need ended: %s", r.Body)
+	}
+}
+
+// A lapsed lease ends the right to read the question, before the deadline and with no reclaim:
+// the claim is still on record, but it is no longer live. The asker still reads it.
+func TestNeedQuestionHiddenFromTheHolderOnceItsLeaseLapses(t *testing.T) {
+	s, clk, _ := newNeedTest(t)
+	sub := submitOf(clk, "n1", time.Hour)
+	s.submit(sub)
+	s.claim("n1", "resolver-x", 60_000)
+	clk.add(59 * time.Second)
+	if r, _ := s.status("n1", "", "", "resolver-x"); string(r.Body) != string(sub.Body) {
+		t.Fatalf("holder inside its lease: body %s, want the question", r.Body)
+	}
+	clk.add(time.Second) // now == LeaseUntilMS: the lease has lapsed, the deadline is 59 min away
+	r, err := s.status("n1", "", "", "resolver-x")
+	if err != nil || r.State != "claimed" || r.Claim == nil || r.Claim.Resolver != "resolver-x" {
+		t.Fatalf("status after the lease: %+v %v, want the lapsed claim still on record", r, err)
+	}
+	if r.Body != nil {
+		t.Fatalf("the ex-holder still reads the question after its lease lapsed: %s", r.Body)
+	}
+	if r, _ := s.status("n1", "task-a", "inc-1", ""); string(r.Body) != string(sub.Body) {
+		t.Fatalf("the asker after the lease: body %s, want the question", r.Body)
 	}
 }

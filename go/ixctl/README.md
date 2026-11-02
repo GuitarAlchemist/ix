@@ -653,6 +653,30 @@ over the old one. The op answers only once the rename has returned.
 - When a rename fails, the op's outcome is unknown (503). The next op re-reads the file; nothing is
   replayed from memory.
 
+**No responder runs here, and no token budget exists.**
+- The need ops record a question and its answer. None of them starts or calls a responder: a
+  resolver is whatever process claims the need.
+- A need carries no token budget. A field asking for one (`token_budget`, or any other unknown
+  field) is refused with 400 before anything is written. A test pins this refusal, so no caller
+  is led to believe a responder's tokens are bounded.
+- A deadline bounds time, not tokens. When agents answer needs, a token budget is a future slice,
+  not implemented. Its required boundary:
+  - **Shared total.** One total per need, shared by its resolvers, their subagents and their
+    retries. It is derived from the parent's budget, and never raised.
+  - **No reset.** A resume, a renewed lease, a new claim or a retry leaves it as it was.
+  - **Admission, then reconciliation.** Tokens are reserved before a responder runs, and the
+    consumption is reconciled after it.
+    - An unknown consumption is not zero.
+    - Input, output, cache-write and cache-read are counted apart, each with its unit and its
+      source.
+    - A cumulative counter is never summed twice.
+  - **Enforced or estimated, never confused.**
+    - What a runtime or adapter enforces is kept apart from what is only estimated.
+    - An output cap is not a total cap.
+    - A provider that cannot enforce a hard cap gets a refused admission, or an explicit
+      `unsupported`: never a promise.
+  - **No authority.** A budget grants nothing.
+
 ## Journal
 
 `<name>.journal.jsonl` appends, as JSON lines, a `boot` header per start (`schema:

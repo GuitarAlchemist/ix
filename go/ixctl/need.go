@@ -429,7 +429,8 @@ func (s *needStore) status(id, requester, incarnation, resolver string) (needRep
 	if err != nil {
 		return needReply{}, err
 	}
-	holder := resolver != "" && n.Claim != nil && n.Claim.Resolver == resolver && !n.terminal()
+	holder := resolver != "" && n.Claim != nil && n.Claim.Resolver == resolver && !n.terminal() &&
+		s.now().UnixMilli() < n.Claim.LeaseUntilMS
 	return reply(n, n.Requester == requester && n.Incarnation == incarnation, holder), nil
 }
 
