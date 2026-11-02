@@ -620,6 +620,73 @@ enregistrements les enfreignent est refusé au démarrage. Chaque op `bookmark.*
 à un pair (`peer`), dans la séquence duquel le signet pointe alors ; le rejeu reste local à ce
 pair.
 
+## Besoins (needs)
+
+Un besoin est une question qu'une tâche en attente pose au plan (issue #486) : `information`,
+`authorization` ou `capacity`. Il porte une échéance absolue, `deadline_ms`, qui ne bouge jamais. Le
+plan le garde dans `<state>/<name>.needs.json`, à part de l'anneau d'événements. Il survit au
+processus qui l'a posé, et un redémarrage du plan garde chaque besoin, échéance, prise en charge et
+jeton de fencing tels qu'écrits.
+
+```text
+ixctl need submit  --name desk < q.json   # {"id","kind","requester","incarnation","body","deadline_ms"}
+ixctl need claim   --name desk < c.json   # {"id","resolver","lease_ms"} -> claim.fence
+ixctl need resolve --name desk < r.json   # {"id","resolver","fence","answer"}  (refuse : "reason")
+ixctl need wait    --name desk < w.json   # {"id","requester","incarnation","timeout_ms"}
+ixctl need status  --name desk < s.json   # {"id","requester","incarnation"}
+```
+
+Chaque op est `POST /v1/need/<op>`, ou une trame `need.<op>` sur le WebSocket, avec le jeton
+bearer. Chacune répond avec le besoin à sa `rev`, que chaque transition augmente de un.
+
+- **Submit** est idempotent sur `id`.
+  - Le même contenu rend le même besoin avec `duplicate: true`, même après un redémarrage ou passé
+    l'échéance. Son `digest` sha256 couvre kind, requester, incarnation, échéance et body.
+  - Un autre contenu sous le même `id` est un 409.
+  - Les bornes sont vérifiées avant toute écriture :
+    - `id` suit la règle des noms d'instance ;
+    - body et réponse font au plus 4096 octets de JSON ;
+    - l'échéance est après maintenant et dans les 7 jours ;
+    - un plan garde au plus 256 besoins.
+- **Claim** donne à un seul répondant un bail, d'au plus une heure, et un nouveau `fence`.
+  - Seul ce répondant peut `resolve` ou `refuse`. Il doit utiliser ce fence, tant que le bail tient
+    et avant l'échéance.
+  - Toute autre réponse est un 409 qui dit pourquoi : fence périmé, bail perdu, expiré, ou déjà
+    résolu. Une réponse tardive ne résout jamais.
+  - Une fois un bail échu, un autre répondant peut prendre le besoin, et reçoit un fence plus grand.
+- **Wait** rend l'issue `resolved`, `refused` ou `expired`. Il rend `wait-timeout` quand son propre
+  `timeout_ms` passe d'abord.
+  - Une attente expirée ou annulée laisse le besoin tel quel.
+  - Un besoin expiré ne dit rien de la tâche, ni des effets déjà produits.
+- **Status** montre l'état, la prise en charge et la résolution à tout détenteur du jeton. Il ne
+  montre la `answer` qu'au requester et à l'incarnation qui ont posé le besoin.
+
+**Les identités sont déclarées, pas authentifiées.**
+- `requester`, `incarnation` et `resolver` sont des noms que l'appelant déclare. Le plan ne les
+  authentifie pas.
+- Tout détenteur du jeton bearer du plan a la même confiance. Réserver la réponse au demandeur est
+  une corrélation chez un seul propriétaire de confiance, pas une isolation.
+
+**Un besoin `authorization` n'accorde rien.**
+- C'est un enregistrement pour les propres contrôles du demandeur, jamais une permission.
+- Le demandeur ne peut pas prendre son propre besoin `authorization`.
+- Les ops need ne sont jamais relayées à un pair.
+
+**Durabilité.** Chaque transition écrit le fichier entier dans un temporaire, le synchronise, puis
+le renomme par-dessus l'ancien. L'op ne répond qu'une fois le renommage revenu.
+- Un crash du plan laisse l'état précédent ou le nouveau.
+- Une coupure de courant n'est pas couverte : `os.Rename` ne promet pas d'atomicité hors Unix, et
+  rien ici ne synchronise le dossier.
+- Chaque op need répond 503 `unknown` jusqu'à réconciliation quand le fichier :
+  - est illisible ;
+  - enfreint les invariants des enregistrements ;
+  - dépasse sa borne en octets ;
+  - ou manque alors que son temporaire reste.
+
+  Un tel fichier n'est jamais vidé ni réécrit.
+- Quand un renommage échoue, l'issue de l'op est inconnue (503). L'op suivante relit le fichier ;
+  rien n'est rejoué de mémoire.
+
 ## Journal
 
 `<nom>.journal.jsonl` ajoute, en lignes JSON, un en-tête `boot` par démarrage (`schema:

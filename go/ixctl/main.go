@@ -27,6 +27,7 @@ const usage = `usage:
   ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N] [--delta-journal FILE]
   ixctl bench <spec.json>
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
+  ixctl need submit|status|claim|resolve|refuse|wait --name NAME [--state DIR]   # the op's JSON on stdin
   ixctl version`
 
 func main() { os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -48,6 +49,8 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(kindsReply(defaultProbeBudget))
+	case "need":
+		err = cmdNeed(args[1:], os.Stdin, stdout)
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 	default:
@@ -225,6 +228,7 @@ func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *p
 	if budget != nil {
 		in.plane.SetProbeBudget(budget.maxRate, budget.treeRate) // validated above
 	}
+	in.plane.SetNeedStore(filepath.Join(stateDir, name+".needs.json")) // under the instance lock: its only writer
 	in.web = newServer(in.plane, name, in.token, ln.Addr().(*net.TCPAddr))
 	in.srv = &http.Server{Handler: in.web, ReadHeaderTimeout: 5 * time.Second}
 	go in.srv.Serve(ln)

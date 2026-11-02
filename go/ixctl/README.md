@@ -581,6 +581,72 @@ a refusal names what it hit, and a file whose records break them is refused at s
 `bookmark.*` op is forwardable to a peer (`peer`), whose own sequence the bookmark then points
 into; the replay stays local to that peer.
 
+## Needs
+
+A need is one question a waiting task asks the plane (issue #486): `information`, an
+`authorization` or `capacity`, with an absolute `deadline_ms` that never moves. The plane keeps it
+in `<state>/<name>.needs.json`, apart from the event ring. It outlives the process that asked, and
+a plane restart keeps every need, deadline, claim and fencing token as written.
+
+```text
+ixctl need submit  --name desk < q.json   # {"id","kind","requester","incarnation","body","deadline_ms"}
+ixctl need claim   --name desk < c.json   # {"id","resolver","lease_ms"} -> claim.fence
+ixctl need resolve --name desk < r.json   # {"id","resolver","fence","answer"}  (refuse: "reason")
+ixctl need wait    --name desk < w.json   # {"id","requester","incarnation","timeout_ms"}
+ixctl need status  --name desk < s.json   # {"id","requester","incarnation"}
+```
+
+Each op is `POST /v1/need/<op>`, or a `need.<op>` frame on the WebSocket, with the bearer token.
+Each answers with the need at its `rev`, which every transition raises by one.
+
+- **Submit** is idempotent on `id`.
+  - The same content returns the same need with `duplicate: true`, even after a restart or past
+    the deadline. Its sha256 `digest` covers kind, requester, incarnation, deadline and body.
+  - Another content under the same `id` is a 409.
+  - Bounds are checked before anything is written:
+    - `id` follows the instance-name rule;
+    - body and answer are up to 4096 bytes of JSON;
+    - the deadline is after now and within 7 days;
+    - a plane holds at most 256 needs.
+- **Claim** gives one resolver a lease, of up to an hour, and a new `fence`.
+  - Only that resolver may `resolve` or `refuse`. It must use that fence, while the lease holds and
+    before the deadline.
+  - Any other answer is a 409 that names why: stale fence, lost lease, expired, or already
+    resolved. A late answer never resolves.
+  - Once a lease lapses, another resolver may claim the need, and gets a higher fence.
+- **Wait** returns the outcome `resolved`, `refused` or `expired`. It returns `wait-timeout` when
+  its own `timeout_ms` passes first.
+  - A timed-out or cancelled wait leaves the need as it was.
+  - An expired need says nothing about the task, or about effects already made.
+- **Status** shows the state, claim and resolution to anyone with the token. It shows the `answer`
+  only to the requester and incarnation that asked.
+
+**Identities are declared, not authenticated.**
+- `requester`, `incarnation` and `resolver` are names the caller declares. The plane does not
+  authenticate them.
+- Everyone who holds the plane's bearer token is trusted alike. Restricting the answer to the asker
+  is correlation within one trusted owner, not isolation.
+
+**An `authorization` need grants nothing.**
+- It is a record for the asker's own checks, never a permission.
+- The requester may not claim its own `authorization` need.
+- Need ops are never forwarded to a peer.
+
+**Durability.** Every transition writes the whole file to a temporary, syncs it, then renames it
+over the old one. The op answers only once the rename has returned.
+- A crash of the plane leaves the previous state or the new one.
+- A power loss is not covered: `os.Rename` promises no atomicity off Unix, and nothing here syncs
+  the directory.
+- Every need op answers 503 `unknown` until the file is reconciled when the file:
+  - cannot be read;
+  - breaks the records' invariants;
+  - is over its byte bound;
+  - or is missing while its temporary remains.
+
+  Such a file is never emptied or rewritten.
+- When a rename fails, the op's outcome is unknown (503). The next op re-reads the file; nothing is
+  replayed from memory.
+
 ## Journal
 
 `<name>.journal.jsonl` appends, as JSON lines, a `boot` header per start (`schema:
