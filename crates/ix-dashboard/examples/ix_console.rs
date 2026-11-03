@@ -1152,6 +1152,83 @@ mod tests {
     }
 
     #[test]
+    fn total_log_budget_holds_across_nodes() {
+        let mut state = ConsoleState::new(64);
+        state.max_log_line_bytes = 16;
+        state.max_node_log_bytes = 96;
+        state.max_total_log_bytes = 100;
+        let line = "0123456789abcdef"; // 16 bytes, nothing to escape
+
+        let append = |state: &mut ConsoleState, node: &str, seq: u64| {
+            if !state.nodes.contains_key(node) {
+                state.apply_feed(FeedEvent::UpsertNode(NodeSpec {
+                    id: node.to_string(),
+                    parent_id: None,
+                    label: node.to_string(),
+                    task_summary: "[SYNTHETIC] total log budget".to_string(),
+                    incarnation: "inc-1".to_string(),
+                    reported_health: NodeHealth::Working,
+                    last_heartbeat_ms: Some(1_000),
+                    stale_after_ms: 5_000,
+                    progress_bp: None,
+                    quality_bp: None,
+                    evidence: vec![],
+                }));
+            }
+            state.apply_feed(FeedEvent::AppendLog {
+                node_id: node.to_string(),
+                seq,
+                timestamp_ms: 1_000 + seq,
+                raw_text: line.to_string(),
+            });
+            // Oracle: the bytes actually retained, summed from every node's lines.
+            let retained: usize = state
+                .nodes
+                .values()
+                .flat_map(|n| n.logs.iter())
+                .map(|l| l.byte_len)
+                .sum();
+            assert!(
+                retained <= 100,
+                "after seq {seq} on {node}: {retained} bytes retained, max_total_log_bytes=100"
+            );
+            assert_eq!(retained, state.total_retained_log_bytes, "after seq {seq}");
+        };
+
+        // Node A fills its own budget: 6 x 16 = 96 bytes.
+        for seq in 1..=6 {
+            append(&mut state, "node.a", seq);
+        }
+        // Each fresh node starts empty, so it has nothing of its own to evict.
+        for (i, seq) in (7..=26).enumerate() {
+            append(&mut state, &format!("node.fresh.{i:02}"), seq);
+        }
+
+        // Oldest first, worked by hand: the first six fresh lines evict A's six lines, then each
+        // fresh line evicts the oldest fresh one. Only the last six fresh nodes keep a line.
+        let a = &state.nodes["node.a"];
+        assert!(a.logs.is_empty());
+        assert_eq!(a.evicted_log_count, 6);
+        let holders: Vec<&str> = state
+            .nodes
+            .iter()
+            .filter(|(_, n)| !n.logs.is_empty())
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(
+            holders,
+            [
+                "node.fresh.14",
+                "node.fresh.15",
+                "node.fresh.16",
+                "node.fresh.17",
+                "node.fresh.18",
+                "node.fresh.19"
+            ]
+        );
+    }
+
+    #[test]
     fn the_two_panes_split_the_width_in_half() {
         let state = load_synthetic_demo_state();
         for width in [80u16, 108, 120, 161, 200] {
