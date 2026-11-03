@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "target": { "repo": "sandbox/fixture" },
+  "verdict": "informational",
+  "notes": "sandbox fixture, not real data"
+}

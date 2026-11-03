@@ -1,0 +1,21 @@
+[package]
+name = "p3-async-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "SPIKE: WASI 0.3 async behaviour — concurrent async funcs, future<T> and stream<T> — against blocking (synchronous) I/O, with monotonic-clock timestamps."
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pinned to WIT 0.3.0, the version Wasmtime 50.0.1's host implements (see ../README.md).
+wasip3 = { version = "=0.9.0" }
+# Exact pins: Cargo.lock is gitignored repo-wide. wit-bindgen is the generator wasip3 0.9.0 uses.
+wit-bindgen = { version = "=0.62.0", default-features = false, features = ["async"] }
+futures = { version = "=0.3.34", default-features = false, features = ["async-await", "std"] }
+
+[profile.release]
+opt-level = "s"

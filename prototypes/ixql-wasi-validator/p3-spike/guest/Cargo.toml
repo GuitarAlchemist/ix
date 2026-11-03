@@ -1,0 +1,24 @@
+[package]
+name = "p3-echo-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "SPIKE: a native WASI 0.3 command (stdin -> stdout via stream<u8>), built against one exact WIT version per feature, to test version matching against a pinned Wasmtime."
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# Exactly one. The `+wasi-…` build metadata names the WIT version the bindings were generated from.
+wasi-0-3-0 = ["dep:wasip3_030"]
+wasi-0-3-2 = ["dep:wasip3_032"]
+
+[dependencies]
+wasip3_030 = { package = "wasip3", version = "=0.9.0", optional = true }
+wasip3_032 = { package = "wasip3", version = "=0.10.0", optional = true }
+futures = { version = "=0.3.34", default-features = false, features = ["async-await", "std"] }
+
+[profile.release]
+opt-level = "s"
