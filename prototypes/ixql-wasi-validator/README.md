@@ -43,6 +43,14 @@ cd prototypes/ixql-wasi-validator && cargo test   # needs go 1.21+ on PATH (or I
 prototypes/ixql-wasi-validator/p3-spike/run.sh /some/tmp/dir  # downloads pinned tools, checks sha256
 ```
 
+**CI** (`.github/workflows/ixql-wasi-prototype.yml`, experimental, not a required gate): one
+`ubuntu-latest` job, on pull requests that touch this folder or that file. It runs `cargo test`
+here with Go 1.24.7, then `run.sh` with `P3_SKIP_RUST_GUESTS=1`. That executes steps 1, 2 and 4
+(printed only) and asserts steps 6–8; steps 3 and 5 (the WASI 0.3 Rust guests, which need the
+`wasm32-wasip2` target and crates.io, and assert nothing) are skipped. It does not run
+`wasmedge-compare.sh`, and it does not trigger on changes to the path-dependency crates
+(`ix-ixql`, `ix-wasm`, `ix-types` and theirs).
+
 ## Pins
 
 | Piece | Exact version | Source |

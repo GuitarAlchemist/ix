@@ -7,7 +7,11 @@
 # Steps 6-8 ASSERT their results (exact exit codes, stdout against ./expected/*, the adapter trap
 # marker on stderr) and include negative controls; the script exits 1 if any assertion fails.
 # Steps 1-5 only PRINT evidence for a human to read; they assert nothing.
+#
+# P3_SKIP_RUST_GUESTS=1 skips steps 3 and 5, the only ones that need cargo, the wasm32-wasip2
+# target and crates.io (the WASI 0.3 Rust guests). CI sets it: those steps assert nothing.
 set -euo pipefail
+SKIP_RUST="${P3_SKIP_RUST_GUESTS:-0}"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PROTO="$(cd "$HERE/.." && pwd)"
@@ -57,6 +61,7 @@ step "2. Same module adapted to a component (wasi_snapshot_preview1 command adap
 "$WT" run "$OUT/validator.p2.wasm" < "$VALID" 2>&1 | head -1 || true
 
 step "3. Native WASI 0.3 guests (Rust, wasm32-wasip2 target, wasip3 crate) on Wasmtime $WASMTIME_V"
+if [ "$SKIP_RUST" = 1 ]; then echo "SKIPPED (P3_SKIP_RUST_GUESTS=1)"; else
 for f in wasi-0-3-0 wasi-0-3-2; do
   (cd "$HERE/guest" && CARGO_TARGET_DIR="$OUT/target-$f" cargo build -q --release --target wasm32-wasip2 --features "$f")
   W="$OUT/target-$f/wasm32-wasip2/release/p3_echo_guest.wasm"
@@ -64,6 +69,7 @@ for f in wasi-0-3-0 wasi-0-3-2; do
   "$WT" run "$W" < "$VALID" | head -2
   "$WT" run -S p3=n "$W" < "$VALID" 2>&1 | grep -m1 'imports instance' || true
 done
+fi
 
 step "4. A WIT type mismatch fails at link time"
 for t in string u32; do
@@ -73,6 +79,7 @@ for t in string u32; do
 done
 
 step "5. WASI 0.3 async: concurrent vs sequential vs blocking, guest stream, host stream + future"
+if [ "$SKIP_RUST" = 1 ]; then echo "SKIPPED (P3_SKIP_RUST_GUESTS=1)"; else
 (cd "$HERE/async-guest" && CARGO_TARGET_DIR="$OUT/target-async" cargo build -q --release --target wasm32-wasip2)
 ASYNC="$OUT/target-async/wasm32-wasip2/release/p3_async_guest.wasm"
 "$WT" run "$ASYNC" all
@@ -81,6 +88,7 @@ echo "--- future-intra (expected to be refused): $("$WT" run "$ASYNC" future-int
 echo "--- canonical ABI names in the core module:"
 "$WTL" print "$ASYNC" | grep -oE '"(\[async-lower\]wait-for|\[async-lift\]wasi:cli/run@0.3.0#run|\[method\]pollable.block)"' | sort -u
 echo "--- with -W component-model-async=n: $("$WT" run -W component-model-async=n "$ASYNC" concurrent 2>&1 | grep -m1 -o '`stream` requires.*')"
+fi
 
 step "6. Adapter trap, controlled (no Go): which memory-ownership pattern breaks the adapter [asserted]"
 for t in c0-control c1-go-sbrk c2-honest-grow c3-heap-on-stack-page; do
@@ -137,4 +145,5 @@ check_rejects "c3 corruption expected to be absent"   c3-heap-on-stack-page.comp
 
 step "Summary"
 echo "$((CHECKS - FAILS)) of $CHECKS assertions passed (steps 6-8; steps 1-5 are printed evidence only)"
+if [ "$SKIP_RUST" = 1 ]; then echo "steps 3 and 5 were skipped (P3_SKIP_RUST_GUESTS=1)"; fi
 [ "$FAILS" -eq 0 ] || { echo "FAILED: $FAILS assertion(s)"; exit 1; }
