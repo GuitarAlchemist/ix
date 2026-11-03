@@ -1229,6 +1229,79 @@ mod tests {
     }
 
     #[test]
+    fn total_log_budget_evicts_from_a_closed_rotated_node_with_its_banner() {
+        let mut state = ConsoleState::new(64);
+        state.max_log_line_bytes = 16;
+        state.max_node_log_bytes = 96;
+        state.max_total_log_bytes = 100;
+        let spec = |id: &str, incarnation: &str| NodeSpec {
+            id: id.to_string(),
+            parent_id: None,
+            label: id.to_string(),
+            task_summary: "[SYNTHETIC] closed node budget".to_string(),
+            incarnation: incarnation.to_string(),
+            reported_health: NodeHealth::Working,
+            last_heartbeat_ms: Some(1_000),
+            stale_after_ms: 5_000,
+            progress_bp: None,
+            quality_bp: None,
+            evidence: vec![],
+        };
+
+        // Node A fills its budget (6 x 16 = 96 bytes), Follow OFF, anchored on seq 1.
+        state.apply_feed(FeedEvent::UpsertNode(spec("node.a", "inc-1")));
+        for seq in 1..=6 {
+            state.apply_feed(FeedEvent::AppendLog {
+                node_id: "node.a".to_string(),
+                seq,
+                timestamp_ms: 1_000 + seq,
+                raw_text: "0123456789abcdef".to_string(),
+            });
+        }
+        // A rotates to inc-2, then that incarnation is closed: A is a tombstone holding 96 bytes.
+        state.apply_feed(FeedEvent::UpsertNode(spec("node.a", "inc-2")));
+        state.apply_feed(FeedEvent::RemoveNodeForIncarnation {
+            id: "node.a".to_string(),
+            incarnation: "inc-2".to_string(),
+            timestamp_ms: 1_100,
+        });
+        state.apply_feed(FeedEvent::UpsertNode(spec("node.b", "inc-1")));
+        let selected_before = state.selected_id.clone();
+
+        // B's first line is 40 bytes raw, truncated to 16: 96 + 16 = 112 > 100, and B has nothing
+        // of its own, so exactly one line of A must go (80 + 16 = 96).
+        state.apply_feed(FeedEvent::AppendLog {
+            node_id: "node.b".to_string(),
+            seq: 7,
+            timestamp_ms: 1_200,
+            raw_text: "x".repeat(40),
+        });
+
+        let a = &state.nodes["node.a"];
+        assert!(a.removed_at_ms.is_some());
+        assert_eq!(a.spec.incarnation, "inc-2");
+        assert_eq!(
+            a.logs.iter().map(|l| l.seq).collect::<Vec<_>>(),
+            [2, 3, 4, 5, 6]
+        );
+        assert_eq!(a.evicted_log_count, 1);
+        assert_eq!(a.evicted_anchor_seq, Some(1));
+        assert_eq!(a.log_anchor_seq, Some(2));
+        let b_line = &state.nodes["node.b"].logs[0];
+        assert!(b_line.was_truncated);
+        assert_eq!(b_line.byte_len, 16);
+        let retained: usize = state
+            .nodes
+            .values()
+            .flat_map(|n| n.logs.iter())
+            .map(|l| l.byte_len)
+            .sum();
+        assert_eq!(retained, 96);
+        assert_eq!(state.total_retained_log_bytes, 96);
+        assert_eq!(state.selected_id, selected_before);
+    }
+
+    #[test]
     fn the_two_panes_split_the_width_in_half() {
         let state = load_synthetic_demo_state();
         for width in [80u16, 108, 120, 161, 200] {
