@@ -3,6 +3,10 @@
 # ../README.md (WASI 0.3 spike + follow-ups). Downloads pinned official tools into $1 (default: a temp dir),
 # checks their sha256, builds, and runs. Needs: go, cargo, rustup target wasm32-wasip2, curl.
 # Nothing is installed globally; nothing is published.
+#
+# Steps 6-8 ASSERT their results (exact exit codes, stdout against ./expected/*, the adapter trap
+# marker on stderr) and include negative controls; the script exits 1 if any assertion fails.
+# Steps 1-5 only PRINT evidence for a human to read; they assert nothing.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +37,12 @@ export RUST_BACKTRACE=0
 step() { printf '\n=== %s\n' "$*"; }
 VALID="$PROTO/fixtures/candidate-valid.json"
 INVALID="$PROTO/fixtures/candidate-invalid.json"
+CASES="$OUT/cases"; rm -rf "$CASES"; mkdir -p "$CASES"
+# shellcheck source=lib/check.sh
+. "$HERE/lib/check.sh"
+TRAP="assertion failed at adapter line 2857"
+WANT_REPORT="$HERE/expected/validator-invalid.stdout"
+WANT_STRESS="$HERE/expected/stress.stdout"
 
 step "1. Go fixture validator, GOOS=wasip1 (same flags as ix-wasm's Toolchain)"
 mkdir -p "$OUT/go" && cp "$PROTO/validator/main.go" "$OUT/go/"
@@ -72,16 +82,21 @@ echo "--- canonical ABI names in the core module:"
 "$WTL" print "$ASYNC" | grep -oE '"(\[async-lower\]wait-for|\[async-lift\]wasi:cli/run@0.3.0#run|\[method\]pollable.block)"' | sort -u
 echo "--- with -W component-model-async=n: $("$WT" run -W component-model-async=n "$ASYNC" concurrent 2>&1 | grep -m1 -o '`stream` requires.*')"
 
-step "6. Adapter trap, controlled (no Go): which memory-ownership pattern breaks the adapter"
+step "6. Adapter trap, controlled (no Go): which memory-ownership pattern breaks the adapter [asserted]"
 for t in c0-control c1-go-sbrk c2-honest-grow c3-heap-on-stack-page; do
   "$WTL" parse "$HERE/adapter-trap/$t.wat" -o "$OUT/$t.p1.wasm"
   "$WTL" component new "$OUT/$t.p1.wasm" --adapt "wasi_snapshot_preview1=$TOOLS/wasi_snapshot_preview1.command.wasm" -o "$OUT/$t.component.wasm"
-  p1=0; "$WT" run "$OUT/$t.p1.wasm" >/dev/null 2>&1 || p1=$?
-  rc=0; out=$("$WT" run "$OUT/$t.component.wasm" 2>&1) || rc=$?
-  printf '%-24s core p1 exit=%s  component exit=%s %s\n' "$t" "$p1" "$rc" "$(echo "$out" | grep -m1 -oE 'assertion failed at adapter line [0-9]+')"
+  run_case "$t.p1" "$OUT/$t.p1.wasm"
+  run_case "$t.component" "$OUT/$t.component.wasm"
 done
+# Every core module runs cleanly without the adapter.
+for t in c0-control c1-go-sbrk c2-honest-grow c3-heap-on-stack-page; do check "$t.p1" 0 empty -; done
+check c0-control.component            0   empty -        # control
+check c1-go-sbrk.component            134 empty "$TRAP"  # Go-style sbrk: the exact Go trap
+check c2-honest-grow.component        0   empty -        # same grow, honest ownership: fine
+check c3-heap-on-stack-page.component 1   empty -        # adapter stack overwrote "heap" bytes (proc_exit != 0 -> 1)
 
-step "7. Go runtime with the diagnostic patch (go build -overlay; GOROOT untouched)"
+step "7. Go runtime with the diagnostic patch (go build -overlay; GOROOT untouched) [asserted]"
 GOROOT_REAL="$(go env GOROOT)"
 mkdir -p "$OUT/overlay/runtime" "$OUT/stress"
 cp "$GOROOT_REAL/src/runtime/os_wasm.go" "$GOROOT_REAL/src/runtime/mem_wasm.go" "$OUT/overlay/runtime/"
@@ -94,9 +109,32 @@ for prog in go stress; do for v in stock patched; do
   flags=(); [ $v = patched ] && flags=(-overlay="$OUT/overlay.json")
   (cd "$OUT/$prog" && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOPROXY=off GOTOOLCHAIN=local go build -trimpath "${flags[@]}" -o "$OUT/$prog.$v.p1.wasm" .)
   "$WTL" component new "$OUT/$prog.$v.p1.wasm" --adapt "wasi_snapshot_preview1=$TOOLS/wasi_snapshot_preview1.command.wasm" -o "$OUT/$prog.$v.component.wasm"
-  for kind in p1 component; do
-    rc=0; out=$("$WT" run "$OUT/$prog.$v.$kind.wasm" < "$INVALID" 2>&1) || rc=$?
-    printf '%-7s %-8s %-9s exit=%s %s\n' "$prog" "$v" "$kind" "$rc" \
-      "$(echo "$out" | grep -m1 -oE 'assertion failed at adapter line [0-9]+|"valid":(true|false)|kept [0-9]+ sum [0-9]+')"
-  done
+  for kind in p1 component; do run_case "$prog.$v.$kind" "$OUT/$prog.$v.$kind.wasm" "$INVALID"; done
 done; done
+# The patch must actually change the build, or the "patched" results prove nothing.
+CHECKS=$((CHECKS + 1))
+if cmp -s "$OUT/go.stock.p1.wasm" "$OUT/go.patched.p1.wasm"; then
+  echo "FAIL  go.patched.p1.wasm is identical to go.stock.p1.wasm: the overlay was not applied"; FAILS=$((FAILS + 1))
+else echo "PASS  patched build differs from stock build (overlay applied)"; fi
+check go.stock.p1            0   "$WANT_REPORT" -        # reference output
+check go.stock.component     134 empty          "$TRAP"  # stock Go traps behind the adapter
+check go.patched.p1          0   "$WANT_REPORT" -        # patch leaves core p1 unchanged
+check go.patched.component   0   "$WANT_REPORT" -        # patch removes the trap; same bytes as stock p1
+check stress.stock.p1        0   "$WANT_STRESS" -
+check stress.stock.component 134 empty          "$TRAP"
+check stress.patched.p1      0   "$WANT_STRESS" -
+check stress.patched.component 0 "$WANT_STRESS" -
+
+step "8. Negative controls: wrong expectations against the same real artifacts must be rejected"
+check_rejects "stock component expected to succeed"   go.stock.component 0   "$WANT_REPORT" -
+check_rejects "patched component expected to trap"    go.patched.component 134 empty "$TRAP"
+check_rejects "trap marker required on a clean run"   go.patched.p1 0 - "$TRAP"
+check_rejects "stress output compared to the report"  stress.patched.component 0 "$WANT_REPORT" -
+run_case go.stock.p1.valid "$OUT/go.stock.p1.wasm" "$VALID"
+check_rejects "valid candidate's report vs invalid's" go.stock.p1.valid 0 "$WANT_REPORT" -
+check_rejects "c1 expected to pass like c2"           c1-go-sbrk.component 0 empty -
+check_rejects "c3 corruption expected to be absent"   c3-heap-on-stack-page.component 0 empty -
+
+step "Summary"
+echo "$((CHECKS - FAILS)) of $CHECKS assertions passed (steps 6-8; steps 1-5 are printed evidence only)"
+[ "$FAILS" -eq 0 ] || { echo "FAILED: $FAILS assertion(s)"; exit 1; }

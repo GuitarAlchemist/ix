@@ -1,0 +1,1 @@
+{"validator":"ix-prototype-fixture-validator/0.1.0","valid":false,"errors":["schema_version: must be 1, got 2","target.repo: required non-empty string","unknown field: extra","verdict: must be one of informational|pass|fail, got maybe"]}

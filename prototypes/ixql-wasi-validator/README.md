@@ -27,7 +27,8 @@ existed, and there was no WASI 0.2, 0.3 or Component Model work.
 - `tests/pipeline.rs`: 3 end-to-end tests: valid → T → written; invalid → F → alert only, with
   the Go errors passed through verbatim; fuel exhaustion → run error, nothing written.
 - `p3-spike/`: the WASI 0.3 feasibility spike. `run.sh` reproduces the spike and follow-ups,
-  except the manual trace and core dump noted in follow-up 2. `wasmedge-compare.sh` reproduces
+  except the manual trace and core dump noted in follow-up 2. Steps 6–8 assert their results
+  (`lib/check.sh`, `expected/`); steps 1–5 print evidence only. `wasmedge-compare.sh` reproduces
   the WasmEdge comparison.
   - `guest/`: a 30-line Rust p3 echo guest.
   - `async-guest/`: follow-up 1, async behaviour.
@@ -230,7 +231,10 @@ The invariant that fails: *pages obtained with `memory.grow` by the adapter are 
 anyone else.* Go's runtime assumes it owns the whole memory and every grow.
 
 **Evidence.** Each item was run here. The controlled tests and the patch test are steps 6 and 7
-of `run.sh`. The call trace and the core dump were one-off manual commands and are *not* in
+of `run.sh`. Those steps **assert** each case's exact exit code, its stdout against hand-written
+files in `p3-spike/expected/`, and the trap marker on stderr. Step 8 holds negative controls:
+deliberately wrong expectations against the same real artifacts, all of which must be rejected.
+`run.sh` exits 1 if any of the 24 assertions fails. Steps 1–5 only print evidence. The call trace and the core dump were one-off manual commands and are *not* in
 `run.sh`. To repeat them on the stock `validator.p2.wasm` that `run.sh` step 2 produces:
 `echo '{}' | WASMTIME_LOG=wasmtime_wasi=trace wasmtime run validator.p2.wasm` and
 `echo '{}' | wasmtime run -D coredump=go-trap.coredump validator.p2.wasm`. The page bytes were
@@ -264,8 +268,18 @@ then read from the core dump's data section with a short throwaway script that i
   pages it did not grow (`if currentMemory()*64KiB != blocMax { bl = blocMax = currentMemory()*64KiB }`).
   - The validator and a stress program run as 0.2 components. The stress program grows the heap
     300 × 256 KiB, with clock and env calls in between.
-  - Their outputs are byte-identical to stock core p1. Stock components still trap.
+  - Their outputs are byte-identical to stock core p1: all four builds are compared with
+    `cmp` against `expected/validator-invalid.stdout` or `expected/stress.stdout`.
+  - Stock components still trap: exit 134, with `assertion failed at adapter line 2857` on stderr.
   - Core p1 behaviour is unchanged.
+  - `run.sh` also asserts that the patched build differs from the stock build, so the overlay
+    really was applied.
+  - Two mutation runs on scratch copies made `run.sh` exit 1, as they should:
+    - corrupting one expected-output file produced 3 FAILs;
+    - replacing the patch with a comment-only no-op produced 3 FAILs, because both patched
+      components trapped and one negative control became wrong.
+  - Exit code 134 is SIGABRT as Wasmtime reports a trap on Linux x86_64, the only platform
+    checked.
 
 **Limits:**
 - **The patch is diagnostic only**, not a fix to ship. It wastes the unused initial pages, it was
