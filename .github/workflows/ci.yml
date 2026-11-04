@@ -85,6 +85,14 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # `cargo test --workspace` compiles the examples but runs none of their tests (an example
+      # has `test = false` unless its [[example]] entry says otherwise), so the ix_console unit
+      # tests reached no CI run, PRs #500 and #505 included. Its state and layout are pure Rust:
+      # one OS row is enough.
+      - name: ix_console example tests
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo test -p ix-dashboard --example ix_console
+
       # crates/ix-router-spike is a standalone crate (an empty [workspace] table), so the
       # workspace commands above never compile it. Its tests hold the pinned held-out corpora
       # and the Jev response contract (ix#489); one OS row is enough for a pure-Rust crate.
