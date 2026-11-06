@@ -124,17 +124,62 @@ func (p Page) EventID(key string, e Event) string { return EventID(key, p.Incarn
 // incarnation is provisional: 12 hex of SHA-256 over the file's identity alone. Once the first
 // record completes, Read accepts a provisional checkpoint of the same file and says so
 // (Page.PromotedFrom); a provisional checkpoint of another file is stale.
+//
+// A first record longer than MaxLine is named once its '\n' is found, as Read names it. Identify
+// looks for that '\n' within ScanMax bytes; a longer record needs IdentifyFrom.
 func Identify(path string) (incarnation string, size int64, err error) {
+	id, err := IdentifyFrom(path, 0)
+	return id.Incarnation, id.Size, err
+}
+
+// Identity is what IdentifyFrom found.
+type Identity struct {
+	Incarnation string `json:"incarnation"`
+	Size        int64  `json:"size"`
+	// Provisional: the first record has no '\n' yet, or none was found within this call's scan.
+	Provisional bool `json:"provisional,omitempty"`
+	// Scanned, for a provisional journal whose first record is longer than MaxLine: [0, Scanned)
+	// holds no '\n'. Pass it back to IdentifyFrom to resume the scan there.
+	Scanned int64 `json:"scanned,omitempty"`
+}
+
+// IdentifyFrom is Identify resuming the scan for the '\n' of a first record longer than MaxLine at
+// scanned (0, or an Identity.Scanned of the same file). One call reads at most ScanMax bytes.
+// @ai:invariant Identify and Read give the same incarnation for the same complete file [T:test conf:0.85 src:go/ixmux/journal/s2g_test.go:TestIdentifyPromotesAnOversizedFirstRecord]
+func IdentifyFrom(path string, scanned int64) (Identity, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", 0, err
+		return Identity{}, err
 	}
 	defer f.Close()
-	named, provisional, complete, size, err := identify(&src{f: f}, make([]byte, scanChunk))
-	if !complete {
-		return provisional, size, err
+	s := &src{f: f}
+	buf := make([]byte, scanChunk)
+	named, provisional, complete, size, err := identify(s, buf)
+	if err != nil {
+		return Identity{}, err
 	}
-	return named, size, err
+	if complete {
+		return Identity{Incarnation: named, Size: size}, nil
+	}
+	if size < MaxLine { // a short first record without its '\n' yet
+		return Identity{Incarnation: provisional, Size: size, Provisional: true}, nil
+	}
+	// [0, MaxLine) holds no '\n': the first record is complete once any '\n' follows.
+	pos := scanned
+	if pos < MaxLine || pos > size {
+		pos = MaxLine
+	}
+	for pos < size && s.n < ScanMax {
+		chunk := buf[:min(int64(len(buf)), size-pos, ScanMax-s.n)]
+		if err := s.readAt(chunk, pos); err != nil {
+			return Identity{}, err
+		}
+		if bytes.IndexByte(chunk, '\n') >= 0 {
+			return Identity{Incarnation: named, Size: size}, nil
+		}
+		pos += int64(len(chunk))
+	}
+	return Identity{Incarnation: provisional, Size: size, Provisional: true, Scanned: pos}, nil
 }
 
 func hash12(parts ...[]byte) string {
