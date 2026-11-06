@@ -53,27 +53,21 @@ const (
 	logHeader = `{"format":"` + logFormat + `"}` + "\n"
 )
 
+// dirSync syncs the log's directory (syncDir); a test replaces it, on every system.
+var dirSync = syncDir
+
 // openLog reads the log at path back, at most maxBytes of it. A last record without its '\n'
 // (a crash while writing it) is cut off and reported as torn; any other unreadable record is
 // log-corrupt.
 func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	// Read and cut through a handle without O_APPEND: on Windows an append-only handle may not
 	// truncate. Appends then go through a second, append-only handle.
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-	created := err == nil
-	if errors.Is(err, os.ErrExist) {
-		f, err = os.OpenFile(path, os.O_RDWR, 0)
-	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	defer f.Close()
 	fail := func(err error) (*cmdLog, []logRecord, *Torn, error) { return nil, nil, nil, err }
-	if created {
-		if err := syncDir(filepath.Dir(path)); err != nil {
-			return fail(fmt.Errorf("sync the directory of the new %s: %w", path, err))
-		}
-	}
 	st, err := f.Stat()
 	if err != nil {
 		return fail(err)
@@ -127,6 +121,12 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 		if err := f.Sync(); err != nil {
 			return fail(err)
 		}
+	}
+	// The directory is synced at every Open, before any transition: a previous Open that created
+	// the log may have failed its own sync and left the file behind.
+	// @ai:invariant no transition is appended before an Open has synced the log's directory [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestFailedDirectorySyncIsRetried]
+	if err := dirSync(filepath.Dir(path)); err != nil {
+		return fail(fmt.Errorf("sync the directory of %s: %w", path, err))
 	}
 	af, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {

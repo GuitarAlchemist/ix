@@ -17,7 +17,7 @@ func (d recordedDir) Sync() error  { *d.syncs++; return nil }
 func (d recordedDir) Close() error { return nil }
 
 // S2D-2: creating the command log syncs its directory, so the new entry survives a power loss;
-// reopening an existing log does not.
+// S2F-3: reopening it syncs the directory again (a failed first sync is retried).
 func TestNewLogSyncsItsDirectory(t *testing.T) {
 	var opened []string
 	syncs := 0
@@ -40,7 +40,7 @@ func TestNewLogSyncsItsDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Close()
-	if len(opened) != 1 || syncs != 1 {
-		t.Errorf("reopening the log synced its directory again: %v, %d syncs", opened, syncs)
+	if len(opened) != 2 || syncs != 2 {
+		t.Errorf("reopening the log: directories opened %v, %d syncs; want 2 and 2", opened, syncs)
 	}
 }

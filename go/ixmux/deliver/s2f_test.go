@@ -2,6 +2,7 @@ package deliver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -148,5 +149,32 @@ func TestReconcileAsksOnlyTheMandatesIncarnation(t *testing.T) {
 				t.Errorf("reconcile wrote to the log:\n%s", after[len(before):])
 			}
 		})
+	}
+}
+
+// S2F-3 (Codex round 4): an Open whose directory sync failed leaves the new log behind; the next
+// Open syncs the directory again before its first transition, instead of trusting a log whose
+// directory entry may not be durable.
+func TestFailedDirectorySyncIsRetried(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	syncs := 0
+	dirSync = func(dir string) error { syncs++; return errors.New("injected directory sync failure") }
+	t.Cleanup(func() { dirSync = syncDir })
+	if e, _, err := Open(path, Options{}); err == nil {
+		e.Close()
+		t.Fatal("Open succeeded although the directory sync failed")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the failed Open left no log behind (%v): the scenario needs one", err)
+	}
+	syncs = 0
+	dirSync = func(dir string) error { syncs++; return nil }
+	e, _, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if syncs == 0 {
+		t.Error("the second Open trusted the log left by the failed one without syncing its directory")
 	}
 }
