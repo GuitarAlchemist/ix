@@ -121,6 +121,7 @@ func (f *FakeSession) appendIf(inc string, b []byte) (int64, error) {
 	}
 	return st.Size(), fh.Sync()
 }
+
 // Status answers for the session's own incarnation only (the Reconciler contract): Unknown for
 // any other.
 func (f *FakeSession) Status(ctx context.Context, mandateID, incarnation string) (deliver.Outcome, error) {
