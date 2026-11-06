@@ -103,24 +103,24 @@ func archiveLatest(e *env, d digestPaths, name, hook string) bool {
 }
 
 // replaceLatest writes latest.md through a temporary file and a rename, so a failed write never
-// leaves it truncated.
-func replaceLatest(d digestPaths, body string) error {
+// leaves it truncated; a failure keeps the previous latest.md and is said on stderr.
+func replaceLatest(e *env, d digestPaths, body, hook string) {
 	tmp, err := os.CreateTemp(d.dir, ".latest-*.tmp")
+	if err == nil {
+		_, err = tmp.WriteString(body)
+		if cerr := tmp.Close(); err == nil {
+			err = cerr
+		}
+		if err == nil {
+			err = os.Rename(tmp.Name(), d.latest)
+		}
+		if err != nil {
+			_ = os.Remove(tmp.Name()) // a leftover temporary file is harmless
+		}
+	}
 	if err != nil {
-		return err
+		fmt.Fprintf(e.stderr, "[%s] could not write latest.md, kept as it is: %v\n", hook, err)
 	}
-	_, werr := tmp.WriteString(body)
-	cerr := tmp.Close()
-	if werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Rename(tmp.Name(), d.latest)
-	}
-	if werr != nil {
-		os.Remove(tmp.Name())
-	}
-	return werr
 }
 
 // digestStalenessNudge (UserPromptSubmit) says when the digest is missing or has drifted;
@@ -159,13 +159,14 @@ func digestActivityTracker(e *env) int {
 		return 0
 	}
 	d := digestsOf(root)
-	os.MkdirAll(d.archive, 0o755)
+	_ = os.MkdirAll(d.archive, 0o755) // a failure surfaces in archiveLatest
 
+	// The counters are best effort: a lost count only delays the next stub.
 	total := counter(filepath.Join(d.dir, ".activity-counter")) + 1
-	os.WriteFile(filepath.Join(d.dir, ".activity-counter"), []byte(strconv.Itoa(total)+"\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(d.dir, ".activity-counter"), []byte(strconv.Itoa(total)+"\n"), 0o644)
 	midPath := filepath.Join(d.dir, ".activity-count")
 	mid := counter(midPath) + 1
-	os.WriteFile(midPath, []byte(strconv.Itoa(mid)+"\n"), 0o644)
+	_ = os.WriteFile(midPath, []byte(strconv.Itoa(mid)+"\n"), 0o644)
 
 	thresholdCount := envInt(e, "IX_DIGEST_MID_COUNT", 20)
 	thresholdMin := envInt(e, "IX_DIGEST_MID_MIN", 30)
@@ -176,7 +177,7 @@ func digestActivityTracker(e *env) int {
 	if !(mid >= thresholdCount || (ageMin >= int64(thresholdMin) && mid >= 3)) {
 		return 0
 	}
-	os.WriteFile(midPath, []byte("0\n"), 0o644)
+	_ = os.WriteFile(midPath, []byte("0\n"), 0o644)
 
 	now := e.sys.now().UTC()
 	tsIso, tsFile := now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15-04-05Z")
@@ -206,9 +207,8 @@ Invoke `+"`/digest`"+` at your next natural breakpoint to populate **Next action
 **In-flight**, **Live hypotheses**, **Open questions**, **Do NOT carry forward**,
 and **Success criteria**._
 `, tsIso, branch, sha, subject, mid, branch, sha, subject, mid, ageMin)
-	midFile := filepath.Join(d.dir, "mid-"+tsFile+".md")
-	os.WriteFile(midFile, []byte(body), 0o644)
-	replaceLatest(d, body)
+	_ = os.WriteFile(filepath.Join(d.dir, "mid-"+tsFile+".md"), []byte(body), 0o644) // a copy of latest.md
+	replaceLatest(e, d, body, "digest-activity-tracker")
 	return 0
 }
 
@@ -230,7 +230,7 @@ func digestStopFinalize(e *env) int {
 	if age, ok := e.ageMinutes(d.latest); ok && age < 10 {
 		return 0
 	}
-	os.MkdirAll(d.archive, 0o755)
+	_ = os.MkdirAll(d.archive, 0o755) // a failure surfaces in archiveLatest or replaceLatest
 	now := e.sys.now().UTC()
 	tsIso, tsFile := now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15-04-05Z")
 	if !archiveLatest(e, d, tsFile+"-stop.md", "digest-stop-finalize") {
@@ -263,7 +263,7 @@ _Session ended without a recent `+"`/digest`"+`. Next session: re-orient from
 `+"`git log`"+` + open PR. Prior digests (if any) are in `+"`state/digests/archive/`"+`._
 `, tsIso, safeYAML(branch, 200), safeYAML(sha, 200), safeYAML(subject, 200), safeYAML(pr, 200),
 		branch, sha, subject, prLine)
-	replaceLatest(d, body)
+	replaceLatest(e, d, body, "digest-stop-finalize")
 	validateDigest(d.latest, discard{}) // the script ran digest-validate and ignored its verdict
 	return 0
 }
@@ -276,7 +276,7 @@ func precompactDigest(e *env) int {
 		return 0
 	}
 	d := digestsOf(root)
-	os.MkdirAll(d.archive, 0o755)
+	_ = os.MkdirAll(d.archive, 0o755) // a failure surfaces in archiveLatest or replaceLatest
 	p, _ := e.payload()
 	session := field(p, "session_id")
 	if session == "" {
@@ -321,7 +321,7 @@ _No `+"`/digest`"+` invocation was captured before this compaction. Re-orient fr
 **Do NOT carry forward** sections before the next compaction event._
 `, safeYAML(session, 200), ts, safeYAML(branch, 200), safeYAML(sha, 200), safeYAML(subject, 200), safeYAML(pr, 200),
 		branch, sha, subject, prLine)
-	replaceLatest(d, body)
+	replaceLatest(e, d, body, "precompact-digest")
 	return 0
 }
 

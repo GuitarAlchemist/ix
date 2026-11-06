@@ -36,7 +36,7 @@ func prRationaleCapture(e *env) int {
 	slug := prSlug(title)
 
 	dir := digestsOf(root).dir
-	os.MkdirAll(dir, 0o755)
+	_ = os.MkdirAll(dir, 0o755) // a failure surfaces in WriteFile
 	ts := e.sys.now().UTC().Format("2006-01-02T15:04:05Z")
 	branch := e.gitOr(root, "unknown", "rev-parse", "--abbrev-ref", "HEAD")
 	shortStat, _ := e.sys.output("", "git", "-C", root, "diff", "--shortstat", "HEAD~1")
@@ -66,7 +66,9 @@ diff_shortstat:%s
 
 %s
 `, ts, branch, num, shortStat, num, title, branch, ts, shortStat, title, body)
-	os.WriteFile(filepath.Join(dir, "pr-"+num+"-"+slug+".md"), []byte(doc), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "pr-"+num+"-"+slug+".md"), []byte(doc), 0o644); err != nil {
+		fmt.Fprintf(e.stderr, "[pr-rationale-capture] could not save the rationale of PR #%s: %v\n", num, err)
+	}
 	return 0
 }
 

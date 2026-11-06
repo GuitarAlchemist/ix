@@ -34,8 +34,10 @@ func (e *env) syncManifest(path string) {
 	if !ok {
 		return
 	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	os.WriteFile(path, []byte(md+"\n"), 0o644)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755) // a failure surfaces in WriteFile
+	if err := os.WriteFile(path, []byte(md+"\n"), 0o644); err != nil {
+		fmt.Fprintf(e.stderr, "[session-start] could not write %s, the previous manifest stays: %v\n", path, err)
+	}
 }
 
 func renderManifest(raw []byte, now time.Time) (string, bool) {

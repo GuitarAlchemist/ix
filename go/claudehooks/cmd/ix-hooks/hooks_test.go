@@ -35,6 +35,43 @@ func fakeSystem(root string, now time.Time) *system {
 	}
 }
 
+// The hooks that fire on every prompt or every tool call start no process and fetch nothing:
+// under load each process cost 1 to 2.5 s on Windows, and the bash versions took 10 to 30 s per
+// prompt (docs/solutions/integration-issues/2026-11-06-bash-hooks-take-ten-to-thirty-seconds-per-prompt-on-windows.md).
+func TestHotHooksStartNoProcess(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeDigest(t, root, "digest-skill", 45*time.Minute, now)
+	for _, c := range []struct{ hook, stdin string }{
+		{"correction-detector", `{"prompt":"non, pas ce fichier"}`},
+		{"digest-staleness-nudge", `{"prompt":"continue"}`},
+		{"governance-check", bashPayload("git status")},
+		{"governance-check", `{"tool_name":"Write","tool_input":{"file_path":"/app/.env"}}`},
+		{"digest-activity-tracker", ""},
+		{"pipeline-validate", `{"tool_name":"Write","tool_input":{"file_path":"src/main.go"}}`},
+	} {
+		var calls []string
+		sys := fakeSystem(root, now)
+		output, combined := sys.output, sys.combined
+		sys.output = func(dir, name string, args ...string) (string, bool) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return output(dir, name, args...)
+		}
+		sys.combined = func(dir, name string, args ...string) (string, bool) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return combined(dir, name, args...)
+		}
+		sys.fetch = func(url string, _ time.Duration) ([]byte, error) {
+			calls = append(calls, "fetch "+url)
+			return nil, errors.New("offline")
+		}
+		runHook(t, sys, c.hook, c.stdin)
+		if len(calls) != 0 {
+			t.Errorf("%s started %v", c.hook, calls)
+		}
+	}
+}
+
 // The repository root is found without starting git, from a nested directory, for a checkout
 // (.git directory) and a worktree (.git file).
 func TestFindTopLevel(t *testing.T) {

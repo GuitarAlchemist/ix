@@ -60,12 +60,15 @@ func (e *env) install(root string) error {
 	_, werr := io.Copy(tmp, bytes.NewReader(want))
 	cerr := tmp.Close()
 	if werr != nil || cerr != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name()) // best-effort cleanup; the write error is the one reported
 		return fmt.Errorf("writing %s: %v %v", tmp.Name(), werr, cerr)
 	}
-	os.Chmod(tmp.Name(), 0o755)
-	if err := os.Rename(tmp.Name(), target); err != nil {
-		os.Remove(tmp.Name())
+	err = os.Chmod(tmp.Name(), 0o755)
+	if err == nil {
+		err = os.Rename(tmp.Name(), target)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name()) // best-effort cleanup; err is the one reported
 		return err
 	}
 	return nil
@@ -95,7 +98,7 @@ func sessionstartDigest(e *env) int {
 		e.syncManifest(bootstrap)
 		if data, err := os.ReadFile(bootstrap); err == nil {
 			fmt.Fprint(e.stdout, "\n=== Ecosystem Manifest (Vite Dev Data) ===\n")
-			e.stdout.Write(data)
+			_, _ = e.stdout.Write(data) // stdout, as the fmt.Fprint calls around it
 			if len(data) > 0 && data[len(data)-1] != '\n' {
 				fmt.Fprintln(e.stdout)
 			}
@@ -132,7 +135,7 @@ func sessionstartDigest(e *env) int {
 		ageStr = fmt.Sprintf("%dh %dm", age/60, age%60)
 	}
 	fmt.Fprintf(e.stdout, "\n=== Session digest (last written %s ago) ===\n", ageStr)
-	e.stdout.Write(data)
+	_, _ = e.stdout.Write(data) // stdout, as the fmt.Fprint calls around it
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		fmt.Fprintln(e.stdout)
 	}

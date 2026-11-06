@@ -55,7 +55,11 @@ jobs:
           go vet ./...
           go test -count=1 ./...
 
-      - name: Verify every digest hook is wired to ix-hooks, and no hook runs a shell
+      # "No hook runs a shell or a script" has one implementation, `ix doctor`'s hooks check
+      # (crates/ix-cli/src/doctor/hooks.rs, runs_shell). ci.yml runs it on every change to
+      # .claude/settings.json, .claude/hooks/** or go/claudehooks: `ix doctor` and the doctor_hooks
+      # test in `cargo test --workspace`. A grep copy here missed 'quoted' programs and env.
+      - name: Verify every digest hook is wired to ix-hooks
         shell: bash
         run: |
           fail=0
@@ -67,14 +71,6 @@ jobs:
           done
           if ! grep -q 'run ./cmd/ix-hooks session-start' .claude/settings.json; then
             echo "::error file=.claude/settings.json::session-start (digest injection, binary install) is not wired"
-            fail=1
-          fi
-          if grep -nE '"command": *"(bash|sh|pwsh|powershell|python3?|py) |\.(sh|ps1|py)\\?"?"' .claude/settings.json; then
-            echo "::error file=.claude/settings.json::a hook runs a shell or a script"
-            fail=1
-          fi
-          if ls .claude/hooks/*.sh .claude/hooks/*.ps1 .claude/hooks/*.py 2>/dev/null | grep -q .; then
-            echo "::error::scripts left in .claude/hooks/"
             fail=1
           fi
           exit $fail

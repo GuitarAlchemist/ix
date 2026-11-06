@@ -147,5 +147,5 @@ func writeContext(w io.Writer, ctx string) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false) // jq writes < > & as they are
 	enc.SetIndent("", "  ")
-	enc.Encode(map[string]string{"additionalContext": ctx})
+	_ = enc.Encode(map[string]string{"additionalContext": ctx}) // stdout, as fmt.Print
 }
