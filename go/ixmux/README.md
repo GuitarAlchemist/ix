@@ -10,7 +10,7 @@ picks up its state from the command log.
 ```
 ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
             [--claude-target name ...] [--claude-bin path]
-            [--timeout 30s] [--max-conns 16] [--queue 256] [--poll 200ms]
+            [--timeout 30s] [--max-conns 16] [--max-http-conns 64] [--read-timeout 10s] [--queue 256] [--poll 200ms]
 ixmux version
 ```
 
@@ -31,7 +31,7 @@ go -C C:\Users\spare\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<g
 | `POST /v1/mandates/{id}/reconcile` | Asks the target whether an uncertain delivery arrived. |
 | `GET /v1/status` | Targets and their incarnations, deliveries (age, `still_running`), connections, bounds. |
 | `GET /v1/journal/{name}?from=&incarnation=&max_bytes=&cursor=` | One page of `journal.ReadCursor`. Pass back the `cursor` it returns; ixmux signs it with HMAC. A cursor that is unsigned or badly signed is ignored (`cursor_ignored`), and the read starts again from `from`. |
-| `GET /v1/stream[?since=<seq>&epoch=<epoch>]` | WebSocket. The first message is `hello`. Then come either the missed events, or a `gap` followed by the `state`. Then live events: `mandate`, `journal`, `journal-reset`. |
+| `GET /v1/stream[?since=<seq>&epoch=<epoch>]` | WebSocket. The first message is `hello`. Then come either the missed events, or a `gap` followed by the state: `state-page` messages, then one `state-end`. Then live events: `mandate`, `journal`, `journal-reset`. |
 | `POST /v1/shutdown` | Clean stop. |
 
 How the stream works:
@@ -42,7 +42,10 @@ How the stream works:
   - `ring`: the events are no longer kept;
   - `ahead`: `since` is past the last event;
   - `slow`: your queue overflowed. The connection then closes with 1008; resume with `since=last_seq`.
-- Clients must raise their WebSocket read limit to `max_stream_message` (1 MiB).
+- After a `gap`, each `state-page` holds `deliveries` (the last transition of each, its reason cut at 1 KiB), and `state-end` gives `pages`, `deliveries`, `targets` and `journals`. Their `seq` is the last event they cover: the next event is `seq+1`, and no transition they hold comes again as an event.
+- Clients must raise their WebSocket read limit to `max_stream_message` (1 MiB). Every message fits in it, the state included.
+
+HTTP bounds: a request's headers and body are read within `--read-timeout`, and its answer is written within 10 s, or within the delivery deadline plus 10 s for a delivery or a reconcile. ixmux holds at most `--max-http-conns` TCP connections, stream connections included; one more is answered 503 `too-many-connections` at once. `--max-conns` bounds the stream connections alone.
 
 ## Files in `<state>`
 
@@ -58,13 +61,16 @@ How the stream works:
 | 1 | Serving failed. |
 | 2 | Bad command line. |
 | 3 | Start refused: the address is not a loopback IP, the state is held by another ixmux, or the token file failed. |
-| 4 | Stopped while adapter calls were still running: the engine's `Close` refused with `calls-in-flight`. |
+| 4 | Stopped while deliveries, reconciles or adapter calls were still under way: the engine's `Close` refused with `calls-in-flight`. |
+| 5 | Stopped, but the token file could not be removed or `ixmux.json` could not be marked stopped. The error is on stderr; it names the file, never the token. The next start rewrites the token. |
 
-A stop (Ctrl+C, Ctrl+Break or `POST /v1/shutdown`) takes at most the delivery deadline (`--timeout`) plus 10 s.
+A stop exits 1 if a transition could not be written to the command log (`log-broken`).
+
+A stop (Ctrl+C, Ctrl+Break or `POST /v1/shutdown`) refuses new deliveries and reconciles at once (`engine-closed`), and waits for those under way until their final state is written. It takes at most the delivery deadline (`--timeout`) plus 10 s, plus up to 10 s per claude target.
 
 ## Runbook (cmd.exe, absolute paths)
 
-The session in this runbook is a fake one: the JSONL file `C:\Users\spare\.cache\ixmux-fake\session.jsonl`.
+The session in this runbook is a fake one: the JSONL file `C:\Users\spare\.cache\ixmux-fake\session.jsonl`, created at start if missing. Its incarnation names the path and the file there: it is the same across restarts, and another one if another file is put at the path.
 
 1. Start ixmux in its own window:
 
@@ -109,14 +115,14 @@ Nothing else is written: no service, no registry key, no file outside `--state` 
 claude -p --input-format stream-json --output-format stream-json --verbose --tools "" --strict-mcp-config --session-id <uuid>
 ```
 
-- Never `--bare`, `--dangerously-skip-permissions` or `--permission-mode bypassPermissions`. `--setting-sources` is left alone, so your hooks apply as they are. `--permission-mode` is not passed at all: `default` is not a valid choice of claude 2.1.318, so the child runs in your configured mode (`auto` here), with no tool to use it on.
+- Never `--bare`, `--dangerously-skip-permissions` or `--permission-mode bypassPermissions`. `--setting-sources` is left alone, so your hooks apply as they are. ixmux sets no permission mode: the child runs in the mode of your configuration (`auto` here). What protects is that it has no tool.
 - The incarnation of the target is the `session_id` of the child's `system/init`. The real claude sends `init` only after a first user message, so ixmux sends a priming message ("ixmux : ouverture de la session. Réponds seulement : OK.") at each start. That costs one model turn per start, and the target is ready about 28 s after the start.
 - If `init` lists any tool, or names another session, ixmux refuses to deliver to that target.
 - Each mandate is one user message: `ixmux mandate_id: <id>`, then the instruction to begin with `ACK <id>`, then the text. The answer carries `ack.receipt` (`<session>:<id>`), `ack.text` (at most 4 KiB) and `ack.ack_seen`.
 - The working directory of the child is `<state>\claude-<name>\`, which ixmux creates. It holds `stream.jsonl` (the child's raw stdout, plus `{"ixmux":...}` lines for start, send, result and exit) and `stderr.log`. `stream.jsonl` is served as the journal `claude-<name>`.
 - The child runs in a kill-on-close Job Object: if ixmux dies, killed or not, the child dies with it. A restart starts a new child, so a new incarnation: a mandate that was delivering becomes `uncertain`, its reconcile answers 409 `stale-incarnation`, and resending it answers 409.
 - One real turn often takes longer than the default `--timeout 30s`. Pass `--timeout 120s`.
-- A stop also waits up to 10 s for the child to exit once its stdin is closed, then kills the job.
+- A stop also waits up to 10 s for the child to exit once its stdin is closed, then kills the job. `stream.jsonl` traces it: `{"ixmux":"stop","step":"stdin-closed"}`, then `exited` or `killed` with `after_ms`. A child still running its SessionEnd hooks at 10 s is killed with them.
 
 Runbook (cmd.exe), with a throwaway state:
 
