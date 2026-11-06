@@ -141,11 +141,8 @@ func TestCRLFAndBlankLines(t *testing.T) {
 
 func TestEmptyFile(t *testing.T) {
 	path, inc := writeJournal(t, "")
-	if inc != "" {
-		t.Fatalf("incarnation %q of an empty journal", inc)
-	}
 	page := mustRead(t, path, inc, 0, 0)
-	if len(page.Events) != 0 || page.Next != 0 || page.Size != 0 || page.Pending != nil {
+	if len(page.Events) != 0 || page.Next != 0 || page.Size != 0 || page.Pending != nil || !page.AtEnd || !page.Provisional {
 		t.Errorf("empty journal: %+v", page)
 	}
 }
@@ -162,11 +159,11 @@ func TestIncompleteLastLineIsPending(t *testing.T) {
 			t.Fatalf("from 2: %d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 		}
 	}
-	// An incomplete first record: no incarnation yet, and it is pending.
+	// An incomplete first record: a provisional incarnation, and it is pending.
 	path, inc = writeJournal(t, "abc")
 	page = mustRead(t, path, inc, 0, 0)
-	if inc != "" || page.Pending == nil || *page.Pending != (Pending{At: 0, Bytes: 3}) {
-		t.Errorf("incomplete first record: incarnation %q, pending %v", inc, page.Pending)
+	if !page.Provisional || page.Pending == nil || *page.Pending != (Pending{At: 0, Bytes: 3}) {
+		t.Errorf("incomplete first record: provisional %v, pending %v", page.Provisional, page.Pending)
 	}
 }
 

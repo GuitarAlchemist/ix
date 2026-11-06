@@ -69,6 +69,11 @@ type Page struct {
 	Size        int64    `json:"size"`
 	Pending     *Pending `json:"pending,omitempty"`
 	AtEnd       bool     `json:"at_end,omitempty"`
+	// Provisional: the journal has no first record yet; Incarnation names the file alone.
+	Provisional bool `json:"provisional,omitempty"`
+	// PromotedFrom: the checkpoint's provisional incarnation, accepted because the first record
+	// of the same file has completed since; continue with Incarnation.
+	PromotedFrom string `json:"promoted_from,omitempty"`
 }
 
 // EventID names an event the same way on every read: source/session@incarnation:offset.
@@ -79,44 +84,65 @@ func EventID(key, incarnation string, offset int64) string {
 // EventID names e, read in p, for the session key (source/session).
 func (p Page) EventID(key string, e Event) string { return EventID(key, p.Incarnation, e.Offset) }
 
-// Identify returns the journal's incarnation and size: 12 hex of SHA-256 over the file's identity
-// and its first complete record ("" while there is none).
+// Identify returns the journal's incarnation and size.
+//
+// The incarnation is 12 hex of SHA-256 over the file's identity and its first record (the bytes
+// before the first '\n', or the first MaxLine bytes of a longer first record): another file
+// under the same path, or another first record, is another incarnation. While the journal has
+// neither (it is empty, or its first record is shorter than MaxLine and has no '\n' yet), the
+// incarnation is provisional: 12 hex of SHA-256 over the file's identity alone. Once the first
+// record completes, Read accepts a provisional checkpoint of the same file and says so
+// (Page.PromotedFrom); a provisional checkpoint of another file is stale.
 func Identify(path string) (incarnation string, size int64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
 	}
 	defer f.Close()
-	return identify(f, make([]byte, scanChunk))
+	inc, _, size, err := identify(f, make([]byte, scanChunk))
+	return inc, size, err
 }
 
-// identify hashes the first record in chunks of buf, so a first record of any length costs no
-// more memory than buf.
-func identify(f *os.File, buf []byte) (string, int64, error) {
+func hash12(parts ...[]byte) string {
+	h := sha256.New()
+	for _, p := range parts {
+		h.Write(p)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)[:6])
+}
+
+// identify returns the incarnation, the provisional incarnation of the same file, and the size.
+// It reads at most MaxLine bytes, in chunks of buf.
+func identify(f *os.File, buf []byte) (inc, provisional string, size int64, err error) {
 	id, err := fileIdentity(f)
 	if err != nil {
-		return "", 0, err
+		return "", "", 0, err
 	}
 	st, err := f.Stat()
 	if err != nil {
-		return "", 0, err
+		return "", "", 0, err
 	}
-	size := st.Size()
+	size = st.Size()
+	provisional = hash12([]byte("provisional\n" + id))
 	h := sha256.New()
 	h.Write([]byte(id + "\n"))
-	for pos := int64(0); pos < size; {
-		chunk := buf[:min(int64(len(buf)), size-pos)]
+	limit := min(size, MaxLine)
+	for pos := int64(0); pos < limit; {
+		chunk := buf[:min(int64(len(buf)), limit-pos)]
 		if err := readAt(f, chunk, pos); err != nil {
-			return "", 0, err
+			return "", "", 0, err
 		}
 		if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
 			h.Write(chunk[:i])
-			return fmt.Sprintf("%x", h.Sum(nil)[:6]), size, nil
+			return fmt.Sprintf("%x", h.Sum(nil)[:6]), provisional, size, nil
 		}
 		h.Write(chunk)
 		pos += int64(len(chunk))
 	}
-	return "", size, nil
+	if size >= MaxLine { // a first record longer than MaxLine: its first MaxLine bytes name it
+		return fmt.Sprintf("%x", h.Sum(nil)[:6]), provisional, size, nil
+	}
+	return provisional, provisional, size, nil
 }
 
 // Read returns the complete records of the journal at path from the checkpoint from, within
@@ -137,16 +163,22 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	}
 	defer f.Close()
 	buf := make([]byte, max(budget, min(scanChunk, ReadMax))) // the only buffer of this read
-	inc, size, err := identify(f, buf)
+	inc, provisional, size, err := identify(f, buf)
 	if err != nil {
 		return Page{}, err
 	}
 	if testHookAfterIdentify != nil {
 		testHookAfterIdentify(path)
 	}
+	promoted := ""
 	switch {
-	case inc != incarnation:
+	case incarnation == inc:
+	case incarnation == provisional: // the same file, whose first record has completed since
+		promoted = provisional
+	default:
 		return Page{}, &Refusal{StaleIncarnation, fmt.Sprintf("checkpoint is of incarnation %q, the journal is now %q", incarnation, inc)}
+	}
+	switch {
 	case from < 0 || from > size:
 		return Page{}, &Refusal{Truncated, fmt.Sprintf("checkpoint offset %d, the journal holds %d bytes", from, size)}
 	}
@@ -158,7 +190,7 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 			return Page{}, &Refusal{BadCheckpoint, fmt.Sprintf("offset %d is not a record boundary", from)}
 		}
 	}
-	page := Page{Incarnation: inc, Events: []Event{}, Next: from, Size: size}
+	page := Page{Incarnation: inc, Next: from, Size: size, Provisional: inc == provisional, PromotedFrom: promoted}
 	rest := buf[:min(budget, size-from)]
 	if err := readAt(f, rest, from); err != nil {
 		return Page{}, err
