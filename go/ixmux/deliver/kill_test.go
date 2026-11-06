@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,16 @@ func TestHelperProcess(t *testing.T) {
 	mode := os.Getenv(helperEnv)
 	if mode == "" {
 		t.Skip("helper process only")
+	}
+	if mode == "open" { // only try to open the log, and say how it went
+		e, _, err := Open(os.Getenv("IXMUX_LOG"), Options{})
+		if err != nil {
+			fmt.Printf("OPEN-REFUSED %s\n", refusalCode(err))
+			return
+		}
+		e.Close()
+		fmt.Println("OPEN-OK")
+		return
 	}
 	e, _, err := Open(os.Getenv("IXMUX_LOG"), Options{Timeout: time.Hour})
 	if err != nil {

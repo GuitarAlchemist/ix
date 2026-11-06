@@ -49,10 +49,19 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	if opt.MaxLogBytes <= 0 {
 		opt.MaxLogBytes = MaxLogBytes
 	}
-	l, recs, torn, err := openLog(path, opt.MaxLogBytes)
+	lock, err := lockFile(path + ".lock")
+	if errors.Is(err, errLocked) {
+		return nil, Recovery{}, &Refusal{JournalLocked, path + " is held by another engine"}
+	}
 	if err != nil {
 		return nil, Recovery{}, err
 	}
+	l, recs, torn, err := openLog(path, opt.MaxLogBytes)
+	if err != nil {
+		lock.Close()
+		return nil, Recovery{}, err
+	}
+	l.lock = lock
 	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
 		targets: map[string]Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{}}
 	for _, r := range recs {

@@ -3,6 +3,7 @@ package deliver
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,11 +23,15 @@ type logRecord struct {
 	Fingerprint string    `json:"fp,omitempty"` // of the mandate, on its accepted records
 }
 
-// cmdLog is the append-only command log.
+// cmdLog is the append-only command log, written by one engine at a time: lock is held on
+// <log>.lock from Open to close.
 type cmdLog struct {
-	mu sync.Mutex
-	f  *os.File
+	mu   sync.Mutex
+	f    *os.File
+	lock io.Closer
 }
+
+var errLocked = errors.New("locked")
 
 // openLog reads the log at path back, at most maxBytes of it. A last record without its '\n'
 // (a crash while writing it) is cut off and reported as torn; any other unreadable record is
@@ -99,5 +104,10 @@ func (l *cmdLog) append(r logRecord) error {
 func (l *cmdLog) close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.f.Close()
+	err := l.f.Close()
+	if l.lock != nil {
+		l.lock.Close()
+		l.lock = nil
+	}
+	return err
 }
