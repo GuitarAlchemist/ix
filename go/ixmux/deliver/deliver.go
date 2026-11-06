@@ -73,6 +73,13 @@ type Ack struct {
 
 // Adapter delivers a mandate to its target. An error wrapping ErrRefused says the target
 // certainly did not take it; any other error leaves the outcome unknown.
+//
+// Contract on incarnation: the engine checks m.Incarnation against Target.Incarnation and,
+// under the same lock as its claim on the delivery, that the target was not registered again
+// since; but the session can still restart between that check and the call. Deliver must
+// therefore deliver only if the session's current incarnation equals m.Incarnation, checked
+// atomically with the delivery itself (for instance by passing it to the session, which refuses
+// another), and return an error wrapping ErrRefused otherwise.
 type Adapter interface {
 	Deliver(ctx context.Context, m Mandate) (Ack, error)
 }

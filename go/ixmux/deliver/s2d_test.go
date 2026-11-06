@@ -32,6 +32,23 @@ func (l *lateTarget) Status(ctx context.Context, mandateID string) (Outcome, err
 	return NotReceived, nil
 }
 
+// S2D-3: a Register that replaces the target between the incarnation check and the call.
+func TestReplacedTargetGetsNoStaleMandate(t *testing.T) {
+	e, _ := openEngine(t, filepath.Join(t.TempDir(), "cmd.jsonl"), Options{})
+	old := &fakeTarget{inc: "i"}
+	repl := &fakeTarget{inc: "i2"}
+	e.Register("a", old.target())
+	testHookAfterIncarnation = func() { e.Register("a", repl.target()) }
+	defer func() { testHookAfterIncarnation = nil }()
+	res, err := e.Deliver(context.Background(), Mandate{MandateID: "m1", Target: "a", Incarnation: "i", Text: "go"})
+	if refusalCode(err) != StaleIncarnation {
+		t.Errorf("target replaced after the check: %+v %v, want %s", res, err, StaleIncarnation)
+	}
+	if old.calls.Load() != 0 || repl.calls.Load() != 0 {
+		t.Errorf("old adapter %d calls, new adapter %d calls; want 0 and 0", old.calls.Load(), repl.calls.Load())
+	}
+}
+
 func waitState(e *Engine, target, id string, want State, within time.Duration) State {
 	deadline := time.Now().Add(within)
 	for {

@@ -30,7 +30,7 @@ type Engine struct {
 	slots   chan struct{} // one per adapter call not yet returned
 
 	mu      sync.Mutex
-	targets map[string]Target
+	targets map[string]*Target // one allocation per Register: a pointer names a registration
 	recs    map[key]*record
 	claims  map[key]bool    // a Deliver or Reconcile of this key is running
 	running map[string]bool // targets with an adapter call not yet returned
@@ -73,7 +73,7 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	}
 	l.lock = lock
 	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
-		targets: map[string]Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{},
+		targets: map[string]*Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
@@ -141,7 +141,7 @@ func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *A
 func (e *Engine) Register(name string, t Target) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.targets[name] = t
+	e.targets[name] = &t
 }
 
 // gate decides, under e.mu, whether k may be sent again: done is true when the answer is
@@ -207,11 +207,19 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	if inc != m.Incarnation {
 		return Result{}, &Refusal{StaleIncarnation, fmt.Sprintf("mandate is for incarnation %q, %s is now %q", m.Incarnation, m.Target, inc)}
 	}
+	if testHookAfterIncarnation != nil {
+		testHookAfterIncarnation()
+	}
 
 	e.mu.Lock()
 	if res, err, done := e.gate(k, fp); done {
 		e.mu.Unlock()
 		return res, err
+	}
+	if e.targets[m.Target] != t {
+		// Re-registered since the check: the incarnation checked is not the target's any more.
+		e.mu.Unlock()
+		return Result{}, &Refusal{StaleIncarnation, m.Target + " was registered again after its incarnation was checked"}
 	}
 	if e.running[m.Target] {
 		e.mu.Unlock()
@@ -275,6 +283,9 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	to, reason, ack := outcome(cl.res)
 	return e.finish(k, inc, to, reason, ack)
 }
+
+// testHookAfterIncarnation, when set by a test, runs between the incarnation check and the claim.
+var testHookAfterIncarnation func()
 
 // outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
 // other error leaves the outcome unknown.
