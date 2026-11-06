@@ -6,6 +6,7 @@
 
 ```
 ixmux serve --addr 127.0.0.1:0 --state <dossier> [--journal nom=chemin ...] [--target nom=chemin ...]
+            [--claude-target nom ...] [--claude-bin chemin]
             [--timeout 30s] [--max-conns 16] [--queue 256] [--poll 200ms]
 ixmux version
 ```
@@ -97,9 +98,45 @@ rmdir /s /q C:\Users\spare\.cache\ixmux-fake
 
 Rien d'autre n'est écrit : aucun service, aucune clé de registre, aucun fichier hors de `--state` et des fichiers `--target`.
 
+## Vraie session (`--claude-target`)
+
+`--claude-target c` garde ouvert un enfant `claude -p` en stream-json, sans outils :
+
+```
+claude -p --input-format stream-json --output-format stream-json --verbose --tools "" --strict-mcp-config --session-id <uuid>
+```
+
+- Jamais `--bare`, `--dangerously-skip-permissions` ni `--permission-mode bypassPermissions`. `--setting-sources` n'est pas touché : tes hooks s'appliquent tels quels. `--permission-mode` n'est pas passé du tout : `default` n'est pas un choix valide de claude 2.1.318, donc l'enfant tourne dans ton mode configuré (`auto` ici), sans aucun outil sur lequel l'exercer.
+- L'incarnation de la cible est le `session_id` du `system/init` de l'enfant. Le vrai claude n'envoie `init` qu'après un premier message utilisateur : ixmux envoie donc un message d'amorce (« ixmux : ouverture de la session. Réponds seulement : OK. ») à chaque démarrage. Cela coûte un tour de modèle par démarrage, et la cible est prête environ 28 s après le démarrage.
+- Si `init` liste un outil, ou nomme une autre session, ixmux refuse de livrer à cette cible.
+- Chaque mandat est un message utilisateur : `ixmux mandate_id: <id>`, puis la consigne de commencer par `ACK <id>`, puis le texte. La réponse porte `ack.receipt` (`<session>:<id>`), `ack.text` (4 Kio au plus) et `ack.ack_seen`.
+- Le répertoire de travail de l'enfant est `<state>\claude-<nom>\`, qu'ixmux crée. Il contient `stream.jsonl` (la sortie standard brute de l'enfant, plus des lignes `{"ixmux":...}` pour le démarrage, l'envoi, le résultat et la sortie) et `stderr.log`. `stream.jsonl` est servi comme journal `claude-<nom>`.
+- L'enfant tourne dans un Job Object kill-on-close : si ixmux meurt, tué ou non, l'enfant meurt avec lui. Un redémarrage lance un nouvel enfant, donc une nouvelle incarnation : un mandat qui était en livraison devient `uncertain`, sa réconciliation répond 409 `stale-incarnation`, et son renvoi répond 409.
+- Un vrai tour dépasse souvent le `--timeout 30s` par défaut. Passe `--timeout 120s`.
+- Un arrêt attend aussi jusqu'à 10 s que l'enfant sorte une fois son entrée standard fermée, puis tue le job.
+
+Runbook (cmd.exe), avec un état jetable :
+
+```
+start "ixmux" C:\Users\spare\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe serve --addr 127.0.0.1:47012 --state C:\Users\spare\.cache\ixmux-claude\state --claude-target c --timeout 120s
+```
+
+ixmux n'écrit `ixmux.json` et ne répond qu'une fois l'enfant prêt (environ 30 s). `/v1/status` montre alors la cible `c` avec son `incarnation` et `"alive":true`. Envoie Hello comme à l'étape 3, avec `"target":"c"`. Arrête-le comme à l'étape 4.
+
+**Piège :** un `start` lancé dans un `cmd /c` dont la sortie est capturée hérite du pipe. L'appelant attend alors la sortie d'ixmux, et de son enfant. Lance `start` depuis une vraie fenêtre de console.
+
+**Retour arrière :** arrête ixmux, vérifie qu'il ne reste aucun enfant `claude` (`tasklist /fi "imagename eq claude.exe"`), puis supprime l'état jetable :
+
+```
+rmdir /s /q C:\Users\spare\.cache\ixmux-claude
+```
+
+La session Claude elle-même est gardée par claude sous ton profil, comme toute session `claude -p`. ixmux n'écrit rien d'autre.
+
 ## Limites de cette tranche
 
-- Le seul adaptateur est la session fictive (un fichier JSONL). Aucune vraie session Claude n'est encore atteinte.
+- La session fictive (un fichier JSONL) et une vraie session Claude en stream-json, sans outils, sont les seuls adaptateurs.
+- La vraie session a été déroulée à la main, en 20 tours de modèle au plus. La suite de tests ne lance jamais de vrai claude : elle utilise un faux (`claudestream/internal/fakeclaude`).
 - Les journaux suivis repartent de l'offset 0 à chaque démarrage, sous une nouvelle époque, et le flux transporte leurs pages avec leurs lignes.
 - Une connexion n'est déclarée `slow` que lorsque sa file déborde, ce qui suppose une contre-pression TCP. Un client qui lit lentement mais suit le rythme n'est jamais coupé.
 - Non testé ici :

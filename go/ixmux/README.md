@@ -9,6 +9,7 @@ picks up its state from the command log.
 
 ```
 ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
+            [--claude-target name ...] [--claude-bin path]
             [--timeout 30s] [--max-conns 16] [--queue 256] [--poll 200ms]
 ixmux version
 ```
@@ -100,9 +101,45 @@ rmdir /s /q C:\Users\spare\.cache\ixmux-fake
 
 Nothing else is written: no service, no registry key, no file outside `--state` and the `--target` files.
 
+## Real session (`--claude-target`)
+
+`--claude-target c` keeps one `claude -p` child open in stream-json, with no tools:
+
+```
+claude -p --input-format stream-json --output-format stream-json --verbose --tools "" --strict-mcp-config --session-id <uuid>
+```
+
+- Never `--bare`, `--dangerously-skip-permissions` or `--permission-mode bypassPermissions`. `--setting-sources` is left alone, so your hooks apply as they are. `--permission-mode` is not passed at all: `default` is not a valid choice of claude 2.1.318, so the child runs in your configured mode (`auto` here), with no tool to use it on.
+- The incarnation of the target is the `session_id` of the child's `system/init`. The real claude sends `init` only after a first user message, so ixmux sends a priming message ("ixmux : ouverture de la session. Réponds seulement : OK.") at each start. That costs one model turn per start, and the target is ready about 28 s after the start.
+- If `init` lists any tool, or names another session, ixmux refuses to deliver to that target.
+- Each mandate is one user message: `ixmux mandate_id: <id>`, then the instruction to begin with `ACK <id>`, then the text. The answer carries `ack.receipt` (`<session>:<id>`), `ack.text` (at most 4 KiB) and `ack.ack_seen`.
+- The working directory of the child is `<state>\claude-<name>\`, which ixmux creates. It holds `stream.jsonl` (the child's raw stdout, plus `{"ixmux":...}` lines for start, send, result and exit) and `stderr.log`. `stream.jsonl` is served as the journal `claude-<name>`.
+- The child runs in a kill-on-close Job Object: if ixmux dies, killed or not, the child dies with it. A restart starts a new child, so a new incarnation: a mandate that was delivering becomes `uncertain`, its reconcile answers 409 `stale-incarnation`, and resending it answers 409.
+- One real turn often takes longer than the default `--timeout 30s`. Pass `--timeout 120s`.
+- A stop also waits up to 10 s for the child to exit once its stdin is closed, then kills the job.
+
+Runbook (cmd.exe), with a throwaway state:
+
+```
+start "ixmux" C:\Users\spare\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe serve --addr 127.0.0.1:47012 --state C:\Users\spare\.cache\ixmux-claude\state --claude-target c --timeout 120s
+```
+
+ixmux writes `ixmux.json` and answers only once the child is ready (about 30 s). `/v1/status` then shows the target `c` with its `incarnation` and `"alive":true`. Send Hello as in step 3, with `"target":"c"`. Stop it as in step 4.
+
+**Pitfall:** a `start` run inside a `cmd /c` whose output is captured inherits the pipe. The caller then waits for ixmux, and for its child, to exit. Run `start` from a real console window.
+
+**Rollback:** stop ixmux, check that no `claude` child is left (`tasklist /fi "imagename eq claude.exe"`), then delete the throwaway state:
+
+```
+rmdir /s /q C:\Users\spare\.cache\ixmux-claude
+```
+
+The Claude session itself is kept by claude under your profile, as any `claude -p` session is. ixmux writes nothing else.
+
 ## Limits of this slice
 
-- The only adapter is the fake session (a JSONL file). No real Claude session is reached yet.
+- The fake session (a JSONL file) and one real Claude session in stream-json, with no tools, are the only adapters.
+- The real session was run by hand, within 20 model turns. The test suite never starts a real claude: it uses a fake one (`claudestream/internal/fakeclaude`).
 - Followed journals start at offset 0 at each start, under a new epoch, and the stream carries their pages with their lines.
 - A connection counts as `slow` only once its queue overflows, which needs TCP back-pressure. A client that reads slowly but keeps up is never cut.
 - Not tested here:
