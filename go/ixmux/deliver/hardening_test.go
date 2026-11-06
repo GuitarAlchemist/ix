@@ -52,35 +52,46 @@ func TestSecondWriterIsRefused(t *testing.T) {
 }
 
 // S2C-5: the same mandate id with another text, target or incarnation is refused, not replayed.
+// A mandate id is unique in the whole log: reusing it with another target, incarnation or text
+// is refused before any adapter call, also after a restart.
 func TestMandateIDReuseIsRefused(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cmd.jsonl")
-	e, _ := openEngine(t, path, Options{})
-	tg := &fakeTarget{inc: "i"}
-	e.Register("a", tg.target())
-	m := Mandate{MandateID: "m1", Target: "a", Incarnation: "i", Text: "first"}
-	if _, err := e.Deliver(context.Background(), m); err != nil {
-		t.Fatal(err)
-	}
-	other := m
-	other.Text = "second"
-	res, err := e.Deliver(context.Background(), other)
-	if refusalCode(err) != MandateIDReuse {
-		t.Errorf("same id, other text: %+v %v, want %s", res, err, MandateIDReuse)
-	}
-	if res, err := e.Deliver(context.Background(), m); err != nil || !res.Replayed {
-		t.Errorf("same mandate again: %+v %v, want replayed", res, err)
-	}
-	if tg.calls.Load() != 1 {
-		t.Errorf("%d adapter calls, want 1", tg.calls.Load())
-	}
-	// The fingerprint survives a restart.
-	e.Close()
-	e2, _ := openEngine(t, path, Options{})
-	e2.Register("a", tg.target())
-	if _, err := e2.Deliver(context.Background(), other); refusalCode(err) != MandateIDReuse {
-		t.Errorf("after restart, same id, other text: %v, want %s", err, MandateIDReuse)
-	}
-	if tg.calls.Load() != 1 {
-		t.Errorf("%d adapter calls after restart, want 1", tg.calls.Load())
+	for _, field := range []string{"target", "incarnation", "text"} {
+		t.Run(field, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cmd.jsonl")
+			e, _ := openEngine(t, path, Options{})
+			a, b := &fakeTarget{inc: "i"}, &fakeTarget{inc: "i"}
+			e.Register("a", a.target())
+			e.Register("b", b.target())
+			m := Mandate{MandateID: "m1", Target: "a", Incarnation: "i", Text: "first"}
+			if _, err := e.Deliver(context.Background(), m); err != nil {
+				t.Fatal(err)
+			}
+			other := m
+			switch field {
+			case "target":
+				other.Target = "b"
+			case "incarnation":
+				a.inc, other.Incarnation = "i2", "i2" // the session restarted
+			case "text":
+				other.Text = "second"
+			}
+			res, err := e.Deliver(context.Background(), other)
+			if refusalCode(err) != MandateIDReuse {
+				t.Errorf("same id, other %s: %+v %v, want %s", field, res, err, MandateIDReuse)
+			}
+			if a.calls.Load() != 1 || b.calls.Load() != 0 {
+				t.Errorf("adapter calls a=%d b=%d, want 1 and 0", a.calls.Load(), b.calls.Load())
+			}
+			e.Close()
+			e2, _ := openEngine(t, path, Options{})
+			e2.Register("a", a.target())
+			e2.Register("b", b.target())
+			if _, err := e2.Deliver(context.Background(), other); refusalCode(err) != MandateIDReuse {
+				t.Errorf("after restart, same id, other %s: %v, want %s", field, err, MandateIDReuse)
+			}
+			if a.calls.Load() != 1 || b.calls.Load() != 0 {
+				t.Errorf("after restart, adapter calls a=%d b=%d, want 1 and 0", a.calls.Load(), b.calls.Load())
+			}
+		})
 	}
 }

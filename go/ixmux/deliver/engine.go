@@ -32,10 +32,11 @@ type Engine struct {
 	mu      sync.Mutex
 	targets map[string]*Target // one allocation per Register: a pointer names a registration
 	recs    map[key]*record
-	claims  map[key]bool    // a Deliver or Reconcile of this key is running
-	running map[string]bool // targets with an adapter call not yet returned
-	calling map[key]bool    // keys whose adapter call has not returned, even past its deadline
-	asking  map[key]bool    // keys whose Status call has not returned, even past its deadline
+	ids     map[string]*record // by mandate id alone: an id is unique in the whole log
+	claims  map[key]bool       // a Deliver or Reconcile of this key is running
+	running map[string]bool    // targets with an adapter call not yet returned
+	calling map[key]bool       // keys whose adapter call has not returned, even past its deadline
+	asking  map[key]bool       // keys whose Status call has not returned, even past its deadline
 }
 
 // call is one adapter call, shared by the caller and the goroutine that runs it.
@@ -74,7 +75,7 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	}
 	l.lock = lock
 	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
-		targets: map[string]*Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{},
+		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
@@ -105,6 +106,9 @@ func (e *Engine) apply(lr logRecord) {
 	if r == nil {
 		r = &record{target: lr.Target, id: lr.MandateID, created: lr.At}
 		e.recs[k] = r
+		if e.ids[lr.MandateID] == nil {
+			e.ids[lr.MandateID] = r
+		}
 	}
 	r.prev, r.state, r.reason, r.since, r.ack = r.state, lr.State, lr.Reason, lr.At, lr.Ack
 	if lr.Incarnation != "" {
@@ -148,10 +152,10 @@ func (e *Engine) Register(name string, t Target) {
 // gate decides, under e.mu, whether k may be sent again: done is true when the answer is
 // already known (a replay or a refusal).
 func (e *Engine) gate(k key, fp string) (res Result, err error, done bool) {
-	r := e.recs[k]
-	if r != nil && r.fp != "" && r.fp != fp {
-		return Result{}, &Refusal{MandateIDReuse, fmt.Sprintf("%s/%s was first accepted with another target, incarnation or text", k.target, k.id)}, true
+	if first := e.ids[k.id]; first != nil && first.fp != "" && first.fp != fp {
+		return Result{}, &Refusal{MandateIDReuse, fmt.Sprintf("mandate id %s was first accepted for %s with another incarnation or text", k.id, first.target)}, true
 	}
+	r := e.recs[k]
 	if e.claims[k] {
 		return Result{}, &Refusal{InFlight, fmt.Sprintf("%s/%s is being delivered or reconciled", k.target, k.id)}, true
 	}
