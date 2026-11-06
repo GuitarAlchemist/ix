@@ -59,11 +59,12 @@ const (
 
 // Exit codes of ixmux serve.
 const (
-	ExitOK            = 0 // stopped cleanly: no adapter call left, log closed, lock released
-	ExitError         = 1 // serving failed
-	ExitUsage         = 2 // bad command line
-	ExitRefused       = 3 // start refused: address not loopback, state held by another ixmux, token file
-	ExitCallsInFlight = 4 // stopped with adapter calls still running (the engine's Close refused)
+	ExitOK             = 0 // stopped cleanly: no adapter call left, log closed, lock released
+	ExitError          = 1 // serving failed
+	ExitUsage          = 2 // bad command line
+	ExitRefused        = 3 // start refused: address not loopback, state held by another ixmux, token file
+	ExitCallsInFlight  = 4 // stopped with adapter calls still running (the engine's Close refused)
+	ExitStopIncomplete = 5 // stopped, but ixmux.json could not be marked stopped or the token removed
 )
 
 // Named is a name=path flag.
@@ -189,9 +190,14 @@ func Start(cfg Config) (*Server, error) {
 	}
 	s.eng = eng
 	s.hub.seed(eng.Status()) // the deliveries replayed from the log, before any event
+	tokenPath := filepath.Join(cfg.State, TokenFile)
+	tokenWritten := false
 	fail := func(err error) (*Server, error) {
 		s.stopClaude()
 		eng.Close()
+		if tokenWritten {
+			os.Remove(tokenPath) // a failed start leaves no token
+		}
 		return nil, err
 	}
 	for _, t := range cfg.Targets {
@@ -226,9 +232,10 @@ func Start(cfg Config) (*Server, error) {
 	}
 	s.token = []byte(hex.EncodeToString(random(32)))
 	s.key = random(32)
-	if err := writeSecret(filepath.Join(cfg.State, TokenFile), s.token); err != nil {
+	if err := writeSecret(tokenPath, s.token); err != nil {
 		return fail(&StartError{"token file: " + err.Error()})
 	}
+	tokenWritten = true
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		return fail(err)
@@ -279,7 +286,18 @@ func (s *Server) writeInfo() error {
 	}
 	path := filepath.Join(s.cfg.State, InfoFile)
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+	fh, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = fh.Write(append(b, '\n'))
+	if err == nil {
+		err = fh.Sync() // the content is on disk before the rename makes it ixmux.json
+	}
+	if cerr := fh.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return err
 	}
 	// On Windows, replacing a file that a reader holds open fails for as long as it holds it:
@@ -336,10 +354,24 @@ func (s *Server) stop(code int) int {
 			}
 		}
 	}
+	// The token is removed first, so ixmux.json records the final exit code. Neither failure is
+	// left silent: the stop then exits ExitStopIncomplete (unless it already failed), with the
+	// error on stderr; the error names the file, never the token.
+	// @ai:invariant a stop exits 0 only if ixmux.json says stopped and the token is removed [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s3b_windows_test.go:TestStopWithTheTokenHeldIsNotZero]
+	if err := os.Remove(filepath.Join(s.cfg.State, TokenFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "ixmux: the token file was not removed:", err)
+		if code == ExitOK {
+			code = ExitStopIncomplete
+		}
+	}
 	now := time.Now().UTC()
 	s.info.State, s.info.Stopped, s.info.ExitCode = "stopped", &now, &code
-	s.writeInfo()
-	os.Remove(filepath.Join(s.cfg.State, TokenFile))
+	if err := s.writeInfo(); err != nil {
+		fmt.Fprintln(os.Stderr, "ixmux: ixmux.json was not marked stopped:", err)
+		if code == ExitOK {
+			code = ExitStopIncomplete
+		}
+	}
 	return code
 }
 
