@@ -60,7 +60,11 @@ type Refusal struct {
 
 func (r *Refusal) Error() string { return r.Code + ": " + r.Detail }
 
-// Mandate is one command for one session.
+// Mandate is one command for one session. Its MandateID is unique in the whole command log:
+// the engine keeps a fingerprint of (Target, Incarnation, Text), and the same id sent again with
+// any of them different, even by a byte (a re-encoded JSON text, other whitespace or line
+// endings), is refused mandate-id-reuse. Byte-for-byte equality is intended: the engine does not
+// know what makes two texts mean the same.
 type Mandate struct {
 	MandateID   string
 	Target      string // the effective target

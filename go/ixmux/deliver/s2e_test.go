@@ -1,10 +1,40 @@
 package deliver
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// S2E-5 (P2): NUL bytes cannot make two different mandates share a fingerprint.
+func TestFingerprintHasNoNULAmbiguity(t *testing.T) {
+	a := Mandate{MandateID: "m", Target: "t", Incarnation: "b\x00c", Text: "d"}
+	b := Mandate{MandateID: "m", Target: "t", Incarnation: "b", Text: "c\x00d"}
+	if fingerprint(a) == fingerprint(b) {
+		t.Errorf("incarnation %q + text %q and incarnation %q + text %q share a fingerprint", a.Incarnation, a.Text, b.Incarnation, b.Text)
+	}
+}
+
+type failingRelease struct{ io.Closer }
+
+func (f failingRelease) Close() error {
+	f.Closer.Close()
+	return errors.New("release failed")
+}
+
+// S2E-5 (P2): Close reports a failed lock release.
+func TestCloseReportsTheLockRelease(t *testing.T) {
+	e, _, err := Open(filepath.Join(t.TempDir(), "cmd.jsonl"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.log.lock = failingRelease{e.log.lock}
+	if err := e.Close(); err == nil {
+		t.Error("Close hid a failed lock release")
+	}
+}
 
 // S2E-3 (Codex round 3): a log without a format version (records without fp) is refused at
 // Open, with no transition written.

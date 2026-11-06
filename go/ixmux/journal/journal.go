@@ -16,8 +16,11 @@ import (
 // @ai:invariant an event's content and id never depend on the read budget [T:test conf:0.9 src:go/ixmux/journal/journal_test.go:TestEventDoesNotDependOnBudget]
 const (
 	MaxLine = 1 << 20 // a longer record is one line-too-long event
-	// @ai:invariant one Read allocates at most ReadMax bytes of buffer, even facing a record of several MiB [T:test conf:0.85 src:go/ixmux/journal/journal_test.go:TestReadMemoryIsBounded]
-	ReadMax  = 1 << 20 // what one Read keeps in memory at most
+	// ReadMax bounds the page buffer of one Read. A Read holds at most two buffers: the page
+	// buffer (<= ReadMax) and, for a first record longer than the budget, that record's buffer
+	// (<= MaxLine): ReadMax+MaxLine bytes in all, even facing a record of several MiB.
+	// @ai:invariant one Read allocates at most two buffers, ReadMax + MaxLine bytes, even facing a record of several MiB [T:test conf:0.85 src:go/ixmux/journal/s2e_test.go:TestReadMemoryIsTwoBuffersAtMost]
+	ReadMax  = 1 << 20 // the page buffer of one Read
 	MaxBytes = ReadMax // the default budget of one Read
 
 	// MaxEvents is the most events one page holds: ReadMax bounds the buffer, not the events
@@ -127,8 +130,11 @@ func Identify(path string) (incarnation string, size int64, err error) {
 		return "", 0, err
 	}
 	defer f.Close()
-	inc, _, size, err := identify(&src{f: f}, make([]byte, scanChunk))
-	return inc, size, err
+	named, provisional, complete, size, err := identify(&src{f: f}, make([]byte, scanChunk))
+	if !complete {
+		return provisional, size, err
+	}
+	return named, size, err
 }
 
 func hash12(parts ...[]byte) string {
@@ -139,16 +145,18 @@ func hash12(parts ...[]byte) string {
 	return fmt.Sprintf("%x", h.Sum(nil)[:6])
 }
 
-// identify returns the incarnation, the provisional incarnation of the same file, and the size.
-// It reads at most MaxLine bytes, in chunks of buf.
-func identify(s *src, buf []byte) (inc, provisional string, size int64, err error) {
+// identify returns the named incarnation (over the first record, or its first MaxLine bytes),
+// the provisional incarnation of the same file, whether the first record's '\n' was seen, and the
+// size. It reads at most MaxLine bytes, in chunks of buf. A first record longer than MaxLine is
+// named by its first MaxLine bytes but stays provisional until its '\n' is found (by Read).
+func identify(s *src, buf []byte) (named, provisional string, complete bool, size int64, err error) {
 	id, err := fileIdentity(s.f)
 	if err != nil {
-		return "", "", 0, err
+		return "", "", false, 0, err
 	}
 	st, err := s.f.Stat()
 	if err != nil {
-		return "", "", 0, err
+		return "", "", false, 0, err
 	}
 	size = st.Size()
 	provisional = hash12([]byte("provisional\n" + id))
@@ -158,23 +166,24 @@ func identify(s *src, buf []byte) (inc, provisional string, size int64, err erro
 	for pos := int64(0); pos < limit; {
 		chunk := buf[:min(int64(len(buf)), limit-pos)]
 		if err := s.readAt(chunk, pos); err != nil {
-			return "", "", 0, err
+			return "", "", false, 0, err
 		}
 		if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
 			h.Write(chunk[:i])
-			return fmt.Sprintf("%x", h.Sum(nil)[:6]), provisional, size, nil
+			return fmt.Sprintf("%x", h.Sum(nil)[:6]), provisional, true, size, nil
 		}
 		h.Write(chunk)
 		pos += int64(len(chunk))
 	}
 	if size >= MaxLine { // a first record longer than MaxLine: its first MaxLine bytes name it
-		return fmt.Sprintf("%x", h.Sum(nil)[:6]), provisional, size, nil
+		return fmt.Sprintf("%x", h.Sum(nil)[:6]), provisional, false, size, nil
 	}
-	return provisional, provisional, size, nil
+	return provisional, provisional, false, size, nil
 }
 
 // Read returns the complete records of the journal at path from the checkpoint from, within
-// maxBytes (MaxBytes when <= 0, at most ReadMax) and at most MaxEvents records. The first record
+// maxBytes (MaxBytes when <= 0, at most ReadMax) and at most MaxEvents records. It holds at most
+// two buffers: the page (<= ReadMax) and an over-budget first record (<= MaxLine). The first record
 // of a page is returned even when it exceeds the budget, up to MaxLine, so an event never
 // depends on the budget. A record longer than MaxLine becomes one line-too-long event over its
 // exact range, found by scanning without keeping it. One call reads at most ScanMax bytes of the
@@ -201,20 +210,19 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 	defer f.Close()
 	s := &src{f: f}
 	buf := make([]byte, max(budget, min(scanChunk, ReadMax))) // the page buffer
-	inc, provisional, size, err := identify(s, buf)
+	named, provisional, complete, size, err := identify(s, buf)
 	if err != nil {
 		return Page{}, err
 	}
 	if testHookAfterIdentify != nil {
 		testHookAfterIdentify(path)
 	}
-	promoted := ""
-	switch {
-	case c.Incarnation == inc:
-	case c.Incarnation == provisional: // the same file, whose first record has completed since
-		promoted = provisional
-	default:
-		return Page{}, &Refusal{StaleIncarnation, fmt.Sprintf("checkpoint is of incarnation %q, the journal is now %q", c.Incarnation, inc)}
+	if c.Incarnation != named && c.Incarnation != provisional {
+		now := provisional
+		if complete {
+			now = named
+		}
+		return Page{}, &Refusal{StaleIncarnation, fmt.Sprintf("checkpoint is of incarnation %q, the journal is now %q", c.Incarnation, now)}
 	}
 	if from < 0 || from > size || c.Scanned > size {
 		return Page{}, &Refusal{Truncated, fmt.Sprintf("checkpoint offset %d (scanned %d), the journal holds %d bytes", from, c.Scanned, size)}
@@ -232,7 +240,7 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 			return Page{}, &Refusal{BadCheckpoint, fmt.Sprintf("offset %d is not a record boundary", from)}
 		}
 	}
-	page := Page{Incarnation: inc, Next: from, Size: size, Provisional: inc == provisional, PromotedFrom: promoted}
+	page := Page{Next: from, Size: size}
 	rest := buf[:min(budget, size-from)]
 	if err := s.readAt(rest, from); err != nil {
 		return Page{}, err
@@ -257,6 +265,17 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 		}
 	}
 	page.AtEnd = page.Next == size && page.Pending == nil
+	// The first record is complete once its '\n' is known: seen by identify, implied by a
+	// checkpoint past it, or found by this page. Only then is the journal named and a provisional
+	// checkpoint promoted.
+	if complete || from > 0 || len(page.Events) > 0 {
+		page.Incarnation = named
+		if c.Incarnation == provisional && named != provisional {
+			page.PromotedFrom = provisional
+		}
+	} else {
+		page.Incarnation, page.Provisional = provisional, true
+	}
 	if p := page.Pending; p != nil {
 		p.Resume = Cursor{Incarnation: page.Incarnation, From: p.At, Scanned: p.Scanned, ScanFrom: p.At, ScanIncarnation: page.Incarnation}
 	}
@@ -268,7 +287,7 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 func (s *src) overBudget(page *Page, buf []byte, known int64) error {
 	from, size := page.Next, page.Size
 	if known-from < MaxLine {
-		buf = make([]byte, min(MaxLine, size-from)) // replaces the page buffer: still <= ReadMax
+		buf = make([]byte, min(MaxLine, size-from)) // the second buffer, beside the page's: <= MaxLine
 		if err := s.readAt(buf, from); err != nil {
 			return err
 		}

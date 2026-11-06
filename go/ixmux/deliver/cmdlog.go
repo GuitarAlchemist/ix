@@ -167,7 +167,9 @@ func (l *cmdLog) close() error {
 	defer l.mu.Unlock()
 	err := l.f.Close()
 	if l.lock != nil {
-		l.lock.Close()
+		if lerr := l.lock.Close(); lerr != nil && err == nil {
+			err = fmt.Errorf("release the lock of the command log: %w", lerr)
+		}
 		l.lock = nil
 	}
 	return err

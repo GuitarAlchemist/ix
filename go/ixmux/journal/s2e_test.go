@@ -2,8 +2,38 @@ package journal
 
 import (
 	"errors"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
 )
+
+// S2E-5 (P2): a first record that reaches MaxLine bytes without its '\n' keeps the provisional
+// incarnation; the promotion comes with the '\n'.
+func TestPromotionWaitsForTheFirstNewline(t *testing.T) {
+	path, incP := writeJournal(t, "ab")
+	appendTo := func(s string) {
+		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fh.WriteString(s)
+		fh.Close()
+	}
+	appendTo(strings.Repeat("x", MaxLine+10)) // past MaxLine, still no '\n'
+	if inc, _, _ := Identify(path); inc != incP {
+		t.Errorf("first record of %d bytes without '\\n': Identify %s, want the provisional %s", MaxLine+12, inc, incP)
+	}
+	page := mustRead(t, path, incP, 0, 0)
+	if page.PromotedFrom != "" || !page.Provisional || page.Incarnation != incP || page.Pending == nil {
+		t.Errorf("still pending past MaxLine: %+v, want provisional %s and no promotion", page, incP)
+	}
+	appendTo("\n")
+	page = mustRead(t, path, incP, 0, 0)
+	if page.PromotedFrom != incP || page.Provisional || page.Incarnation == incP || len(page.Events) != 1 || page.Events[0].Invalid != LineTooLong {
+		t.Errorf("after the '\\n': %+v, want a promotion and one line-too-long event", page)
+	}
+}
 
 // S2E-1 (Codex round 3): a resume hint found while scanning the second of two records longer
 // than MaxLine, reused with the first record's From, would merge both records into one event
@@ -63,4 +93,27 @@ func TestCursorReusedWithAnotherFromIsRefused(t *testing.T) {
 		c.Scanned = got.Pending.Scanned
 	}
 	t.Fatal("no answer after 20 calls")
+}
+
+// S2E-5 (P2): the true memory bound of one Read is two buffers, the page buffer (at most
+// ReadMax) and the buffer of a first record longer than the budget (at most MaxLine). A small
+// budget and a record just under MaxLine allocate both: more than ReadMax alone.
+func TestReadMemoryIsTwoBuffersAtMost(t *testing.T) {
+	path, inc := writeJournal(t, "{}\n"+record(MaxLine-10)+"{}\n")
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	page, err := ReadCursor(path, Cursor{Incarnation: inc, From: 3}, 100)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alloc := after.TotalAlloc - before.TotalAlloc
+	t.Logf("budget 100, record of %d bytes: %d bytes allocated (ReadMax %d, ReadMax+MaxLine %d)", MaxLine-10, alloc, ReadMax, ReadMax+MaxLine)
+	if len(page.Events) != 1 || page.Events[0].Invalid != "" {
+		t.Fatalf("want the record as one event: %+v", page)
+	}
+	if alloc > ReadMax+MaxLine+64<<10 {
+		t.Errorf("allocated %d bytes, beyond two buffers (%d)", alloc, ReadMax+MaxLine)
+	}
 }

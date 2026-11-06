@@ -122,10 +122,15 @@ func (e *Engine) apply(lr logRecord) {
 	}
 }
 
-// fingerprint names what a mandate asks: its target, incarnation and text.
+// fingerprint names what a mandate asks: its target, incarnation and text, each prefixed by its
+// length, so no choice of bytes (NUL included) makes two different mandates collide.
 func fingerprint(m Mandate) string {
-	h := sha256.Sum256([]byte(m.Target + "\x00" + m.Incarnation + "\x00" + m.Text))
-	return hex.EncodeToString(h[:])
+	h := sha256.New()
+	for _, f := range []string{m.Target, m.Incarnation, m.Text} {
+		fmt.Fprintf(h, "%d:", len(f))
+		h.Write([]byte(f))
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // transition writes one state change to the log, then applies it; nothing changes if the write
