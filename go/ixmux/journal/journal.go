@@ -21,7 +21,7 @@ const (
 	scanChunk = 64 << 10 // the smallest buffer a Read scans with
 )
 
-// LineTooLong marks a record longer than MaxLine or than the request's budget.
+// LineTooLong marks a record longer than MaxLine, whatever the request's budget.
 const LineTooLong = "line-too-long"
 
 // Refusal codes.
@@ -117,9 +117,10 @@ func identify(f *os.File, buf []byte) (string, int64, error) {
 }
 
 // Read returns the complete records of the journal at path from the checkpoint from, within
-// maxBytes (MaxBytes when <= 0, at most ReadMax). A record longer than MaxLine or than the
-// budget becomes one line-too-long event over its exact range, found by scanning in bounded
-// chunks. A record without its '\n' yet stops the page with Pending. It refuses a checkpoint of
+// maxBytes (MaxBytes when <= 0, at most ReadMax). The first record of a page is returned even
+// when it exceeds the budget, up to MaxLine, so an event never depends on the budget. A record
+// longer than MaxLine becomes one line-too-long event over its exact range, found by scanning in
+// bounded chunks. A record without its '\n' yet stops the page with Pending. It refuses a checkpoint of
 // another incarnation, one past the end of the journal, and one that is not a record boundary.
 func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	budget := maxBytes
@@ -168,7 +169,8 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	case page.Next+int64(len(rest)) == size:
 		page.Pending = &Pending{At: page.Next, Bytes: size - page.Next}
 	case len(page.Events) == 0:
-		// The record at from is longer than the budget: find its end without keeping it.
+		// The first record is longer than the budget: find its end without keeping it. Up to
+		// MaxLine it is returned whole anyway, so an event never depends on the budget.
 		end, err := recordEnd(f, buf, from+int64(len(rest)), size)
 		if err != nil {
 			return Page{}, err
@@ -177,7 +179,18 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 			page.Pending = &Pending{At: from, Bytes: size - from}
 			break
 		}
-		page.Events = append(page.Events, Event{Offset: from, End: end, Invalid: LineTooLong})
+		if end-from <= MaxLine {
+			if end-from > int64(len(buf)) {
+				buf = make([]byte, end-from) // replaces the page buffer: still <= ReadMax
+			}
+			rec := buf[:end-from]
+			if _, err := f.ReadAt(rec, from); err != nil && !errors.Is(err, io.EOF) {
+				return Page{}, err
+			}
+			page.Events = append(page.Events, lineEvent(rec[:len(rec)-1], from, end))
+		} else {
+			page.Events = append(page.Events, Event{Offset: from, End: end, Invalid: LineTooLong})
+		}
 		page.Next = end
 	}
 	return page, nil

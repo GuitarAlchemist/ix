@@ -99,6 +99,27 @@ func TestMaxLineBoundary(t *testing.T) {
 	}
 }
 
+// TestEventDoesNotDependOnBudget: a complete record of at most MaxLine bytes, larger than the
+// budget, is still returned whole when it is the first of the page.
+func TestEventDoesNotDependOnBudget(t *testing.T) {
+	path, inc := writeJournal(t, "{}\n"+record(20<<10)+"{}\n")
+	var got [2]Page
+	for i, budget := range []int64{16384, 0} {
+		got[i] = mustRead(t, path, inc, 3, budget)
+		if len(got[i].Events) == 0 {
+			t.Fatalf("max_bytes=%d: no event", budget)
+		}
+	}
+	a, b := got[0].Events[0], got[1].Events[0]
+	if a.Invalid != "" || string(a.Line) != string(b.Line) || got[0].EventID(key, a) != got[1].EventID(key, b) || a.End != b.End {
+		t.Errorf("16 KiB: invalid %q, %d bytes, id %s, end %d; default: invalid %q, %d bytes, id %s, end %d",
+			a.Invalid, len(a.Line), got[0].EventID(key, a), a.End, b.Invalid, len(b.Line), got[1].EventID(key, b), b.End)
+	}
+	if got[0].Next != 3+20<<10 {
+		t.Errorf("16 KiB: next %d, want %d (only the first record)", got[0].Next, 3+20<<10)
+	}
+}
+
 func TestCRLFAndBlankLines(t *testing.T) {
 	path, inc := writeJournal(t, "a\r\n\r\n\nb\n")
 	page := mustRead(t, path, inc, 0, 0)
