@@ -37,6 +37,7 @@ type Engine struct {
 	running map[string]bool    // targets with an adapter call not yet returned
 	calling map[key]bool       // keys whose adapter call has not returned, even past its deadline
 	asking  map[key]bool       // keys whose Status call has not returned, even past its deadline
+	closed  bool               // Close has begun releasing the log: no new adapter call
 }
 
 // call is one adapter call, shared by the caller and the goroutine that runs it.
@@ -233,6 +234,10 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		// Re-registered since the check: the incarnation checked is not the target's any more.
 		e.mu.Unlock()
 		return Result{}, &Refusal{StaleIncarnation, m.Target + " was registered again after its incarnation was checked"}
+	}
+	if e.closed {
+		e.mu.Unlock()
+		return Result{}, &Refusal{EngineClosed, "the engine is closed"}
 	}
 	if e.running[m.Target] {
 		e.mu.Unlock()
@@ -466,5 +471,26 @@ func (e *Engine) Status() []Entry {
 	return out
 }
 
-// Close closes the log.
-func (e *Engine) Close() error { return e.log.close() }
+// Close waits, up to the delivery deadline, for the adapter calls that have not returned (a late
+// answer is still recorded), then closes the log and releases its lock. If calls still run, it
+// refuses calls-in-flight and keeps both: a call can still take effect, and another engine opened
+// on the log would not know it (it could reconcile not-received and send again). Close may be
+// called again later.
+// @ai:invariant the log's lock is released only once no adapter call of this engine can still take effect [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestCloseKeepsTheGuardOfARunningCall]
+func (e *Engine) Close() error {
+	deadline := time.Now().Add(e.timeout)
+	for {
+		e.mu.Lock()
+		n := len(e.calling)
+		if n == 0 {
+			e.closed = true // under the same lock as a new claim: no call starts after this check
+			e.mu.Unlock()
+			return e.log.close()
+		}
+		e.mu.Unlock()
+		if time.Now().After(deadline) {
+			return &Refusal{CallsInFlight, fmt.Sprintf("%d adapter calls have not returned; the engine keeps the log and its lock", n)}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

@@ -50,6 +50,8 @@ const (
 	LogBroken               = "log-broken"
 	LogFormatUnsupported    = "log-format-unsupported"
 	LockUnsupported         = "lock-unsupported"
+	CallsInFlight           = "calls-in-flight"
+	EngineClosed            = "engine-closed"
 )
 
 // Refusal is a typed refusal.
