@@ -68,8 +68,10 @@ func v2Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 // underTest is the reader the oracle checks. It was v2Read for the red run of ix#511.
 var underTest readFunc = Read
 
-// TestIssue511V2Stalls keeps the defect reproduced: V2 returns no event and does not advance.
-func TestIssue511V2Stalls(t *testing.T) {
+// TestWitnessV2Stalls is a witness, not an oracle: it keeps the defect of ix#511 reproduced on
+// the copied V2 loop (no event, no progress) and cannot fail when Read regresses. The oracle is
+// TestIssue511ResumePastOversizedLine.
+func TestWitnessV2Stalls(t *testing.T) {
 	path, from := issue511Journal(t)
 	for _, budget := range []int64{16384, 0} {
 		page, err := v2Read(path, "", from, budget)
