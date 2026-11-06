@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -39,12 +40,21 @@ var errLocked = errors.New("locked")
 func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	// Read and cut through a handle without O_APPEND: on Windows an append-only handle may not
 	// truncate. Appends then go through a second, append-only handle.
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	created := err == nil
+	if errors.Is(err, os.ErrExist) {
+		f, err = os.OpenFile(path, os.O_RDWR, 0)
+	}
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	defer f.Close()
 	fail := func(err error) (*cmdLog, []logRecord, *Torn, error) { return nil, nil, nil, err }
+	if created {
+		if err := syncDir(filepath.Dir(path)); err != nil {
+			return fail(fmt.Errorf("sync the directory of the new %s: %w", path, err))
+		}
+	}
 	st, err := f.Stat()
 	if err != nil {
 		return fail(err)
