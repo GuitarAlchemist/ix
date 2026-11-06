@@ -1,12 +1,12 @@
 // Command ixmux is the durable ixmux process.
 //
 //	ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
-//	            [--claude-target name ...] [--claude-bin path]
+//	            [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...]
 //	ixmux version
 //
-// Exit codes: 0 stopped cleanly; 1 serving failed; 2 bad command line; 3 start refused (address
-// not loopback, state held by another ixmux, token file); 4 stopped with adapter calls still
-// running.
+// Exit codes: 0 stopped cleanly; 1 serving failed; 2 bad command line (a --claude-target named
+// twice included); 3 start refused (address not loopback, state held by another ixmux, token
+// file); 4 stopped with adapter calls still running; 5 stopped, but its files not cleaned up.
 package main
 
 import (
@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -64,13 +65,14 @@ func run(args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	cfg := server.Config{Version: version}
 	var journals, targets named
-	var claude names
+	var claude, claudeEnv names
 	fs.StringVar(&cfg.Addr, "addr", "127.0.0.1:0", "loopback IP address and port")
 	fs.StringVar(&cfg.State, "state", "", "state directory: command log, ixmux.json, token")
 	fs.Var(&journals, "journal", "a journal to serve and follow, name=path (repeatable)")
 	fs.Var(&targets, "target", "a fake session (JSONL file), name=path (repeatable)")
 	fs.Var(&claude, "claude-target", "a real Claude session: one claude -p child in stream-json, no tools (repeatable)")
 	fs.StringVar(&cfg.ClaudeBin, "claude-bin", "", "the claude executable (default: claude on PATH)")
+	fs.Var(&claudeEnv, "claude-env", "a variable of ixmux's environment the claude children also get, by name (repeatable)")
 	fs.DurationVar(&cfg.Timeout, "timeout", 0, "deadline of one adapter call (default 30s)")
 	fs.IntVar(&cfg.MaxConns, "max-conns", server.MaxConns, "simultaneous stream connections")
 	fs.IntVar(&cfg.MaxHTTP, "max-http-conns", server.MaxHTTPConns, "simultaneous TCP connections, stream connections included")
@@ -80,7 +82,13 @@ func run(args []string, stderr io.Writer) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return server.ExitUsage
 	}
-	cfg.Journals, cfg.Targets, cfg.Claude = journals, targets, claude
+	for i, name := range claude {
+		if slices.Contains(claude[:i], name) {
+			fmt.Fprintf(stderr, "ixmux: --claude-target %q is given twice; each claude target needs its own name\n", name)
+			return server.ExitUsage
+		}
+	}
+	cfg.Journals, cfg.Targets, cfg.Claude, cfg.ClaudeEnv = journals, targets, claude, claudeEnv
 	s, err := server.Start(cfg)
 	if err != nil {
 		fmt.Fprintln(stderr, "ixmux:", err)

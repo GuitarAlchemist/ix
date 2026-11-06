@@ -36,9 +36,17 @@ func claudeOf(p *proc) claudeTarget {
 	return claudeTarget{}
 }
 
+// startClaude runs ixmux with one claude target on the fake. The fake's FAKE_* variables are set
+// on ixmux and named with --claude-env: the child gets nothing else of ixmux's environment.
 func startClaude(t *testing.T, state, effects string, env ...string) *proc {
 	t.Helper()
-	return start(t, state, append([]string{"FAKE_EFFECTS=" + effects}, env...), "--claude-target", "c", "--claude-bin", fakeClaude)
+	env = append([]string{"FAKE_EFFECTS=" + effects}, env...)
+	args := []string{"--claude-target", "c", "--claude-bin", fakeClaude}
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		args = append(args, "--claude-env", name)
+	}
+	return start(t, state, env, args...)
 }
 
 func claudeMandate(id, inc, text string) map[string]string {

@@ -78,6 +78,7 @@ type Config struct {
 	Targets   []Named
 	Claude    []string      // claude targets: one stream-json child each, in <state>\claude-<name>
 	ClaudeBin string        // the claude executable (default: claude on PATH)
+	ClaudeEnv []string      // names of ixmux's variables the claude children also get
 	Timeout   time.Duration // of one adapter call (deliver.Options.Timeout)
 	MaxConns  int
 	MaxHTTP   int           // simultaneous TCP connections (MaxHTTPConns)
@@ -215,7 +216,7 @@ func Start(cfg Config) (*Server, error) {
 				return fail(&StartError{"--claude-target needs claude on PATH or --claude-bin: " + err.Error()})
 			}
 		}
-		a, err := claudestream.Start(claudestream.Config{Name: name, Dir: filepath.Join(cfg.State, "claude-"+name), Bin: bin})
+		a, err := claudestream.Start(claudestream.Config{Name: name, Dir: filepath.Join(cfg.State, "claude-"+name), Bin: bin, PassEnv: cfg.ClaudeEnv})
 		if err != nil {
 			return fail(&StartError{"claude target " + name + ": " + err.Error()})
 		}
