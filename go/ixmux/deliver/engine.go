@@ -45,7 +45,7 @@ type Engine struct {
 	running map[string]bool    // targets with an adapter call not yet returned
 	calling map[key]bool       // keys whose adapter call has not returned, even past its deadline
 	asking  map[key]bool       // keys whose Status call has not returned, even past its deadline
-	closed  bool               // Close has begun releasing the log: no new adapter call
+	closing bool               // Close has begun: no new Deliver or Reconcile
 }
 
 // call is one adapter call, shared by the caller and the goroutine that runs it.
@@ -252,7 +252,7 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		e.mu.Unlock()
 		return Result{}, &Refusal{StaleIncarnation, m.Target + " was registered again after its incarnation was checked"}
 	}
-	if e.closed {
+	if e.closing {
 		e.mu.Unlock()
 		return Result{}, &Refusal{EngineClosed, "the engine is closed"}
 	}
@@ -297,11 +297,11 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		e.mu.Unlock()
 		if abandoned {
 			// The caller recorded uncertain at its deadline; this answer is an observation.
-			// Reconcile stays refused (calling) until it is written.
+			// Reconcile is refused and Close waits (calling) until it is written.
 			<-cl.finished
 			e.observeLate(k, inc, cl.res)
+			release()
 		}
-		release()
 		close(cl.answered)
 	}()
 	select {
@@ -319,11 +319,19 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		<-cl.answered
 	}
 	to, reason, ack := outcome(cl.res)
-	return e.finish(k, inc, to, reason, ack)
+	if testHookBeforeFinish != nil {
+		testHookBeforeFinish()
+	}
+	// @ai:invariant a call leaves calling only once its final state is written, so Close cannot release the log between an adapter's success and its record [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForTheFinalWrite]
+	res, err := e.finish(k, inc, to, reason, ack)
+	release()
+	return res, err
 }
 
-// testHookAfterIncarnation, when set by a test, runs between the incarnation check and the claim.
-var testHookAfterIncarnation func()
+// Test hooks, set by a test only. testHookAfterIncarnation runs between the incarnation check and
+// the claim; testHookBeforeFinish between the adapter's answer and the write of the final state;
+// testHookCloseWaits once, when Close finds work it must wait for.
+var testHookAfterIncarnation, testHookBeforeFinish, testHookCloseWaits func()
 
 // outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
 // other error leaves the outcome unknown.
@@ -401,6 +409,8 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 	var rc Reconciler
 	var t *Target
 	switch {
+	case e.closing:
+		refusal = &Refusal{EngineClosed, "the engine is closed"}
 	case r == nil:
 		refusal = &Refusal{UnknownMandate, fmt.Sprintf("no delivery %s/%s", target, mandateID)}
 	case e.claims[k]:
@@ -537,26 +547,43 @@ func (e *Engine) Status() []Entry {
 	return out
 }
 
-// Close waits, up to the delivery deadline, for the adapter calls that have not returned (a late
-// answer is still recorded), then closes the log and releases its lock. If calls still run, it
-// refuses calls-in-flight and keeps both: a call can still take effect, and another engine opened
-// on the log would not know it (it could reconcile not-received and send again). Close may be
-// called again later.
+// Close refuses every new Deliver and Reconcile (engine-closed), then waits, up to the delivery
+// deadline, for the deliveries and reconciles under way and the adapter and Status calls that
+// have not returned, each until its final state is written (a late answer is still recorded).
+// It then closes the log and releases its lock. If work is still under way, it refuses
+// calls-in-flight and keeps both: a call can still take effect, and another engine opened on the
+// log would not know it (it could reconcile not-received and send again). Close may be called
+// again later. It returns log-broken, after closing, if a transition could not be written.
 // @ai:invariant the log's lock is released only once no adapter call of this engine can still take effect [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestCloseKeepsTheGuardOfARunningCall]
+// @ai:invariant Close returns nil only once every transition of this engine is written [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForAReconcile]
 func (e *Engine) Close() error {
 	deadline := time.Now().Add(e.timeout)
-	for {
+	e.mu.Lock()
+	e.closing = true // under the same lock as a new claim: nothing is claimed after this
+	e.mu.Unlock()
+	for waited := false; ; waited = true {
 		e.mu.Lock()
-		n := len(e.calling)
-		if n == 0 {
-			e.closed = true // under the same lock as a new claim: no call starts after this check
-			e.mu.Unlock()
-			return e.log.close()
-		}
+		n := len(e.claims) + len(e.calling) + len(e.asking)
 		e.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		if !waited && testHookCloseWaits != nil {
+			testHookCloseWaits()
+		}
 		if time.Now().After(deadline) {
-			return &Refusal{CallsInFlight, fmt.Sprintf("%d adapter calls have not returned; the engine keeps the log and its lock", n)}
+			return &Refusal{CallsInFlight, fmt.Sprintf("%d deliveries, reconciles or calls under way; the engine keeps the log and its lock", n)}
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	e.log.mu.Lock()
+	broken := e.log.broken
+	e.log.mu.Unlock()
+	if err := e.log.close(); err != nil {
+		return err
+	}
+	if broken != nil {
+		return &Refusal{LogBroken, "a transition could not be written (" + broken.Error() + ")"}
+	}
+	return nil
 }
