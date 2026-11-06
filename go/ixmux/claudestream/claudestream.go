@@ -227,7 +227,7 @@ func (a *Adapter) read(stdout io.Reader, stderr io.Closer) {
 	if p != nil {
 		p.done <- turnResult{err: werr}
 	}
-	a.note(map[string]any{"ixmux": "exit", "incarnation": a.session, "error": werr.Error()})
+	a.note(map[string]any{"ixmux": "exit", "incarnation": a.session, "error": werr.Error(), "at": time.Now().UTC()})
 	close(a.exited)
 }
 
@@ -445,17 +445,25 @@ func (a *Adapter) Status(ctx context.Context, mandateID, incarnation string) (de
 	return deliver.NotReceived, nil
 }
 
-// Stop closes the child's stdin, waits up to StopWait for it to exit, then kills its job.
+// Stop closes the child's stdin, waits up to StopWait for it to exit, then kills its job. Each
+// step is noted in stream.jsonl with its time ({"ixmux":"stop","step":...}): stdin-closed, then
+// exited or killed with the milliseconds since stdin was closed.
+// @ai:invariant the stop of a claude child is traced: stdin closed, then exited or killed past StopWait [T:test conf:0.85 src:go/ixmux/claudestream/claudestream_test.go:TestStopIsTraced]
 func (a *Adapter) Stop() error {
 	var err error
 	a.stop.Do(func() {
+		begun := time.Now()
+		a.note(map[string]any{"ixmux": "stop", "step": "stdin-closed", "incarnation": a.session, "at": begun.UTC()})
 		a.stdin.Close()
+		step := "exited"
 		select {
 		case <-a.exited:
 		case <-time.After(a.cfg.StopWait):
+			step = "killed"
 			err = a.job.kill()
 			<-a.exited
 		}
+		a.note(map[string]any{"ixmux": "stop", "step": step, "incarnation": a.session, "at": time.Now().UTC(), "after_ms": time.Since(begun).Milliseconds()})
 		a.job.Close()
 		a.stream.Close()
 	})

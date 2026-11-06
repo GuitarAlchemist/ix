@@ -3,6 +3,7 @@ package claudestream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -187,5 +188,57 @@ func TestStopEndsTheChild(t *testing.T) {
 	}
 	if alive(a.PID()) {
 		t.Errorf("child %d alive after Stop", a.PID())
+	}
+}
+
+// stopSteps are the stop lines of a stream.jsonl, in order.
+func stopSteps(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	for _, l := range strings.Split(string(b), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) == nil && (m["ixmux"] == "stop" || m["ixmux"] == "exit") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// S3B-7: the stop of the child leaves a timestamped trace in stream.jsonl: stdin closed, then the
+// child exited by itself or was killed past StopWait, with the time each step took.
+func TestStopIsTraced(t *testing.T) {
+	for _, tc := range []struct {
+		name, linger, last string
+	}{
+		{"exits", "", "exited"},
+		{"lingers past StopWait", "5s", "killed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			a, err := Start(Config{Name: "c", Dir: filepath.Join(dir, "claude-c"), Bin: fake, Env: []string{"FAKE_LINGER=" + tc.linger},
+				InitWait: 5 * time.Second, StopWait: 300 * time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.Stop()
+			var steps []string
+			for _, m := range stopSteps(t, a.StreamPath()) {
+				if m["at"] == nil {
+					t.Errorf("step without its time: %v", m)
+				}
+				s, _ := m["step"].(string)
+				if m["ixmux"] == "exit" {
+					s = "exit"
+				}
+				steps = append(steps, s)
+			}
+			if len(steps) < 2 || steps[0] != "stdin-closed" || steps[len(steps)-1] != tc.last {
+				t.Errorf("stop trace %v, want stdin-closed first and %s last", steps, tc.last)
+			}
+		})
 	}
 }

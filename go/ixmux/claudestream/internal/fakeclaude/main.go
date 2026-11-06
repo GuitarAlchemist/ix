@@ -8,6 +8,7 @@
 //	FAKE_HOLD     while this file exists, a message whose text holds "slow" is not answered
 //	FAKE_NOACK    answer without the ACK line
 //	FAKE_SESSION  report this session_id instead of the --session-id given
+//	FAKE_LINGER   once stdin is closed, wait this long (a Go duration) before exiting
 //
 // A message whose text holds "die" makes it exit 3 without answering.
 package main
@@ -67,6 +68,9 @@ func main() {
 	for {
 		line, err := in.ReadBytes('\n')
 		if err != nil {
+			if d, perr := time.ParseDuration(os.Getenv("FAKE_LINGER")); perr == nil {
+				time.Sleep(d) // as a real claude running its SessionEnd hooks
+			}
 			os.Exit(0) // stdin closed: a clean end
 		}
 		var m struct {
