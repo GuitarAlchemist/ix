@@ -35,6 +35,7 @@ import (
 // Named bounds. The ones a flag can lower for a test are defaults of Config.
 const (
 	MaxConns         = 16                     // simultaneous WebSocket connections
+	MaxHTTPConns     = 64                     // simultaneous TCP connections, WebSockets included
 	MaxClientMessage = 4 << 10                // bytes of one message a client sends on the stream
 	MaxStreamMessage = 1 << 20                // bytes of one message the stream sends
 	MaxBody          = 128 << 10              // bytes of an HTTP request body
@@ -77,6 +78,8 @@ type Config struct {
 	ClaudeBin string        // the claude executable (default: claude on PATH)
 	Timeout   time.Duration // of one adapter call (deliver.Options.Timeout)
 	MaxConns  int
+	MaxHTTP   int           // simultaneous TCP connections (MaxHTTPConns)
+	ReadLimit time.Duration // to read one request's headers and body (ReadTimeout)
 	Queue     int
 	Poll      time.Duration
 	Version   string
@@ -147,6 +150,12 @@ func random(n int) []byte {
 func Start(cfg Config) (*Server, error) {
 	if cfg.MaxConns <= 0 {
 		cfg.MaxConns = MaxConns
+	}
+	if cfg.MaxHTTP <= 0 {
+		cfg.MaxHTTP = MaxHTTPConns
+	}
+	if cfg.ReadLimit <= 0 {
+		cfg.ReadLimit = ReadTimeout
 	}
 	if cfg.Queue <= 0 {
 		cfg.Queue = QueueSize
@@ -222,6 +231,7 @@ func Start(cfg Config) (*Server, error) {
 	if err != nil {
 		return fail(err)
 	}
+	ln = &limitListener{Listener: ln, slots: make(chan struct{}, cfg.MaxHTTP)}
 	s.ln = ln
 	exe, sum := "", ""
 	if exe, err = os.Executable(); err == nil {
@@ -243,7 +253,11 @@ func Start(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /v1/journal/{name}", s.guard(s.getJournal))
 	mux.HandleFunc("GET /v1/stream", s.guard(s.stream))
 	mux.HandleFunc("POST /v1/shutdown", s.guard(s.shutdown))
-	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: ReadTimeout, MaxHeaderBytes: 16 << 10}
+	// Every request is bounded: its headers and body within ReadLimit, its answer within
+	// WriteTimeout (a delivery or a reconcile extends it by its own deadline; the stream clears
+	// both and bounds each message itself).
+	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: cfg.ReadLimit, ReadTimeout: cfg.ReadLimit, WriteTimeout: WriteTimeout,
+		IdleTimeout: cfg.ReadLimit, MaxHeaderBytes: 16 << 10}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	for name, path := range s.journals {
@@ -439,12 +453,19 @@ func (s *Server) postMandate(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "bad-request", err.Error())
 		return
 	}
+	s.answerWithin(w)
 	res, err := s.eng.Deliver(context.WithoutCancel(r.Context()), deliver.Mandate{MandateID: m.MandateID, Target: m.Target, Incarnation: m.Incarnation, Text: m.Text})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// answerWithin gives a request that waits for the engine its delivery deadline, plus WriteTimeout
+// for the answer itself.
+func (s *Server) answerWithin(w http.ResponseWriter) {
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.cfg.Timeout + WriteTimeout))
 }
 
 func (s *Server) entry(id string) (deliver.Entry, bool) {
@@ -471,6 +492,7 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusNotFound, deliver.UnknownMandate, "")
 		return
 	}
+	s.answerWithin(w)
 	res, err := s.eng.Reconcile(context.WithoutCancel(r.Context()), e.Target, e.MandateID)
 	if err != nil {
 		writeErr(w, err)
@@ -516,8 +538,8 @@ func (s *Server) status(epoch string, seq uint64) any {
 	return statusView{Version: s.info.Version, Started: s.info.Started, Epoch: epoch, Seq: seq, Targets: targets,
 		Journals: s.journals, Deliveries: s.eng.Status(), Connections: s.conns.Load(),
 		Bounds: map[string]any{
-			"max_conns": s.cfg.MaxConns, "max_client_message": MaxClientMessage, "max_stream_message": MaxStreamMessage,
-			"max_body": MaxBody, "read_timeout": ReadTimeout.String(), "write_timeout": WriteTimeout.String(),
+			"max_conns": s.cfg.MaxConns, "max_http_conns": s.cfg.MaxHTTP, "max_client_message": MaxClientMessage, "max_stream_message": MaxStreamMessage,
+			"max_body": MaxBody, "read_timeout": s.cfg.ReadLimit.String(), "write_timeout": WriteTimeout.String(),
 			"ring_size": RingSize, "queue": s.cfg.Queue, "delivery_timeout": s.cfg.Timeout.String(),
 			"max_in_flight": deliver.MaxInFlight, "max_text": deliver.MaxText,
 		}}
@@ -754,6 +776,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 	}
+	// The connection outlives the request: the server's read and write deadlines are cleared, and
+	// each stream message has its own WriteTimeout.
+	rc := http.NewResponseController(w)
+	rc.SetReadDeadline(time.Time{})
+	rc.SetWriteDeadline(time.Time{})
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return

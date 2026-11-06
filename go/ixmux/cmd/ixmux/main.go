@@ -73,6 +73,8 @@ func run(args []string, stderr io.Writer) int {
 	fs.StringVar(&cfg.ClaudeBin, "claude-bin", "", "the claude executable (default: claude on PATH)")
 	fs.DurationVar(&cfg.Timeout, "timeout", 0, "deadline of one adapter call (default 30s)")
 	fs.IntVar(&cfg.MaxConns, "max-conns", server.MaxConns, "simultaneous stream connections")
+	fs.IntVar(&cfg.MaxHTTP, "max-http-conns", server.MaxHTTPConns, "simultaneous TCP connections, stream connections included")
+	fs.DurationVar(&cfg.ReadLimit, "read-timeout", server.ReadTimeout, "to read one request's headers and body")
 	fs.IntVar(&cfg.Queue, "queue", server.QueueSize, "messages queued per stream connection")
 	fs.DurationVar(&cfg.Poll, "poll", server.PollInterval, "between two reads of a followed journal")
 	if err := fs.Parse(args[1:]); err != nil {
