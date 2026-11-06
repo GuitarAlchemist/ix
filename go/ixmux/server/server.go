@@ -119,7 +119,7 @@ type Server struct {
 	token    []byte
 	key      []byte // signs the journal cursors given to clients
 	info     Info
-	targets  []targetInfo
+	fakes    []*FakeSession
 	journals map[string]string
 	claude   map[string]*claudestream.Adapter
 	ln       net.Listener
@@ -189,7 +189,7 @@ func Start(cfg Config) (*Server, error) {
 			return fail(err)
 		}
 		eng.Register(t.Name, f.Target())
-		s.targets = append(s.targets, targetInfo{Name: t.Name, Kind: "fake", Path: f.Path, Incarnation: f.Inc})
+		s.fakes = append(s.fakes, f)
 	}
 	for _, name := range cfg.Claude {
 		bin := cfg.ClaudeBin
@@ -494,7 +494,16 @@ type statusView struct {
 }
 
 func (s *Server) status(epoch string, seq uint64) any {
-	targets := append([]targetInfo(nil), s.targets...)
+	targets := []targetInfo{}
+	for _, f := range s.fakes { // read now: the file at the path may have been replaced
+		ti := targetInfo{Name: f.Name, Kind: "fake", Path: f.Path}
+		if inc, err := f.Incarnation(); err != nil {
+			ti.Error = err.Error()
+		} else {
+			ti.Incarnation = inc
+		}
+		targets = append(targets, ti)
+	}
 	for name, a := range s.claude {
 		ti := targetInfo{Name: name, Kind: "claude", PID: a.PID(), Alive: a.Alive(), Tools: a.Tools()}
 		if inc, err := a.Incarnation(); err != nil {
