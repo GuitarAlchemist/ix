@@ -140,6 +140,9 @@ type Entry struct {
 	Age       time.Duration `json:"age"`   // since it was first accepted
 	Since     time.Time     `json:"since"` // time of the last transition
 	Last      string        `json:"last"`  // the last transition, e.g. "delivering->uncertain"
+	// StillRunning: its adapter call has not returned, even past its deadline; Reconcile is refused
+	// (delivery-still-running) until it does.
+	StillRunning bool `json:"still_running"`
 }
 
 // Options of an Engine; zero values take the named bounds.

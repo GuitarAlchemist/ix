@@ -490,7 +490,8 @@ func (e *Engine) sorted() []*record {
 	return out
 }
 
-// Status lists every delivery: its state, its age and its last transition.
+// Status lists every delivery: its state, its age, its last transition, and whether its adapter
+// call is still running.
 func (e *Engine) Status() []Entry {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -502,7 +503,7 @@ func (e *Engine) Status() []Entry {
 			prev = "none"
 		}
 		out = append(out, Entry{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason,
-			Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state)})
+			Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state), StillRunning: e.calling[key{r.target, r.id}]})
 	}
 	return out
 }

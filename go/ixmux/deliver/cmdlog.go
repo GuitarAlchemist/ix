@@ -139,7 +139,8 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 // may be on disk, and any later line would be glued to it into one corrupt record. Every later
 // append is then refused (log-broken) until the engine is reopened, which cuts the fragment as a
 // torn tail.
-// @ai:invariant a transition counts only once its whole line is written and synced, and nothing is appended after a failed write [T:test conf:0.85 src:go/ixmux/deliver/s2d_test.go:TestPartialWriteBreaksTheLog]
+// @ai:invariant a transition counts only once its whole line is written, and nothing is appended after a partial write [T:test conf:0.85 src:go/ixmux/deliver/s2d_test.go:TestPartialWriteBreaksTheLog]
+// @ai:invariant a transition counts only once its line is synced, and nothing is appended after a failed sync [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestFailedSyncBreaksTheLog]
 func (l *cmdLog) append(r logRecord) error {
 	b, err := json.Marshal(r)
 	if err != nil {

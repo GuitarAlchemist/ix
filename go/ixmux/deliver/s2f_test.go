@@ -178,3 +178,74 @@ func TestFailedDirectorySyncIsRetried(t *testing.T) {
 		t.Error("the second Open trusted the log left by the failed one without syncing its directory")
 	}
 }
+
+// S2F-4 (P2): Status shows a delivery whose adapter call has not returned.
+func TestStatusShowsStillRunning(t *testing.T) {
+	e, _ := openEngine(t, filepath.Join(t.TempDir(), "cmd.jsonl"), Options{Timeout: 50 * time.Millisecond})
+	tg := &firstLate{release: make(chan struct{}), returned: make(chan struct{})}
+	e.Register("a", tg.target())
+	if res, err := e.Deliver(context.Background(), Mandate{MandateID: "m1", Target: "a", Incarnation: "i"}); err != nil || res.State != Uncertain {
+		t.Fatalf("deliver past its deadline: %+v %v", res, err)
+	}
+	if st := e.Status(); len(st) != 1 || !st[0].StillRunning {
+		t.Errorf("while the adapter call runs: %+v, want still_running", st)
+	}
+	close(tg.release)
+	<-tg.returned
+	waitState(e, "a", "m1", Delivered, 2*time.Second)
+	deadline := time.Now().Add(2 * time.Second)
+	for e.Status()[0].StillRunning && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if st := e.Status(); st[0].StillRunning {
+		t.Errorf("once the call returned: %+v, want not still_running", st)
+	}
+}
+
+// S2F-4 (P2): one Status call per (target, mandate id) at a time, even with slots to spare.
+func TestReconcileIsOnePerKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	log := logHeader + `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m1","incarnation":"i","state":"delivering"}` + "\n"
+	if err := os.WriteFile(path, []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := openEngine(t, path, Options{Timeout: 30 * time.Millisecond, MaxInFlight: 16})
+	h := hangingStatus{hold: make(chan struct{}), calls: new(atomic.Int64)}
+	defer close(h.hold)
+	e.Register("a", Target{Adapter: h, Incarnation: func() (string, error) { return "i", nil }})
+	codes := map[string]int{}
+	for range 5 {
+		_, err := e.Reconcile(context.Background(), "a", "m1")
+		codes[refusalCode(err)]++
+	}
+	if n := h.calls.Load(); n != 1 || codes[InFlight] != 4 {
+		t.Errorf("5 reconciles of one key with 16 slots: %d Status calls, answers %v; want 1 call and 4 %s", n, codes, InFlight)
+	}
+}
+
+// failingSync writes, then fails every Sync.
+type failingSync struct{ logFile }
+
+func (f failingSync) Sync() error { return errors.New("injected sync failure") }
+
+// S2F-4 (P2): a failed Sync breaks the log as a partial write does: the transition does not
+// count, the adapter is not called, and later appends are refused.
+func TestFailedSyncBreaksTheLog(t *testing.T) {
+	e, _ := openEngine(t, filepath.Join(t.TempDir(), "cmd.jsonl"), Options{})
+	tg := &fakeTarget{inc: "i"}
+	e.Register("a", tg.target())
+	e.log.f = failingSync{e.log.f}
+	if _, err := e.Deliver(context.Background(), Mandate{MandateID: "m1", Target: "a", Incarnation: "i"}); err == nil {
+		t.Fatal("a delivery whose accepted record failed its sync succeeded")
+	}
+	if got := stateOf(e, "a", "m1"); got != "" {
+		t.Errorf("the unsynced transition counted: state %s", got)
+	}
+	_, err := e.Deliver(context.Background(), Mandate{MandateID: "m2", Target: "a", Incarnation: "i"})
+	if refusalCode(err) != LogBroken {
+		t.Errorf("after a failed sync: %v, want %s", err, LogBroken)
+	}
+	if tg.calls.Load() != 0 {
+		t.Errorf("%d adapter calls, want 0", tg.calls.Load())
+	}
+}

@@ -54,11 +54,15 @@ func TestReplacedTargetGetsNoStaleMandate(t *testing.T) {
 	}
 }
 
-// hangingStatus answers Status only once hold is closed, ignoring ctx.
-type hangingStatus struct{ hold chan struct{} }
+// hangingStatus answers Status only once hold is closed, ignoring ctx; calls counts its calls.
+type hangingStatus struct {
+	hold  chan struct{}
+	calls *atomic.Int64
+}
 
 func (h hangingStatus) Deliver(ctx context.Context, m Mandate) (Ack, error) { return Ack{}, nil }
 func (h hangingStatus) Status(ctx context.Context, id, incarnation string) (Outcome, error) {
+	h.calls.Add(1)
 	<-h.hold
 	return Unknown, nil
 }
@@ -80,7 +84,7 @@ func TestReconcileGoroutinesAreBounded(t *testing.T) {
 	if rec.MadeUncertain != 10 {
 		t.Fatalf("recovery %+v", rec)
 	}
-	h := hangingStatus{hold: make(chan struct{})}
+	h := hangingStatus{hold: make(chan struct{}), calls: new(atomic.Int64)}
 	e.Register("a", Target{Adapter: h, Incarnation: func() (string, error) { return "i", nil }})
 
 	base := runtime.NumGoroutine()
@@ -98,6 +102,10 @@ func TestReconcileGoroutinesAreBounded(t *testing.T) {
 	t.Logf("goroutines grew by %d after 50 reconciles; answers by refusal code: %v", grown, codes)
 	if grown > slots {
 		t.Errorf("goroutines grew by %d, bound %d (MaxInFlight)", grown, slots)
+	}
+	// Not by refusing everything: the first slots keys were asked, once each.
+	if n := h.calls.Load(); n != slots {
+		t.Errorf("%d Status calls, want %d (one per slot)", n, slots)
 	}
 	close(h.hold) // the hung Status calls return
 	time.Sleep(100 * time.Millisecond)
