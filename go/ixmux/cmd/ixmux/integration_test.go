@@ -322,11 +322,26 @@ func TestStreamResume(t *testing.T) {
 		t.Fatalf("first message %+v", m)
 	}
 	want := last + 1
+	count := map[string]int{}
 	for _, m := range until(t, c, "m3", "delivered") {
 		if m.Type != "mandate" || m.Seq != want {
 			t.Fatalf("after resuming at %d: %s seq %d, want mandate seq %d (no loss, no duplicate)", last, m.Type, m.Seq, want)
 		}
+		var tr transition
+		json.Unmarshal(m.Data, &tr)
+		count[tr.MandateID+"/"+tr.State]++
 		want++
+	}
+	// The content, not only the numbering: every transition of m2 and m3, exactly once.
+	for _, id := range []string{"m2", "m3"} {
+		for _, st := range []string{"accepted", "delivering", "delivered"} {
+			if n := count[id+"/"+st]; n != 1 {
+				t.Errorf("after resuming: %s %s received %d times, want once (all: %v)", id, st, n, count)
+			}
+		}
+	}
+	if len(count) != 6 {
+		t.Errorf("after resuming: transitions %v, want the 6 of m2 and m3", count)
 	}
 
 	bad, _, err := p.dial(fmt.Sprintf("?since=%d&epoch=another", last), nil)
