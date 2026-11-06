@@ -13,6 +13,12 @@ import (
 
 type key struct{ target, id string }
 
+// idHold is a mandate id reserved by the Deliver that claimed k, for the mandate fp.
+type idHold struct {
+	k  key
+	fp string
+}
+
 type record struct {
 	target, id, inc string
 	fp              string // fingerprint of the mandate first accepted under this id
@@ -33,6 +39,7 @@ type Engine struct {
 	targets map[string]*Target // one allocation per Register: a pointer names a registration
 	recs    map[key]*record
 	ids     map[string]*record // by mandate id alone: an id is unique in the whole log
+	idClaim map[string]idHold  // ids reserved by a Deliver's claim, before accepted is written
 	claims  map[key]bool       // a Deliver or Reconcile of this key is running
 	running map[string]bool    // targets with an adapter call not yet returned
 	calling map[key]bool       // keys whose adapter call has not returned, even past its deadline
@@ -79,7 +86,7 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	}
 	l.lock = lock
 	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
-		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, claims: map[key]bool{}, running: map[string]bool{},
+		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, idClaim: map[string]idHold{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
@@ -163,6 +170,9 @@ func (e *Engine) Register(name string, t Target) {
 func (e *Engine) gate(k key, fp string) (res Result, err error, done bool) {
 	if first := e.ids[k.id]; first != nil && first.fp != fp { // v1 logs carry fp on every accepted record
 		return Result{}, &Refusal{MandateIDReuse, fmt.Sprintf("mandate id %s was first accepted for %s with another incarnation or text", k.id, first.target)}, true
+	}
+	if h, ok := e.idClaim[k.id]; ok && h.fp != fp {
+		return Result{}, &Refusal{MandateIDReuse, fmt.Sprintf("mandate id %s is being delivered to %s with another incarnation or text", k.id, h.k.target)}, true
 	}
 	r := e.recs[k]
 	if e.claims[k] {
@@ -249,7 +259,9 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		e.mu.Unlock()
 		return Result{}, &Refusal{Busy, fmt.Sprintf("%d deliveries in flight", cap(e.slots))}
 	}
+	// @ai:invariant a mandate id is reserved under the same lock as the claim, before any write, so concurrent deliveries of one id to two targets cannot both pass the gate [T:test conf:0.85 src:go/ixmux/deliver/s2g_test.go:TestConcurrentSameIDToTargetsIsDeliveredOnce]
 	e.claims[k], e.running[m.Target], e.calling[k] = true, true, true
+	e.idClaim[k.id] = idHold{k, fp}
 	e.mu.Unlock()
 	release := func() {
 		e.mu.Lock()
@@ -347,13 +359,23 @@ func (e *Engine) finish(k key, inc string, to State, reason string, ack *Ack) (R
 		r.prev, r.state, r.reason, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), time.Now().UTC(), nil
 	}
 	delete(e.claims, k)
+	e.dropIDClaim(k)
 	return r.result(), err
 }
 
 func (e *Engine) unclaim(k key) {
 	e.mu.Lock()
 	delete(e.claims, k)
+	e.dropIDClaim(k)
 	e.mu.Unlock()
+}
+
+// dropIDClaim ends k's reservation of its id (under e.mu): ids holds the id once accepted is
+// written, and nothing does if that write failed.
+func (e *Engine) dropIDClaim(k key) {
+	if h, ok := e.idClaim[k.id]; ok && h.k == k {
+		delete(e.idClaim, k.id)
+	}
 }
 
 type statusResult struct {
