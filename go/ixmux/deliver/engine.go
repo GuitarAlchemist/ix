@@ -35,6 +35,7 @@ type Engine struct {
 	claims  map[key]bool    // a Deliver or Reconcile of this key is running
 	running map[string]bool // targets with an adapter call not yet returned
 	calling map[key]bool    // keys whose adapter call has not returned, even past its deadline
+	asking  map[key]bool    // keys whose Status call has not returned, even past its deadline
 }
 
 // call is one adapter call, shared by the caller and the goroutine that runs it.
@@ -74,7 +75,7 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	l.lock = lock
 	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
 		targets: map[string]*Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{},
-		calling: map[key]bool{}}
+		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
 	}
@@ -360,6 +361,8 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 		// The adapter call that made it uncertain may still take effect: asking the target now
 		// could refuse a delivery that is about to happen.
 		refusal = &Refusal{DeliveryStillRunning, fmt.Sprintf("the adapter call of %s/%s has not returned", target, mandateID)}
+	case e.asking[k]:
+		refusal = &Refusal{InFlight, fmt.Sprintf("the Status call of %s/%s has not returned", target, mandateID)}
 	case r.state != Uncertain:
 		refusal = &Refusal{NotUncertain, fmt.Sprintf("%s/%s is %s", target, mandateID, r.state)}
 	default:
@@ -370,11 +373,18 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 			refusal = &Refusal{ReconcileUnsupported, "the adapter of " + target + " cannot answer for a mandate"}
 		}
 	}
+	if refusal == nil {
+		select {
+		case e.slots <- struct{}{}: // released when Status returns, even past its deadline
+		default:
+			refusal = &Refusal{Busy, fmt.Sprintf("%d calls in flight", cap(e.slots))}
+		}
+	}
 	if refusal != nil {
 		e.mu.Unlock()
 		return Result{}, refusal
 	}
-	e.claims[k] = true
+	e.claims[k], e.asking[k] = true, true
 	inc := r.inc
 	e.mu.Unlock()
 
@@ -383,6 +393,10 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 	done := make(chan statusResult, 1)
 	go func() {
 		o, err := rc.Status(cctx, mandateID)
+		e.mu.Lock()
+		delete(e.asking, k)
+		e.mu.Unlock()
+		<-e.slots
 		done <- statusResult{o, err}
 	}()
 	why := "no answer within the deadline"

@@ -2,7 +2,11 @@ package deliver
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,6 +50,57 @@ func TestReplacedTargetGetsNoStaleMandate(t *testing.T) {
 	}
 	if old.calls.Load() != 0 || repl.calls.Load() != 0 {
 		t.Errorf("old adapter %d calls, new adapter %d calls; want 0 and 0", old.calls.Load(), repl.calls.Load())
+	}
+}
+
+// hangingStatus answers Status only once hold is closed, ignoring ctx.
+type hangingStatus struct{ hold chan struct{} }
+
+func (h hangingStatus) Deliver(ctx context.Context, m Mandate) (Ack, error) { return Ack{}, nil }
+func (h hangingStatus) Status(ctx context.Context, id string) (Outcome, error) {
+	<-h.hold
+	return Unknown, nil
+}
+
+// S2D-4: reconciliations whose Status ignores its context do not pile up goroutines: at most
+// one in flight per (target, mandate id) and MaxInFlight in all.
+func TestReconcileGoroutinesAreBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	var log strings.Builder
+	for i := range 10 {
+		fmt.Fprintf(&log, `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m%d","incarnation":"i","state":"delivering"}`+"\n", i)
+	}
+	if err := os.WriteFile(path, []byte(log.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const slots = 4
+	e, rec := openEngine(t, path, Options{Timeout: 30 * time.Millisecond, MaxInFlight: slots})
+	if rec.MadeUncertain != 10 {
+		t.Fatalf("recovery %+v", rec)
+	}
+	h := hangingStatus{hold: make(chan struct{})}
+	e.Register("a", Target{Adapter: h, Incarnation: func() (string, error) { return "i", nil }})
+
+	base := runtime.NumGoroutine()
+	codes := map[string]int{}
+	for range 5 {
+		for i := range 10 {
+			res, err := e.Reconcile(context.Background(), "a", fmt.Sprintf("m%d", i))
+			if err == nil && res.State != Uncertain {
+				t.Fatalf("m%d: %+v", i, res)
+			}
+			codes[refusalCode(err)]++
+		}
+	}
+	grown := runtime.NumGoroutine() - base
+	t.Logf("goroutines grew by %d after 50 reconciles; answers by refusal code: %v", grown, codes)
+	if grown > slots {
+		t.Errorf("goroutines grew by %d, bound %d (MaxInFlight)", grown, slots)
+	}
+	close(h.hold) // the hung Status calls return
+	time.Sleep(100 * time.Millisecond)
+	if grown := runtime.NumGoroutine() - base; grown > 0 {
+		t.Errorf("%d goroutines left once Status answered", grown)
 	}
 }
 
