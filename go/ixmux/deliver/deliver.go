@@ -48,6 +48,8 @@ const (
 	JournalLocked           = "journal-locked"
 	DeliveryStillRunning    = "delivery-still-running"
 	LogBroken               = "log-broken"
+	LogFormatUnsupported    = "log-format-unsupported"
+	LockUnsupported         = "lock-unsupported"
 )
 
 // Refusal is a typed refusal.

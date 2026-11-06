@@ -152,7 +152,7 @@ func (e *Engine) Register(name string, t Target) {
 // gate decides, under e.mu, whether k may be sent again: done is true when the answer is
 // already known (a replay or a refusal).
 func (e *Engine) gate(k key, fp string) (res Result, err error, done bool) {
-	if first := e.ids[k.id]; first != nil && first.fp != "" && first.fp != fp {
+	if first := e.ids[k.id]; first != nil && first.fp != fp { // v1 logs carry fp on every accepted record
 		return Result{}, &Refusal{MandateIDReuse, fmt.Sprintf("mandate id %s was first accepted for %s with another incarnation or text", k.id, first.target)}, true
 	}
 	r := e.recs[k]

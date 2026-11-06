@@ -68,6 +68,7 @@ func (h hangingStatus) Status(ctx context.Context, id string) (Outcome, error) {
 func TestReconcileGoroutinesAreBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cmd.jsonl")
 	var log strings.Builder
+	log.WriteString(logHeader)
 	for i := range 10 {
 		fmt.Fprintf(&log, `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m%d","incarnation":"i","state":"delivering"}`+"\n", i)
 	}

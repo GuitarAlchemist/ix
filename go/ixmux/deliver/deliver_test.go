@@ -242,7 +242,7 @@ func TestTornLastRecordIsIgnored(t *testing.T) {
 
 func TestCorruptRecordInsideTheLogIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cmd.jsonl")
-	if err := os.WriteFile(path, []byte("not json\n{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(logHeader+"not json\n{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := Open(path, Options{})

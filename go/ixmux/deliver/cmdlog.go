@@ -42,6 +42,14 @@ type logFile interface {
 
 var errLocked = errors.New("locked")
 
+// logFormat names the command log format; logHeader is its first line. A log without it, or
+// with another version, is refused (log-format-unsupported): no log of an earlier format was
+// ever deployed, and its records would lack the fingerprints the engine relies on.
+const (
+	logFormat = "ixmux.cmdlog.v1"
+	logHeader = `{"format":"` + logFormat + `"}` + "\n"
+)
+
 // openLog reads the log at path back, at most maxBytes of it. A last record without its '\n'
 // (a crash while writing it) is cut off and reported as torn; any other unreadable record is
 // log-corrupt.
@@ -74,9 +82,21 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	if _, err := f.ReadAt(data, 0); err != nil && err != io.EOF {
 		return fail(err)
 	}
+	// The first line names the format. With no complete first line (a new log, or a crash while
+	// its header was written) the header is (re)written; any other first line is refused.
+	start, needHeader := int64(0), true
+	if nl := bytes.IndexByte(data, '\n'); nl >= 0 {
+		var h struct {
+			Format string `json:"format"`
+		}
+		if json.Unmarshal(data[:nl], &h) != nil || h.Format != logFormat {
+			return fail(&Refusal{LogFormatUnsupported, fmt.Sprintf("%s does not start with the %s header", path, logFormat)})
+		}
+		start, needHeader = int64(nl)+1, false
+	}
 	var recs []logRecord
 	var torn *Torn
-	for at := int64(0); at < int64(len(data)); {
+	for at := start; at < int64(len(data)); {
 		i := bytes.IndexByte(data[at:], '\n')
 		if i < 0 {
 			torn = &Torn{At: at, Bytes: int64(len(data)) - at}
@@ -91,6 +111,14 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	}
 	if torn != nil {
 		if err := f.Truncate(torn.At); err != nil {
+			return fail(err)
+		}
+		if err := f.Sync(); err != nil {
+			return fail(err)
+		}
+	}
+	if needHeader {
+		if _, err := f.WriteAt([]byte(logHeader), 0); err != nil {
 			return fail(err)
 		}
 		if err := f.Sync(); err != nil {
