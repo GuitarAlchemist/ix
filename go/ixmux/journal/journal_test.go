@@ -33,6 +33,11 @@ func mustRead(t *testing.T, path, inc string, from, budget int64) Page {
 	return page
 }
 
+// pendingIs compares a Pending's position fields.
+func pendingIs(p *Pending, at, bytes, scanned int64) bool {
+	return p.At == at && p.Bytes == bytes && p.Scanned == scanned
+}
+
 // record is one record of n bytes including its '\n'.
 func record(n int) string { return strings.Repeat("x", n-1) + "\n" }
 
@@ -150,19 +155,19 @@ func TestEmptyFile(t *testing.T) {
 func TestIncompleteLastLineIsPending(t *testing.T) {
 	path, inc := writeJournal(t, "a\nbc")
 	page := mustRead(t, path, inc, 0, 0)
-	if len(page.Events) != 1 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 2, Scanned: 4}) {
+	if len(page.Events) != 1 || page.Next != 2 || page.Pending == nil || !pendingIs(page.Pending, 2, 2, 4) {
 		t.Fatalf("from 0: %d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 	}
 	for range 2 {
 		page = mustRead(t, path, inc, 2, 0)
-		if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 2, Scanned: 4}) {
+		if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || !pendingIs(page.Pending, 2, 2, 4) {
 			t.Fatalf("from 2: %d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 		}
 	}
 	// An incomplete first record: a provisional incarnation, and it is pending.
 	path, inc = writeJournal(t, "abc")
 	page = mustRead(t, path, inc, 0, 0)
-	if !page.Provisional || page.Pending == nil || *page.Pending != (Pending{At: 0, Bytes: 3, Scanned: 3}) {
+	if !page.Provisional || page.Pending == nil || !pendingIs(page.Pending, 0, 3, 3) {
 		t.Errorf("incomplete first record: provisional %v, pending %v", page.Provisional, page.Pending)
 	}
 }
@@ -170,7 +175,7 @@ func TestIncompleteLastLineIsPending(t *testing.T) {
 func TestIncompleteLineLongerThanBudgetIsPending(t *testing.T) {
 	path, inc := writeJournal(t, "a\n"+strings.Repeat("x", 20000))
 	page := mustRead(t, path, inc, 2, 16384)
-	if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 20000, Scanned: 20002}) {
+	if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || !pendingIs(page.Pending, 2, 20000, 20002) {
 		t.Errorf("%d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 	}
 }
@@ -219,7 +224,7 @@ func TestReadMemoryIsBounded(t *testing.T) {
 			t.Errorf("call %d allocated %d bytes, bound %d", calls, alloc, ReadMax)
 		}
 		if page.Pending != nil {
-			c.Scanned = page.Pending.Scanned
+			c = page.Pending.Resume
 			continue
 		}
 		if len(page.Events) != 1 || page.Events[0].Invalid != LineTooLong || page.Next != 3+big {

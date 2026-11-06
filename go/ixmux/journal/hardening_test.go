@@ -86,7 +86,7 @@ func TestHugeFirstRecordScanIsBoundedPerCall(t *testing.T) {
 		if page.Pending == nil || page.Pending.Scanned <= c.Scanned || page.Next != 0 {
 			t.Fatalf("call %d: no event and no progressing resume hint: %+v", calls, page.Pending)
 		}
-		c.Scanned = page.Pending.Scanned
+		c = page.Pending.Resume
 		if calls > huge/(ScanMax/4) {
 			t.Fatalf("still scanning after %d calls", calls)
 		}

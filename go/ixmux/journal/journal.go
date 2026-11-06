@@ -40,6 +40,7 @@ const (
 	StaleIncarnation = "stale-incarnation" // the checkpoint is of another journal
 	Truncated        = "truncated"         // the checkpoint lies past the end of the journal
 	BadCheckpoint    = "bad-checkpoint"    // the checkpoint is not a record boundary
+	BadCursor        = "bad-cursor"        // the resume hint belongs to another From or incarnation
 )
 
 // Refusal is a typed refusal of a checkpoint; nothing was read.
@@ -64,21 +65,27 @@ type Event struct {
 // Pending says no '\n' is known after the record at At: Bytes of the journal follow it, and
 // [At, Scanned) holds no '\n'. Next does not pass it. Scanned == At+Bytes: the record is
 // incomplete, wait for more. Scanned < At+Bytes: the scan stopped at ScanMax, call again at once.
-// Either way, pass Scanned back as Cursor.Scanned (with Cursor.From = At) to resume the scan
-// there instead of from At.
+// Either way, pass Resume back to ReadCursor, unchanged, to resume the scan at Scanned instead of
+// at At. Resume names the checkpoint its hint was found for; any other From or incarnation is
+// refused bad-cursor.
 type Pending struct {
-	At      int64 `json:"at"`
-	Bytes   int64 `json:"bytes"`
-	Scanned int64 `json:"scanned"`
+	At      int64  `json:"at"`
+	Bytes   int64  `json:"bytes"`
+	Scanned int64  `json:"scanned"`
+	Resume  Cursor `json:"resume"`
 }
 
 // Cursor is a checkpoint (Incarnation, From) with an optional resume hint: Scanned, from the
-// Pending of a previous page read at the same From, says [From, Scanned) holds no '\n'.
-// @ai:assumption a caller's Scanned comes from a Pending read at the same From; it is checked only against the size [U:uncertain conf:0.5]
+// Pending of a previous page read at ScanFrom under ScanIncarnation, says [From, Scanned) holds
+// no '\n'. A hint whose ScanFrom or ScanIncarnation differs from the checkpoint is refused.
+// @ai:assumption a caller passes Pending.Resume back unchanged: the hint fields are compared, not authenticated (S3 signs them) [U:uncertain conf:0.5]
 type Cursor struct {
 	Incarnation string `json:"incarnation"`
 	From        int64  `json:"from"`
 	Scanned     int64  `json:"scanned,omitempty"`
+	// ScanFrom and ScanIncarnation say which checkpoint Scanned was found for.
+	ScanFrom        int64  `json:"scan_from,omitempty"`
+	ScanIncarnation string `json:"scan_incarnation,omitempty"`
 }
 
 // Page is the answer of one Read. A page whose Next equals the checkpoint always says why:
@@ -212,6 +219,11 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 	if from < 0 || from > size || c.Scanned > size {
 		return Page{}, &Refusal{Truncated, fmt.Sprintf("checkpoint offset %d (scanned %d), the journal holds %d bytes", from, c.Scanned, size)}
 	}
+	if c.Scanned != 0 && (c.ScanFrom != from || c.ScanIncarnation != c.Incarnation || c.Scanned < from) {
+		// A hint found for another checkpoint could start the scan inside a later record.
+		return Page{}, &Refusal{BadCursor, fmt.Sprintf("scanned %d was found from %d (incarnation %q), not from %d (incarnation %q)",
+			c.Scanned, c.ScanFrom, c.ScanIncarnation, from, c.Incarnation)}
+	}
 	if from > 0 {
 		if err := s.readAt(buf[:1], from-1); err != nil {
 			return Page{}, err
@@ -245,6 +257,9 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 		}
 	}
 	page.AtEnd = page.Next == size && page.Pending == nil
+	if p := page.Pending; p != nil {
+		p.Resume = Cursor{Incarnation: page.Incarnation, From: p.At, Scanned: p.Scanned, ScanFrom: p.At, ScanIncarnation: page.Incarnation}
+	}
 	return page, nil
 }
 
