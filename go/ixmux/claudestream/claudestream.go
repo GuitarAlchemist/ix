@@ -1,7 +1,8 @@
-// Package claudestream is the adapter to one real Claude session: a single `claude -p` child in
-// stream-json, kept open for the life of ixmux, with no tools. One mandate is one user message;
-// the result that follows it is its answer. The child is never relaunched: when it dies, its
-// incarnation ends with it.
+// Package claudestream is the adapter to one real Claude session: a `claude -p` child in
+// stream-json, with no tools. One mandate is one user message; the result that follows it, of the
+// same session and acknowledging that mandate, is its answer. A child that dies ends its
+// incarnation and is not relaunched; a child that holds a turn past TurnMax is killed and
+// replaced by a new one, under a new incarnation.
 package claudestream
 
 import (
@@ -19,18 +20,35 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
+	"github.com/GuitarAlchemist/ix/go/ixmux/journal"
 )
 
 // Named bounds.
 const (
 	MaxReply        = 4 << 10          // bytes of the answer kept in the Ack
-	MaxStdoutLine   = 8 << 20          // bytes of one stdout line kept in the stream journal
-	DefaultInitWait = 90 * time.Second // for the child's system/init
+	MaxStdoutLine   = 8 << 20          // bytes of one stdout line; a longer one is cut
+	MaxStreamBytes  = 256 << 20        // bytes of stdout one incarnation may add to stream.jsonl
+	MaxStderrBytes  = 16 << 20         // bytes one incarnation may add to stderr.log
+	DefaultInitWait = 90 * time.Second // for the child's system/init and its opening turn
 	DefaultStopWait = 10 * time.Second // for the child to exit once its stdin is closed
+	DefaultTurnMax  = 10 * time.Minute // a turn without result stays reserved this long at most
+	StatusPage      = int64(1 << 20)   // bytes of stream.jsonl one Status read takes at a time
 	StreamFile      = "stream.jsonl"
+	StderrFile      = "stderr.log"
+	lineQueue       = 256 // stdout lines read ahead of the router
 )
+
+// BaseEnv names the parent's variables every child gets, when set: what Windows, a Unix system
+// and claude need to start. Nothing else is inherited, and nothing by pattern: another variable
+// is passed by naming it (Config.PassEnv, --claude-env).
+var BaseEnv = []string{
+	"SystemRoot", "SystemDrive", "windir", "ComSpec", "PATH", "PATHEXT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+	"APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "HOME", "USERNAME", "ProgramData", "ProgramFiles", "OS",
+	"PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG",
+}
 
 // Args are the child's flags. Never --bare, never a permission bypass, --setting-sources left
 // alone (the user's hooks apply); no built-in tool (--tools "") and no MCP server
@@ -40,48 +58,113 @@ func Args(session string) []string {
 		"--tools", "", "--strict-mcp-config", "--session-id", session}
 }
 
-// Config of one Claude target.
+// Config of one Claude target. A zero bound takes its default.
 type Config struct {
 	Name       string
 	Dir        string   // throwaway working directory: <state>\claude-<name>
 	Bin        string   // the claude executable
-	Env        []string // added to the child's environment
+	Env        []string // NAME=value added to the child's environment
 	InitWait   time.Duration
 	PrimeAfter time.Duration // with no init by then, an opening message asks for it (one turn)
 	StopWait   time.Duration
+	PassEnv    []string      // names of the parent's variables the child also gets
+	TurnMax    time.Duration // how long a turn stays reserved without a result (DefaultTurnMax)
+	MaxStream  int64         // bytes of stdout one incarnation may add to stream.jsonl (MaxStreamBytes)
+	MaxStderr  int64         // bytes one incarnation may add to stderr.log (MaxStderrBytes)
+	MaxLine    int           // bytes of one stdout line (MaxStdoutLine)
 }
 
-// Adapter drives one child.
+// Test hooks, set by a test only: testHookAfterCheck runs in Deliver between the check of the
+// child and the write on its stdin, with the router of the child's lines; testHookStatusFrom gets
+// the offset each Status read starts at.
+var (
+	testHookAfterCheck func(route func([]byte))
+	testHookStatusFrom func(int64)
+)
+
+// childEnv builds the child's environment: the variables of BaseEnv and pass that the parent
+// has, then extra.
+func childEnv(pass, extra []string) []string {
+	var env []string
+	seen := map[string]bool{}
+	for _, name := range append(append([]string(nil), BaseEnv...), pass...) {
+		key := strings.ToUpper(name)
+		if seen[key] {
+			continue
+		}
+		if v, ok := os.LookupEnv(name); ok {
+			seen[key] = true
+			env = append(env, name+"="+v)
+		}
+	}
+	return append(env, extra...)
+}
+
+// Adapter is one Claude target: its live child, and the stream journal all its children write.
 type Adapter struct {
-	cfg     Config
+	cfg    Config
+	logMu  sync.Mutex
+	stream *os.File
+
+	mu       sync.Mutex
+	cur      *child
+	reserved bool // a turn was sent and may still answer: no other turn starts
+	stopped  bool
+	watchers sync.WaitGroup // one per reserved turn, relaunch included
+
+	statusMu sync.Mutex
+	cursor   journal.Cursor
+	marks    map[[2]string]*mark // by incarnation and mandate id
+}
+
+type mark struct{ sent, answered bool }
+
+// child is one claude process: one incarnation.
+type child struct {
+	a       *Adapter
 	session string
 	cmd     *exec.Cmd
 	job     *job
 	stdin   io.WriteCloser
-	stream  *os.File
-	logMu   sync.Mutex
-	turn    sync.Mutex // one delivery at a time: a conversation, its results come in order
 	initCh  chan struct{}
 	exited  chan struct{}
-	stop    sync.Once
+	stopper sync.Once
+	overOne sync.Once
+
+	written int64 // bytes of stdout written to stream.jsonl (under a.logMu)
+	over    bool  // past MaxStream: nothing more is written (under a.logMu)
 
 	mu      sync.Mutex
 	inited  bool
 	initSID string
 	tools   []string
-	dead    error // why the child ended, once it has
+	toolsOK bool // every init had a tools field that is an array
+	gen     int  // inits routed so far
+	dead    error
 	pending *turn
 }
 
 type turn struct {
-	id, inc string
-	done    chan turnResult // buffered 1
+	id   string
+	done chan struct{}
+	once sync.Once
+	res  turnResult
 }
 
+func newTurn(id string) *turn { return &turn{id: id, done: make(chan struct{})} }
+
+func (p *turn) resolve(r turnResult) { p.once.Do(func() { p.res = r; close(p.done) }) }
+
 type turnResult struct {
-	text  string
-	isErr bool
-	err   error
+	text    string
+	ackSeen bool
+	isErr   bool
+	err     error
+}
+
+type lineMsg struct {
+	line []byte
+	cut  bool
 }
 
 func uuid() string {
@@ -91,9 +174,10 @@ func uuid() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// Start launches the child in its throwaway directory, in a kill-on-close job, and waits for its
-// system/init. An init announcing another session than the one asked for is refused. An init
-// that lists tools is accepted but every delivery is then refused.
+// Start launches the first child in its throwaway directory, in a kill-on-close job, and waits
+// for its system/init (and its opening turn, if it needed one) within InitWait. An init
+// announcing another session than the one asked for is refused. An init that lists tools, or has
+// no tools array, is accepted but every delivery is then refused.
 func Start(cfg Config) (*Adapter, error) {
 	if cfg.InitWait <= 0 {
 		cfg.InitWait = DefaultInitWait
@@ -104,6 +188,18 @@ func Start(cfg Config) (*Adapter, error) {
 	if cfg.StopWait <= 0 {
 		cfg.StopWait = DefaultStopWait
 	}
+	if cfg.TurnMax <= 0 {
+		cfg.TurnMax = DefaultTurnMax
+	}
+	if cfg.MaxStream <= 0 {
+		cfg.MaxStream = MaxStreamBytes
+	}
+	if cfg.MaxStderr <= 0 {
+		cfg.MaxStderr = MaxStderrBytes
+	}
+	if cfg.MaxLine <= 0 {
+		cfg.MaxLine = MaxStdoutLine
+	}
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -111,75 +207,14 @@ func Start(cfg Config) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	stderr, err := os.OpenFile(filepath.Join(cfg.Dir, "stderr.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	a := &Adapter{cfg: cfg, stream: stream, marks: map[[2]string]*mark{}}
+	c, err := a.startChild()
 	if err != nil {
 		stream.Close()
 		return nil, err
 	}
-	a := &Adapter{cfg: cfg, session: uuid(), stream: stream, initCh: make(chan struct{}), exited: make(chan struct{})}
-	a.cmd = exec.Command(cfg.Bin, Args(a.session)...)
-	a.cmd.Dir = cfg.Dir
-	a.cmd.Env = append(os.Environ(), cfg.Env...)
-	a.cmd.Stderr = stderr
-	if a.stdin, err = a.cmd.StdinPipe(); err != nil {
-		return nil, err
-	}
-	stdout, err := a.cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if a.job, err = startInJob(a.cmd); err != nil {
-		stream.Close()
-		stderr.Close()
-		return nil, err
-	}
-	a.note(map[string]any{"ixmux": "start", "incarnation": a.session, "pid": a.cmd.Process.Pid})
-	go a.read(stdout, stderr)
-
-	var primed *turn
-	deadline := time.After(cfg.InitWait)
-	prime := time.After(cfg.PrimeAfter)
-	for done := false; !done; {
-		select {
-		case <-a.initCh:
-			done = true
-		case <-prime:
-			// No init without a first message: an opening turn, not a mandate.
-			p, err := a.send("", "ixmux : ouverture de la session. Réponds seulement : OK.")
-			if err != nil {
-				a.Stop()
-				return nil, fmt.Errorf("opening message: %w", err)
-			}
-			primed = p
-			prime = nil
-		case <-a.exited:
-			a.Stop()
-			return nil, fmt.Errorf("claude exited before its init: %v (see %s)", a.deadErr(), filepath.Join(cfg.Dir, "stderr.log"))
-		case <-deadline:
-			a.Stop()
-			return nil, fmt.Errorf("no system/init from claude within %s", cfg.InitWait)
-		}
-	}
-	a.mu.Lock()
-	sid := a.initSID
-	a.mu.Unlock()
-	if sid != a.session {
-		a.Stop()
-		return nil, fmt.Errorf("claude's init announces session %q, not the %q it was given", sid, a.session)
-	}
-	if primed != nil {
-		if r := <-primed.done; r.err != nil {
-			a.Stop()
-			return nil, fmt.Errorf("opening turn: %w", r.err)
-		}
-	}
+	a.cur = c
 	return a, nil
-}
-
-func (a *Adapter) deadErr() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.dead
 }
 
 // note appends one ixmux line to the stream journal and syncs it.
@@ -193,51 +228,193 @@ func (a *Adapter) note(v any) error {
 	return a.stream.Sync()
 }
 
-func (a *Adapter) raw(line []byte) {
-	a.logMu.Lock()
-	defer a.logMu.Unlock()
-	a.stream.Write(line)
+// cappedWriter writes at most max bytes to f; past it, it drops what it gets and calls over once.
+type cappedWriter struct {
+	f       io.Writer
+	max, n  int64
+	overOne sync.Once
+	over    func()
 }
 
-// read journals every stdout line and routes init and results.
-func (a *Adapter) read(stdout io.Reader, stderr io.Closer) {
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	if w.n+int64(len(p)) > w.max {
+		w.overOne.Do(w.over)
+		return len(p), nil // drained, not kept
+	}
+	w.n += int64(len(p))
+	return w.f.Write(p)
+}
+
+func (a *Adapter) startChild() (*child, error) {
+	cfg := a.cfg
+	stderr, err := os.OpenFile(filepath.Join(cfg.Dir, StderrFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	c := &child{a: a, session: uuid(), initCh: make(chan struct{}), exited: make(chan struct{})}
+	c.cmd = exec.Command(cfg.Bin, Args(c.session)...)
+	c.cmd.Dir = cfg.Dir
+	c.cmd.Env = childEnv(cfg.PassEnv, cfg.Env)
+	c.cmd.Stderr = &cappedWriter{f: stderr, max: cfg.MaxStderr, over: func() { go c.overflow("stderr-too-large") }}
+	if c.stdin, err = c.cmd.StdinPipe(); err != nil {
+		stderr.Close()
+		return nil, err
+	}
+	stdout, err := c.cmd.StdoutPipe()
+	if err != nil {
+		stderr.Close()
+		return nil, err
+	}
+	if c.job, err = startInJob(c.cmd); err != nil {
+		stderr.Close()
+		return nil, err
+	}
+	a.note(map[string]any{"ixmux": "start", "incarnation": c.session, "pid": c.cmd.Process.Pid, "at": time.Now().UTC()})
+	lines := make(chan lineMsg, lineQueue)
+	go c.read(stdout, lines)
+	go c.router(lines, stderr)
+
+	fail := func(err error) (*child, error) {
+		c.stop()
+		return nil, err
+	}
+	var primed *turn
+	deadline := time.After(cfg.InitWait)
+	prime := time.After(cfg.PrimeAfter)
+	for done := false; !done; {
+		select {
+		case <-c.initCh:
+			done = true
+		case <-prime:
+			// No init without a first message: an opening turn, not a mandate.
+			p, err := c.send("", "ixmux : ouverture de la session. Réponds seulement : OK.", -1, "")
+			if err != nil {
+				return fail(fmt.Errorf("opening message: %w", err))
+			}
+			primed, prime = p, nil
+		case <-c.exited:
+			return fail(fmt.Errorf("claude exited before its init: %v (see %s)", c.deadErr(), filepath.Join(cfg.Dir, StderrFile)))
+		case <-deadline:
+			return fail(fmt.Errorf("no system/init from claude within %s", cfg.InitWait))
+		}
+	}
+	c.mu.Lock()
+	sid := c.initSID
+	c.mu.Unlock()
+	if sid != c.session {
+		return fail(fmt.Errorf("claude's init announces session %q, not the %q it was given", sid, c.session))
+	}
+	if primed != nil {
+		select {
+		case <-primed.done:
+			if primed.res.err != nil {
+				return fail(fmt.Errorf("opening turn: %w", primed.res.err))
+			}
+		case <-deadline:
+			return fail(fmt.Errorf("no answer to the opening message within %s", cfg.InitWait))
+		}
+	}
+	return c, nil
+}
+
+func (c *child) deadErr() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dead
+}
+
+// journal writes one stdout line to stream.jsonl, within the incarnation's MaxStream. Past it,
+// nothing more is written or routed, and the child is killed (overflow).
+func (c *child) journal(line []byte) bool {
+	c.a.logMu.Lock()
+	defer c.a.logMu.Unlock()
+	if c.over {
+		return false
+	}
+	if c.written+int64(len(line)) > c.a.cfg.MaxStream {
+		c.over = true
+		go c.overflow("stream-too-large")
+		return false
+	}
+	c.written += int64(len(line))
+	c.a.stream.Write(line)
+	return true
+}
+
+// overflow ends an incarnation whose output passed its bound: the pending turn is uncertain for
+// reason, and the job is killed.
+// @ai:invariant one incarnation adds at most MaxStream bytes of stdout to stream.jsonl and MaxStderr to stderr.log; past it the child is killed and its turn is uncertain [T:test conf:0.85 src:go/ixmux/claudestream/s4b5_test.go:TestFloodIsCapped]
+func (c *child) overflow(reason string) {
+	c.overOne.Do(func() {
+		c.job.kill()
+		err := fmt.Errorf("%s: the claude child's output passed its bound; it was killed", reason)
+		c.mu.Lock()
+		p := c.pending
+		c.pending = nil
+		if c.dead == nil {
+			c.dead = err // the incarnation ends now, not when its process is reaped
+		}
+		c.mu.Unlock()
+		c.a.note(map[string]any{"ixmux": reason, "incarnation": c.session, "at": time.Now().UTC()})
+		if p != nil {
+			p.resolve(turnResult{err: err})
+		}
+	})
+}
+
+// read journals every stdout line and hands it to the router. It never waits on the child's
+// state, so stdout is drained even while a send holds that state.
+func (c *child) read(stdout io.Reader, lines chan<- lineMsg) {
 	br := bufio.NewReaderSize(stdout, 64<<10)
 	for {
-		line, err := readLine(br)
-		if len(line) > 0 {
-			a.raw(line)
-			a.route(line)
+		line, cut, err := readLine(br, c.a.cfg.MaxLine)
+		if len(line) > 0 && c.journal(line) {
+			lines <- lineMsg{line, cut}
 		}
 		if err != nil {
 			break
 		}
 	}
-	werr := a.cmd.Wait()
+	close(lines)
+}
+
+// router routes the lines in order, then records the child's end.
+func (c *child) router(lines <-chan lineMsg, stderr io.Closer) {
+	for l := range lines {
+		c.route(l)
+	}
+	werr := c.cmd.Wait()
 	stderr.Close()
 	if werr == nil {
 		werr = errors.New("claude exited")
 	} else {
 		werr = fmt.Errorf("claude exited: %w", werr)
 	}
-	a.mu.Lock()
-	a.dead = werr
-	p := a.pending
-	a.pending = nil
-	a.mu.Unlock()
-	if p != nil {
-		p.done <- turnResult{err: werr}
+	c.mu.Lock()
+	if c.dead == nil {
+		c.dead = werr
 	}
-	a.note(map[string]any{"ixmux": "exit", "incarnation": a.session, "error": werr.Error(), "at": time.Now().UTC()})
-	close(a.exited)
+	p := c.pending
+	c.pending = nil
+	c.mu.Unlock()
+	if p != nil {
+		p.resolve(turnResult{err: werr})
+	}
+	c.a.note(map[string]any{"ixmux": "exit", "incarnation": c.session, "error": werr.Error(), "at": time.Now().UTC()})
+	close(c.exited)
 }
 
-// readLine reads one line with its '\n'; a line over MaxStdoutLine is cut and closed by '\n'.
-func readLine(br *bufio.Reader) ([]byte, error) {
+// readLine reads one line with its '\n'; a line over max is cut there, closed by '\n', and
+// reported cut.
+func readLine(br *bufio.Reader, max int) ([]byte, bool, error) {
 	var out []byte
+	cut := false
 	for {
 		chunk, err := br.ReadSlice('\n')
-		if len(out)+len(chunk) <= MaxStdoutLine {
+		if len(out)+len(chunk) <= max {
 			out = append(out, chunk...)
+		} else {
+			cut = true
 		}
 		if err == bufio.ErrBufferFull {
 			continue
@@ -245,106 +422,222 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 		if len(out) > 0 && out[len(out)-1] != '\n' {
 			out = append(out, '\n')
 		}
-		return out, err
+		return out, cut, err
 	}
 }
 
-func (a *Adapter) route(line []byte) {
-	var msg struct {
-		Type      string   `json:"type"`
-		Subtype   string   `json:"subtype"`
-		SessionID string   `json:"session_id"`
-		Tools     []string `json:"tools"`
-		Result    string   `json:"result"`
-		IsError   bool     `json:"is_error"`
+// ackOf is the mandate id an answer acknowledges: the word after a leading "ACK ", up to a space
+// or the end; "" if the answer does not begin with "ACK ".
+func ackOf(text string) string {
+	t, ok := strings.CutPrefix(strings.TrimSpace(text), "ACK ")
+	if !ok {
+		return ""
 	}
-	if json.Unmarshal(bytes.TrimSpace(line), &msg) != nil {
+	if i := strings.IndexFunc(t, unicode.IsSpace); i >= 0 {
+		t = t[:i]
+	}
+	return t
+}
+
+// route takes one stdout line: an init sets (or narrows) what the child may be sent; a result
+// answers the pending turn only if it is of the init's session and a turn is pending.
+// @ai:invariant a result answers the pending turn only if its session_id is the child's init session, and is delivered only if it acknowledges that mandate or no mandate [T:test conf:0.85 src:go/ixmux/claudestream/s4b1_test.go:TestResultsAreCorrelated]
+func (c *child) route(l lineMsg) {
+	if l.cut {
+		// A line over the bound cannot be read; a turn waiting for it could wait forever.
+		c.mu.Lock()
+		p := c.pending
+		c.pending = nil
+		c.mu.Unlock()
+		c.a.note(map[string]any{"ixmux": "line-too-long", "incarnation": c.session, "bytes_kept": len(l.line), "at": time.Now().UTC()})
+		if p != nil {
+			p.resolve(turnResult{err: fmt.Errorf("a stdout line of claude passed %d bytes: its answer cannot be read", c.a.cfg.MaxLine)})
+		}
+		return
+	}
+	var msg struct {
+		Type      string          `json:"type"`
+		Subtype   string          `json:"subtype"`
+		SessionID string          `json:"session_id"`
+		Tools     json.RawMessage `json:"tools"`
+		Result    string          `json:"result"`
+		IsError   bool            `json:"is_error"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(l.line), &msg) != nil {
 		return
 	}
 	switch {
 	case msg.Type == "system" && msg.Subtype == "init":
-		a.mu.Lock()
-		first := !a.inited
+		var tools []string
+		ok := len(msg.Tools) > 0 && string(msg.Tools) != "null" && json.Unmarshal(msg.Tools, &tools) == nil
+		c.mu.Lock()
+		c.gen++
+		first := !c.inited
 		if first {
-			a.inited, a.initSID, a.tools = true, msg.SessionID, msg.Tools
-		} else if msg.SessionID != a.session || len(msg.Tools) > 0 {
-			a.tools = append(a.tools, msg.Tools...) // a later init can only narrow what is allowed
-			if msg.SessionID != a.session {
-				a.initSID = msg.SessionID
+			c.inited, c.initSID, c.tools, c.toolsOK = true, msg.SessionID, tools, ok
+		} else {
+			c.tools = append(c.tools, tools...) // a later init can only narrow what is allowed
+			c.toolsOK = c.toolsOK && ok
+			if msg.SessionID != c.session {
+				c.initSID = msg.SessionID
 			}
 		}
-		a.mu.Unlock()
+		c.mu.Unlock()
 		if first {
-			close(a.initCh)
+			close(c.initCh)
 		}
 	case msg.Type == "result":
-		a.mu.Lock()
-		p := a.pending
-		a.pending = nil
-		a.mu.Unlock()
-		if p == nil {
+		c.mu.Lock()
+		p, sid := c.pending, c.initSID
+		why := ""
+		switch {
+		case msg.SessionID != sid:
+			why = "result of session " + msg.SessionID + ", not " + sid
+		case p == nil:
+			why = "result with no turn pending"
+		default:
+			c.pending = nil
+		}
+		c.mu.Unlock()
+		if why != "" {
+			c.a.note(map[string]any{"ixmux": "ignored-result", "incarnation": c.session, "why": why, "at": time.Now().UTC()})
 			return
 		}
-		ackSeen := strings.HasPrefix(strings.TrimSpace(msg.Result), "ACK "+p.id)
-		a.note(map[string]any{"ixmux": "result", "mandate_id": p.id, "incarnation": p.inc, "ack_seen": ackSeen, "is_error": msg.IsError})
-		p.done <- turnResult{text: msg.Result, isErr: msg.IsError}
+		ack := ackOf(msg.Result)
+		if p.id != "" && ack != "" && ack != p.id {
+			// The answer acknowledges another mandate: what it answers is unknown.
+			c.a.note(map[string]any{"ixmux": "ack-mismatch", "mandate_id": p.id, "acknowledged": ack, "incarnation": c.session, "at": time.Now().UTC()})
+			p.resolve(turnResult{err: fmt.Errorf("the answer acknowledges %q, not %q", ack, p.id)})
+			return
+		}
+		seen := p.id != "" && ack == p.id
+		c.a.note(map[string]any{"ixmux": "result", "mandate_id": p.id, "incarnation": c.session, "ack_seen": seen, "is_error": msg.IsError})
+		p.resolve(turnResult{text: msg.Result, ackSeen: seen, isErr: msg.IsError})
 	}
 }
 
-// send journals the send, then writes one user message on stdin. The caller holds the turn.
-func (a *Adapter) send(id, text string) (*turn, error) {
+// refusal says why this child may not take a mandate for incarnation inc (under c.mu), or "".
+func (c *child) refusal(inc string) string {
+	switch {
+	case c.dead != nil:
+		return "the claude child has ended: " + c.dead.Error()
+	case !c.inited:
+		return "the claude child has not sent its init"
+	case !c.toolsOK:
+		return "the claude child's init has no tools array; it must have an empty one"
+	case len(c.tools) > 0:
+		return fmt.Sprintf("the claude child announces tools %v; it must have none", c.tools)
+	case c.initSID != c.session || inc != c.initSID:
+		return fmt.Sprintf("the mandate is for incarnation %q, the claude child is %q", inc, c.initSID)
+	}
+	return ""
+}
+
+// check is the first look at the child for a mandate of incarnation inc: the init generation it
+// saw, or why it refuses.
+func (c *child) check(inc string) (int, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen, c.refusal(inc)
+}
+
+// send writes one user message on stdin. For a mandate (gen >= 0) it checks again, under the
+// lock it writes under, that the child still takes incarnation inc and has routed no init since
+// the check at gen; the router takes that lock to route an init, so none is taken in between.
+// The send is journaled (synced) before the write.
+// @ai:invariant a mandate is written to the child only if, under the lock of the write, its incarnation is the child's init session_id, the init had an empty tools array, and no init came since the check [T:test conf:0.85 src:go/ixmux/claudestream/s4b2_test.go:TestInitBetweenCheckAndWrite]
+func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	b, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user",
 		"content": []any{map[string]any{"type": "text", "text": text}}}})
 	if err != nil {
 		return nil, err
 	}
-	p := &turn{id: id, inc: a.session, done: make(chan turnResult, 1)}
-	a.mu.Lock()
-	if a.dead != nil {
-		a.mu.Unlock()
-		return nil, a.dead
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if gen >= 0 {
+		if why := c.refusal(inc); why != "" {
+			return nil, fmt.Errorf("%w: %s", deliver.ErrRefused, why)
+		}
+		if c.gen != gen {
+			return nil, fmt.Errorf("%w: the claude child sent another init since it was checked", deliver.ErrRefused)
+		}
 	}
-	a.pending = p
-	a.mu.Unlock()
-	if err := a.note(map[string]any{"ixmux": "send", "mandate_id": id, "incarnation": a.session, "at": time.Now().UTC()}); err != nil {
+	if c.dead != nil {
+		return nil, c.dead
+	}
+	if err := c.a.note(map[string]any{"ixmux": "send", "mandate_id": id, "incarnation": c.session, "at": time.Now().UTC()}); err != nil {
 		return nil, err
 	}
-	if _, err := a.stdin.Write(append(b, '\n')); err != nil {
+	p := newTurn(id)
+	c.pending = p
+	if _, err := c.stdin.Write(append(b, '\n')); err != nil {
+		c.pending = nil
 		return nil, err
 	}
 	return p, nil
 }
 
-// Incarnation is the session_id of the live child's init: an error once the child has ended.
-func (a *Adapter) Incarnation() (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	switch {
-	case a.dead != nil:
-		return "", fmt.Errorf("claude child of %s ended (%v); ixmux does not relaunch it", a.cfg.Name, a.dead)
-	case !a.inited:
-		return "", fmt.Errorf("claude child of %s has not sent its init", a.cfg.Name)
-	}
-	return a.initSID, nil
+// stop closes the child's stdin, waits up to StopWait for it to exit, then kills its job. Each
+// step is noted in stream.jsonl with its time ({"ixmux":"stop","step":...}): stdin-closed, then
+// exited or killed with the milliseconds since stdin was closed.
+// @ai:invariant the stop of a claude child is traced: stdin closed, then exited or killed past StopWait [T:test conf:0.85 src:go/ixmux/claudestream/claudestream_test.go:TestStopIsTraced]
+func (c *child) stop() error {
+	var err error
+	c.stopper.Do(func() {
+		begun := time.Now()
+		c.a.note(map[string]any{"ixmux": "stop", "step": "stdin-closed", "incarnation": c.session, "at": begun.UTC()})
+		c.stdin.Close()
+		step := "exited"
+		select {
+		case <-c.exited:
+		case <-time.After(c.a.cfg.StopWait):
+			step = "killed"
+			err = c.job.kill()
+			<-c.exited
+		}
+		c.a.note(map[string]any{"ixmux": "stop", "step": step, "incarnation": c.session, "at": time.Now().UTC(), "after_ms": time.Since(begun).Milliseconds()})
+		c.job.Close()
+	})
+	return err
 }
 
-func (a *Adapter) sessionID() string { return a.session }
-
-// PID of the child.
-func (a *Adapter) PID() int { return a.cmd.Process.Pid }
-
-// Alive says whether the child still runs.
-func (a *Adapter) Alive() bool { return a.deadErr() == nil }
-
-// StreamPath is the journal of everything read on the child's stdout, with ixmux's own lines
-// (start, send, result, exit).
-func (a *Adapter) StreamPath() string { return filepath.Join(a.cfg.Dir, StreamFile) }
-
-// Tools lists the tools the child's init announced (empty is the only acceptable answer).
-func (a *Adapter) Tools() []string {
+func (a *Adapter) live() *child {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]string(nil), a.tools...)
+	return a.cur
+}
+
+// Incarnation is the session_id of the live child's init: an error once the child has ended.
+func (a *Adapter) Incarnation() (string, error) {
+	c := a.live()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case c.dead != nil:
+		return "", fmt.Errorf("claude child of %s ended (%v); ixmux relaunches it only past TurnMax", a.cfg.Name, c.dead)
+	case !c.inited:
+		return "", fmt.Errorf("claude child of %s has not sent its init", a.cfg.Name)
+	}
+	return c.initSID, nil
+}
+
+func (a *Adapter) sessionID() string { return a.live().session }
+
+// PID of the live child.
+func (a *Adapter) PID() int { return a.live().cmd.Process.Pid }
+
+// Alive says whether the live child still runs.
+func (a *Adapter) Alive() bool { return a.live().deadErr() == nil }
+
+// StreamPath is the journal of everything read on the children's stdout, with ixmux's own lines.
+func (a *Adapter) StreamPath() string { return filepath.Join(a.cfg.Dir, StreamFile) }
+
+// Tools lists the tools the live child's init announced (empty is the only acceptable answer).
+func (a *Adapter) Tools() []string {
+	c := a.live()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.tools...)
 }
 
 // prompt frames a mandate as the user message.
@@ -352,39 +645,52 @@ func prompt(m deliver.Mandate) string {
 	return "ixmux mandate_id: " + m.MandateID + "\nCommence ta réponse exactement par « ACK " + m.MandateID + " ».\n\n" + m.Text
 }
 
-// Deliver sends m as one user message and returns with its result, or when the child ends; it
-// does not return at ctx's deadline, so the next mandate never meets this one's result (the
-// engine records uncertain at its own deadline, then this late answer).
-//
-// Under the turn, and the same lock as the pending send, it checks that the live child is the
-// incarnation asked for: this Adapter owns one child for its whole life (no relaunch), so the
-// session_id of its init and the process it writes to cannot change between the check and the
-// write; a dead child refuses.
-// @ai:invariant a mandate is written to the child only if its incarnation is the live child's init session_id and that init listed no tool [T:test conf:0.85 src:go/ixmux/claudestream/claudestream_test.go:TestToolsListedIsRefused]
+// Deliver sends m as one user message and returns with its result, or at ctx's end. A turn left
+// without result stays reserved: no other mandate is sent while it may still answer. Past
+// TurnMax, its child is killed and replaced (a new incarnation), and the target is free again.
+// An answer that acknowledges another mandate is an error (the delivery is uncertain); an answer
+// with no ACK is delivered with AckSeen false.
+// @ai:invariant one turn at a time per target: a turn past its deadline stays reserved until its result, its child's death or TurnMax [T:test conf:0.85 src:go/ixmux/claudestream/s4b4_test.go:TestTurnMaxFreesTheTarget]
 func (a *Adapter) Deliver(ctx context.Context, m deliver.Mandate) (deliver.Ack, error) {
-	a.turn.Lock()
-	defer a.turn.Unlock()
 	a.mu.Lock()
-	var refuse string
+	c := a.cur
+	refuse := ""
 	switch {
-	case a.dead != nil:
-		refuse = "the claude child has ended: " + a.dead.Error()
-	case !a.inited:
-		refuse = "the claude child has not sent its init"
-	case len(a.tools) > 0:
-		refuse = fmt.Sprintf("the claude child announces tools %v; it must have none", a.tools)
-	case a.initSID != a.session || m.Incarnation != a.initSID:
-		refuse = fmt.Sprintf("the mandate is for incarnation %q, the claude child is %q", m.Incarnation, a.initSID)
+	case a.stopped:
+		refuse = "the claude target is stopping"
+	case a.reserved:
+		refuse = "a previous turn may still answer (TurnMax " + a.cfg.TurnMax.String() + ")"
+	default:
+		a.reserved = true
+		a.watchers.Add(1)
 	}
 	a.mu.Unlock()
 	if refuse != "" {
 		return deliver.Ack{}, fmt.Errorf("%w: %s", deliver.ErrRefused, refuse)
 	}
-	p, err := a.send(m.MandateID, prompt(m))
+	gen, why := c.check(m.Incarnation)
+	if why != "" {
+		a.release()
+		return deliver.Ack{}, fmt.Errorf("%w: %s", deliver.ErrRefused, why)
+	}
+	if testHookAfterCheck != nil {
+		testHookAfterCheck(func(b []byte) { c.route(lineMsg{line: b}) })
+	}
+	p, err := c.send(m.MandateID, prompt(m), gen, m.Incarnation)
 	if err != nil {
+		a.release()
+		if errors.Is(err, deliver.ErrRefused) {
+			return deliver.Ack{}, err
+		}
 		return deliver.Ack{}, fmt.Errorf("send to claude: %w", err)
 	}
-	r := <-p.done
+	go a.watch(c, p)
+	select {
+	case <-p.done:
+	case <-ctx.Done():
+		return deliver.Ack{}, fmt.Errorf("no result from claude by the delivery deadline (%w); the turn stays reserved until its result, the child's end or TurnMax", ctx.Err())
+	}
+	r := p.res
 	if r.err != nil {
 		return deliver.Ack{}, r.err
 	}
@@ -392,81 +698,156 @@ func (a *Adapter) Deliver(ctx context.Context, m deliver.Mandate) (deliver.Ack, 
 	if len(text) > MaxReply {
 		text = text[:MaxReply]
 	}
-	ack := deliver.Ack{Receipt: a.session + ":" + m.MandateID, Text: text, AckSeen: strings.HasPrefix(strings.TrimSpace(r.text), "ACK "+m.MandateID)}
+	ack := deliver.Ack{Receipt: c.session + ":" + m.MandateID, Text: text, AckSeen: r.ackSeen}
 	if r.isErr {
 		return ack, fmt.Errorf("claude answered with an error result: %.200s", r.text)
 	}
 	return ack, nil
 }
 
+// release ends a reservation.
+func (a *Adapter) release() {
+	a.mu.Lock()
+	a.reserved = false
+	a.mu.Unlock()
+	a.watchers.Done()
+}
+
+// watch holds the reservation until p is resolved, or TurnMax: then the child is killed (its
+// turn resolves with its death) and a new one starts, unless the target is stopping.
+func (a *Adapter) watch(c *child, p *turn) {
+	defer a.release()
+	t := time.NewTimer(a.cfg.TurnMax)
+	defer t.Stop()
+	select {
+	case <-p.done:
+		return
+	case <-t.C:
+	}
+	a.note(map[string]any{"ixmux": "turn-max", "mandate_id": p.id, "incarnation": c.session, "turn_max": a.cfg.TurnMax.String(), "at": time.Now().UTC()})
+	c.job.kill()
+	<-c.exited
+	c.stop()
+	a.mu.Lock()
+	stopped := a.stopped
+	a.mu.Unlock()
+	if stopped {
+		return
+	}
+	nc, err := a.startChild()
+	if err != nil {
+		a.note(map[string]any{"ixmux": "relaunch-failed", "error": err.Error(), "at": time.Now().UTC()})
+		return
+	}
+	a.mu.Lock()
+	stopped = a.stopped
+	if !stopped {
+		a.cur = nc
+	}
+	a.mu.Unlock()
+	if stopped {
+		nc.stop()
+	}
+}
+
 // Status answers for incarnation from the stream journal: no send of mandateID is not
 // received; a send followed by its result is received; a send without result is unknown (the
 // child may still answer, or died mid-turn). Another incarnation than the live child's is
-// unknown (the engine refuses it stale-incarnation before asking).
+// unknown. Each call reads only what was appended since the last one, a page at a time, and
+// stops at ctx's end.
 func (a *Adapter) Status(ctx context.Context, mandateID, incarnation string) (deliver.Outcome, error) {
-	if incarnation != a.session {
+	if incarnation != a.sessionID() {
 		return deliver.Unknown, nil
 	}
-	f, err := os.Open(a.StreamPath())
-	if err != nil {
+	a.statusMu.Lock()
+	defer a.statusMu.Unlock()
+	if err := a.catchUp(ctx); err != nil {
 		return deliver.Unknown, err
 	}
-	defer f.Close()
-	br := bufio.NewReaderSize(f, 64<<10)
-	sent, answered := false, false
-	for {
-		line, err := readLine(br)
-		if bytes.Contains(line, []byte(`"ixmux":`)) { // ixmux's own lines; claude's have a type
-			var n struct {
-				Type        string `json:"type"`
-				Ixmux       string `json:"ixmux"`
-				MandateID   string `json:"mandate_id"`
-				Incarnation string `json:"incarnation"`
-			}
-			if json.Unmarshal(line, &n) == nil && n.Type == "" && n.MandateID == mandateID && n.Incarnation == incarnation {
-				switch n.Ixmux {
-				case "send":
-					sent = true
-				case "result":
-					answered = sent
-				}
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-	switch {
-	case answered:
+	switch mk := a.marks[[2]string{incarnation, mandateID}]; {
+	case mk == nil:
+		return deliver.NotReceived, nil
+	case mk.answered:
 		return deliver.Received, nil
-	case sent:
-		return deliver.Unknown, nil
 	}
-	return deliver.NotReceived, nil
+	return deliver.Unknown, nil
 }
 
-// Stop closes the child's stdin, waits up to StopWait for it to exit, then kills its job. Each
-// step is noted in stream.jsonl with its time ({"ixmux":"stop","step":...}): stdin-closed, then
-// exited or killed with the milliseconds since stdin was closed.
-// @ai:invariant the stop of a claude child is traced: stdin closed, then exited or killed past StopWait [T:test conf:0.85 src:go/ixmux/claudestream/claudestream_test.go:TestStopIsTraced]
-func (a *Adapter) Stop() error {
-	var err error
-	a.stop.Do(func() {
-		begun := time.Now()
-		a.note(map[string]any{"ixmux": "stop", "step": "stdin-closed", "incarnation": a.session, "at": begun.UTC()})
-		a.stdin.Close()
-		step := "exited"
-		select {
-		case <-a.exited:
-		case <-time.After(a.cfg.StopWait):
-			step = "killed"
-			err = a.job.kill()
-			<-a.exited
+// catchUp folds the stream's new ixmux lines into marks (under statusMu).
+// @ai:invariant Status reads stream.jsonl from where its last read stopped, never again from byte 0 [T:test conf:0.85 src:go/ixmux/claudestream/s4b5_test.go:TestStatusHonoursItsContextAndCursor]
+func (a *Adapter) catchUp(ctx context.Context) error {
+	path := a.StreamPath()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		a.note(map[string]any{"ixmux": "stop", "step": step, "incarnation": a.session, "at": time.Now().UTC(), "after_ms": time.Since(begun).Milliseconds()})
-		a.job.Close()
-		a.stream.Close()
-	})
+		if a.cursor.Incarnation == "" {
+			inc, _, err := journal.Identify(path)
+			if err != nil {
+				return err
+			}
+			a.cursor = journal.Cursor{Incarnation: inc}
+		}
+		if testHookStatusFrom != nil {
+			testHookStatusFrom(a.cursor.From)
+		}
+		page, err := journal.ReadCursor(path, a.cursor, StatusPage)
+		if err != nil {
+			return err
+		}
+		for _, ev := range page.Events {
+			a.index(ev.Line)
+		}
+		if page.Pending != nil {
+			a.cursor = page.Pending.Resume
+		} else {
+			a.cursor = journal.Cursor{Incarnation: page.Incarnation, From: page.Next}
+		}
+		if len(page.Events) == 0 && (page.Pending == nil || page.Pending.Scanned == page.Pending.At+page.Pending.Bytes) {
+			return nil // caught up, or a record not complete yet
+		}
+	}
+}
+
+func (a *Adapter) index(line []byte) {
+	if !bytes.Contains(line, []byte(`"ixmux":`)) { // ixmux's own lines; claude's have a type
+		return
+	}
+	var n struct {
+		Type        string `json:"type"`
+		Ixmux       string `json:"ixmux"`
+		MandateID   string `json:"mandate_id"`
+		Incarnation string `json:"incarnation"`
+	}
+	if json.Unmarshal(line, &n) != nil || n.Type != "" || n.MandateID == "" {
+		return
+	}
+	k := [2]string{n.Incarnation, n.MandateID}
+	switch n.Ixmux {
+	case "send":
+		if a.marks[k] == nil {
+			a.marks[k] = &mark{}
+		}
+		a.marks[k].sent = true
+	case "result":
+		if mk := a.marks[k]; mk != nil && mk.sent {
+			mk.answered = true
+		}
+	}
+}
+
+// Stop stops the live child (see child.stop), waits for any reserved turn to end (a relaunch
+// under way included), then closes the stream journal.
+func (a *Adapter) Stop() error {
+	a.mu.Lock()
+	a.stopped = true
+	c := a.cur
+	a.mu.Unlock()
+	err := c.stop()
+	a.watchers.Wait()
+	a.logMu.Lock()
+	a.stream.Close()
+	a.logMu.Unlock()
 	return err
 }
 

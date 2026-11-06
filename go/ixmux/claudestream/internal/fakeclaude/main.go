@@ -9,6 +9,15 @@
 //	FAKE_NOACK    answer without the ACK line
 //	FAKE_SESSION  report this session_id instead of the --session-id given
 //	FAKE_LINGER   once stdin is closed, wait this long (a Go duration) before exiting
+//	FAKE_ENVNAMES a file that gets the names (never the values) of its environment, one per line
+//	FAKE_MUTE     "all": answer no message (an init still comes, per FAKE_INIT); otherwise a
+//	              message whose text holds "mute" is consumed and never answered
+//	FAKE_FLOOD    a message whose text holds "flood" first gets this many bytes of assistant lines
+//	FAKE_REPLY    the answer is padded to this many bytes
+//	FAKE_TOOLS_FIELD "null" or "absent": the init's tools field is null, or missing
+//	FAKE_M2       before or instead of the answer to a mandate named m2: "othersession" (a result
+//	              of another session first), "duplicate" (the previous result again first),
+//	              "prefix" (the answer begins ACK m2-extra), "othermandate" (it begins ACK m1)
 //
 // A message whose text holds "die" makes it exit 3 without answering.
 package main
@@ -20,6 +29,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,7 +68,23 @@ func main() {
 	if t := os.Getenv("FAKE_TOOLS"); t != "" {
 		tools = strings.Split(t, ",")
 	}
+	if f := os.Getenv("FAKE_ENVNAMES"); f != "" {
+		var names []string
+		for _, kv := range os.Environ() {
+			if k, _, ok := strings.Cut(kv, "="); ok && k != "" {
+				names = append(names, k)
+			}
+		}
+		os.WriteFile(f, []byte(strings.Join(names, "\n")+"\n"), 0o600)
+	}
 	init := map[string]any{"type": "system", "subtype": "init", "session_id": session, "tools": tools, "mcp_servers": []any{}, "model": "fake"}
+	switch os.Getenv("FAKE_TOOLS_FIELD") {
+	case "null":
+		init["tools"] = nil
+	case "absent":
+		delete(init, "tools")
+	}
+	var last map[string]any // the last result emitted
 	inited := false
 	if os.Getenv("FAKE_INIT") != "first" {
 		emit(init)
@@ -97,6 +123,15 @@ func main() {
 		if strings.Contains(text, "die") {
 			os.Exit(3)
 		}
+		if os.Getenv("FAKE_MUTE") == "all" || (os.Getenv("FAKE_MUTE") != "" && strings.Contains(text, "mute")) {
+			continue // consumed, never answered
+		}
+		if n, _ := strconv.Atoi(os.Getenv("FAKE_FLOOD")); n > 0 && strings.Contains(text, "flood") {
+			pad := strings.Repeat("f", 4000)
+			for sent := 0; sent < n; sent += len(pad) + 100 {
+				emit(map[string]any{"type": "assistant", "session_id": session, "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": pad}}}})
+			}
+		}
 		if strings.Contains(text, "slow") {
 			for h := os.Getenv("FAKE_HOLD"); h != ""; time.Sleep(20 * time.Millisecond) {
 				if _, err := os.Stat(h); err != nil {
@@ -112,7 +147,25 @@ func main() {
 		if os.Getenv("FAKE_NOACK") != "" {
 			reply = "BONJOUR"
 		}
+		if id == "m2" {
+			switch os.Getenv("FAKE_M2") {
+			case "othersession":
+				emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "ACK m2\nFROM ELSEWHERE", "session_id": "another-session", "num_turns": 1})
+			case "duplicate":
+				if last != nil {
+					emit(last)
+				}
+			case "prefix":
+				reply = "ACK m2-extra\nBONJOUR"
+			case "othermandate":
+				reply = "ACK m1\nBONJOUR"
+			}
+		}
+		if n, _ := strconv.Atoi(os.Getenv("FAKE_REPLY")); n > len(reply) {
+			reply += strings.Repeat("r", n-len(reply))
+		}
 		emit(map[string]any{"type": "assistant", "session_id": session, "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": reply}}}})
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": reply, "session_id": session, "num_turns": 1})
+		last = map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": reply, "session_id": session, "num_turns": 1}
+		emit(last)
 	}
 }
