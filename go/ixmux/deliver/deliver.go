@@ -44,6 +44,8 @@ const (
 	ReconcileUnsupported    = "reconcile-unsupported"
 	LogTooLarge             = "log-too-large"
 	LogCorrupt              = "log-corrupt"
+	MandateIDReuse          = "mandate-id-reuse"
+	JournalLocked           = "journal-locked"
 )
 
 // Refusal is a typed refusal.

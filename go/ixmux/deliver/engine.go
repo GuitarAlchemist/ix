@@ -2,6 +2,8 @@ package deliver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -13,6 +15,7 @@ type key struct{ target, id string }
 
 type record struct {
 	target, id, inc string
+	fp              string // fingerprint of the mandate first accepted under this id
 	state, prev     State
 	reason          string
 	ack             *Ack
@@ -86,12 +89,25 @@ func (e *Engine) apply(lr logRecord) {
 	if lr.Incarnation != "" {
 		r.inc = lr.Incarnation
 	}
+	if r.fp == "" {
+		r.fp = lr.Fingerprint
+	}
+}
+
+// fingerprint names what a mandate asks: its target, incarnation and text.
+func fingerprint(m Mandate) string {
+	h := sha256.Sum256([]byte(m.Target + "\x00" + m.Incarnation + "\x00" + m.Text))
+	return hex.EncodeToString(h[:])
 }
 
 // transition writes one state change to the log, then applies it; nothing changes if the write
 // fails.
 func (e *Engine) transition(k key, inc string, to State, reason string, ack *Ack) error {
-	lr := logRecord{At: time.Now().UTC(), Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack}
+	return e.transitionFP(k, inc, to, reason, ack, "")
+}
+
+func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *Ack, fp string) error {
+	lr := logRecord{At: time.Now().UTC(), Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp}
 	if err := e.log.append(lr); err != nil {
 		return err
 	}
@@ -110,11 +126,14 @@ func (e *Engine) Register(name string, t Target) {
 
 // gate decides, under e.mu, whether k may be sent again: done is true when the answer is
 // already known (a replay or a refusal).
-func (e *Engine) gate(k key) (res Result, err error, done bool) {
+func (e *Engine) gate(k key, fp string) (res Result, err error, done bool) {
+	r := e.recs[k]
+	if r != nil && r.fp != "" && r.fp != fp {
+		return Result{}, &Refusal{MandateIDReuse, fmt.Sprintf("%s/%s was first accepted with another target, incarnation or text", k.target, k.id)}, true
+	}
 	if e.claims[k] {
 		return Result{}, &Refusal{InFlight, fmt.Sprintf("%s/%s is being delivered or reconciled", k.target, k.id)}, true
 	}
-	r := e.recs[k]
 	if r == nil {
 		return Result{}, nil, false
 	}
@@ -148,14 +167,14 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	case len(m.Text) > MaxText:
 		return Result{}, &Refusal{TextTooLong, fmt.Sprintf("text of %d bytes, bound %d", len(m.Text), MaxText)}
 	}
-	k := key{m.Target, m.MandateID}
+	k, fp := key{m.Target, m.MandateID}, fingerprint(m)
 	e.mu.Lock()
 	t, ok := e.targets[m.Target]
 	if !ok {
 		e.mu.Unlock()
 		return Result{}, &Refusal{UnknownTarget, "no target " + m.Target}
 	}
-	if res, err, done := e.gate(k); done {
+	if res, err, done := e.gate(k, fp); done {
 		e.mu.Unlock()
 		return res, err
 	}
@@ -170,7 +189,7 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	}
 
 	e.mu.Lock()
-	if res, err, done := e.gate(k); done {
+	if res, err, done := e.gate(k, fp); done {
 		e.mu.Unlock()
 		return res, err
 	}
@@ -193,7 +212,7 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		<-e.slots
 	}
 	for _, s := range []State{Accepted, Delivering} {
-		if err := e.transition(k, inc, s, "", nil); err != nil {
+		if err := e.transitionFP(k, inc, s, "", nil, fp); err != nil {
 			e.unclaim(k)
 			release()
 			return Result{}, err

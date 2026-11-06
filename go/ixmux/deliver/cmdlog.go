@@ -19,6 +19,7 @@ type logRecord struct {
 	State       State     `json:"state"`
 	Reason      string    `json:"reason,omitempty"`
 	Ack         *Ack      `json:"ack,omitempty"`
+	Fingerprint string    `json:"fp,omitempty"` // of the mandate, on its accepted records
 }
 
 // cmdLog is the append-only command log.
