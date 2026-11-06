@@ -30,7 +30,7 @@ func (l *lateTarget) Deliver(ctx context.Context, m Mandate) (Ack, error) {
 	return Ack{Receipt: "late " + m.MandateID}, nil
 }
 
-func (l *lateTarget) Status(ctx context.Context, mandateID string) (Outcome, error) {
+func (l *lateTarget) Status(ctx context.Context, mandateID, incarnation string) (Outcome, error) {
 	if l.effects.Load() > 0 {
 		return Received, nil
 	}
@@ -58,7 +58,7 @@ func TestReplacedTargetGetsNoStaleMandate(t *testing.T) {
 type hangingStatus struct{ hold chan struct{} }
 
 func (h hangingStatus) Deliver(ctx context.Context, m Mandate) (Ack, error) { return Ack{}, nil }
-func (h hangingStatus) Status(ctx context.Context, id string) (Outcome, error) {
+func (h hangingStatus) Status(ctx context.Context, id, incarnation string) (Outcome, error) {
 	<-h.hold
 	return Unknown, nil
 }

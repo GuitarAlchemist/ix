@@ -41,7 +41,7 @@ func (f *fakeTarget) Deliver(ctx context.Context, m Mandate) (Ack, error) {
 	return Ack{Receipt: "took " + m.MandateID}, nil
 }
 
-func (f *fakeTarget) Status(ctx context.Context, mandateID string) (Outcome, error) {
+func (f *fakeTarget) Status(ctx context.Context, mandateID, incarnation string) (Outcome, error) {
 	return f.outcome, nil
 }
 

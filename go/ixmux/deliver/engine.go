@@ -370,6 +370,7 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 	r := e.recs[k]
 	var refusal *Refusal
 	var rc Reconciler
+	var t *Target
 	switch {
 	case r == nil:
 		refusal = &Refusal{UnknownMandate, fmt.Sprintf("no delivery %s/%s", target, mandateID)}
@@ -384,8 +385,8 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 	case r.state != Uncertain:
 		refusal = &Refusal{NotUncertain, fmt.Sprintf("%s/%s is %s", target, mandateID, r.state)}
 	default:
-		t, ok := e.targets[target]
-		if !ok {
+		var ok bool
+		if t, ok = e.targets[target]; !ok {
 			refusal = &Refusal{UnknownTarget, "no target " + target}
 		} else if rc, ok = t.Adapter.(Reconciler); !ok {
 			refusal = &Refusal{ReconcileUnsupported, "the adapter of " + target + " cannot answer for a mandate"}
@@ -406,11 +407,22 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 	inc := r.inc
 	e.mu.Unlock()
 
+	// Only the incarnation the mandate was for can say whether it received it: checked under the
+	// claim before Status, and again before its answer is written.
+	if err := e.sameIncarnation(target, t, inc); err != nil {
+		e.mu.Lock()
+		delete(e.asking, k)
+		delete(e.claims, k)
+		e.mu.Unlock()
+		<-e.slots
+		return Result{}, err
+	}
+
 	cctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 	done := make(chan statusResult, 1)
 	go func() {
-		o, err := rc.Status(cctx, mandateID)
+		o, err := rc.Status(cctx, mandateID, inc)
 		e.mu.Lock()
 		delete(e.asking, k)
 		e.mu.Unlock()
@@ -423,10 +435,15 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 		switch {
 		case s.err != nil:
 			why = "status error: " + s.err.Error()
-		case s.o == Received:
+		case s.o == Received || s.o == NotReceived:
+			if err := e.sameIncarnation(target, t, inc); err != nil {
+				e.unclaim(k)
+				return Result{}, err
+			}
+			if s.o == NotReceived {
+				return e.finish(k, inc, Refused, "reconciled: the target did not receive it", nil)
+			}
 			return e.finish(k, inc, Delivered, "reconciled: the target received it", nil)
-		case s.o == NotReceived:
-			return e.finish(k, inc, Refused, "reconciled: the target did not receive it", nil)
 		default:
 			why = "the target answered " + string(s.o)
 		}
@@ -438,6 +455,25 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 	res := e.recs[k].result()
 	res.Reason = "still uncertain: " + why
 	return res, nil
+}
+
+// sameIncarnation refuses stale-incarnation unless target is still registered as t and its
+// current incarnation is inc.
+// @ai:invariant Reconcile writes an outcome only if the mandate's incarnation answered it, checked before and after Status [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestReconcileAsksOnlyTheMandatesIncarnation]
+func (e *Engine) sameIncarnation(target string, t *Target, inc string) error {
+	cur, err := t.Incarnation()
+	if err != nil {
+		return fmt.Errorf("incarnation of %s: %w", target, err)
+	}
+	if cur != inc {
+		return &Refusal{StaleIncarnation, fmt.Sprintf("the delivery was for incarnation %q, %s is now %q", inc, target, cur)}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.targets[target] != t {
+		return &Refusal{StaleIncarnation, target + " was registered again"}
+	}
+	return nil
 }
 
 func (e *Engine) sorted() []*record {

@@ -2,6 +2,7 @@ package deliver
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -26,7 +27,7 @@ func (f *firstLate) Deliver(ctx context.Context, m Mandate) (Ack, error) {
 	return Ack{Receipt: "took " + m.MandateID}, nil
 }
 
-func (f *firstLate) Status(ctx context.Context, mandateID string) (Outcome, error) {
+func (f *firstLate) Status(ctx context.Context, mandateID, incarnation string) (Outcome, error) {
 	if f.effects.Load() > 0 {
 		return Received, nil
 	}
@@ -91,5 +92,61 @@ func TestCloseKeepsTheGuardOfARunningCall(t *testing.T) {
 	}
 	if n := tg.effects.Load(); n != 1 {
 		t.Errorf("%d effects, want 1", n)
+	}
+}
+
+// statusFn is a target whose Status runs fn, then answers NotReceived.
+type statusFn struct {
+	inc string
+	fn  func()
+}
+
+func (s *statusFn) Deliver(ctx context.Context, m Mandate) (Ack, error) { return Ack{}, nil }
+func (s *statusFn) Status(ctx context.Context, mandateID, incarnation string) (Outcome, error) {
+	if s.fn != nil {
+		s.fn()
+	}
+	return NotReceived, nil
+}
+func (s *statusFn) target() Target {
+	return Target{Adapter: s, Incarnation: func() (string, error) { return s.inc, nil }}
+}
+
+// S2F-2 (Codex round 4): a delivery left uncertain for incarnation i1 is not reconciled by the
+// target's next incarnation, which cannot know what i1 received. Nothing is written.
+func TestReconcileAsksOnlyTheMandatesIncarnation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		reg  func(e *Engine) // registers target a
+	}{
+		{"restarted before", func(e *Engine) { e.Register("a", (&statusFn{inc: "i2"}).target()) }},
+		{"restarted during Status", func(e *Engine) {
+			e.Register("a", (&statusFn{inc: "i1", fn: func() { e.Register("a", (&statusFn{inc: "i2"}).target()) }}).target())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cmd.jsonl")
+			log := logHeader + `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m1","incarnation":"i1","state":"accepted","fp":"x"}` + "\n" +
+				`{"at":"2026-11-05T00:00:01Z","target":"a","mandate_id":"m1","incarnation":"i1","state":"delivering"}` + "\n"
+			if err := os.WriteFile(path, []byte(log), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e, rec := openEngine(t, path, Options{})
+			if rec.MadeUncertain != 1 {
+				t.Fatalf("recovery %+v", rec)
+			}
+			before, _ := os.ReadFile(path)
+			tc.reg(e)
+			res, err := e.Reconcile(context.Background(), "a", "m1")
+			if refusalCode(err) != StaleIncarnation {
+				t.Errorf("reconcile of an i1 delivery: %+v %v, want %s", res, err, StaleIncarnation)
+			}
+			if got := stateOf(e, "a", "m1"); got != Uncertain {
+				t.Errorf("state %s, want uncertain", got)
+			}
+			if after, _ := os.ReadFile(path); string(after) != string(before) {
+				t.Errorf("reconcile wrote to the log:\n%s", after[len(before):])
+			}
+		})
 	}
 }

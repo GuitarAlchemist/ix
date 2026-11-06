@@ -105,8 +105,14 @@ const (
 )
 
 // Reconciler is an optional face of an Adapter: it asks the target about a mandate.
+//
+// Contract on incarnation: Status answers for the session's incarnation incarnation only, the one
+// the mandate was meant for. If the session is now another incarnation (it restarted, and cannot
+// know what the previous one received), Status must return Unknown or an error, never Received
+// or NotReceived. The engine also checks, before the call and before writing its answer, that the
+// target is still registered as the same incarnation.
 type Reconciler interface {
-	Status(ctx context.Context, mandateID string) (Outcome, error)
+	Status(ctx context.Context, mandateID, incarnation string) (Outcome, error)
 }
 
 // Target is a registered session: its adapter and how to read its current incarnation.
