@@ -121,3 +121,58 @@ func TestHTTPConnectionCap(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// S3B-4 (Codex round 6, P1): with 5,000 deliveries, a resume on a stale epoch gets the whole
+// state through a client that follows the 1 MiB read limit, without 1009; the events after it
+// start at the seq the state covers plus one.
+func TestStateOfThousandsFitsTheReadLimit(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	os.MkdirAll(state, 0o700)
+	var log strings.Builder
+	log.WriteString(`{"format":"ixmux.cmdlog.v1"}` + "\n")
+	reason := strings.Repeat("r", 300)
+	for i := range 5000 {
+		fmt.Fprintf(&log, `{"at":"2026-11-06T00:00:00Z","target":"s","mandate_id":"old-%04d","incarnation":"i","state":"delivered","reason":%q,"fp":"x"}`+"\n", i, reason)
+	}
+	if err := os.WriteFile(filepath.Join(state, "commands.jsonl"), []byte(log.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := start(t, state, nil, "--target", "s="+filepath.Join(dir, "session.jsonl"))
+	c, _, err := p.dial("?since=1&epoch=stale", nil) // read limit: server.MaxStreamMessage
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	seen := map[string]bool{}
+	var covered uint64
+	for done := false; !done; {
+		m := read(t, c, 10*time.Second)
+		switch m.Type {
+		case "state", "state-page":
+			var d struct {
+				Deliveries []transition `json:"deliveries"`
+			}
+			json.Unmarshal(m.Data, &d)
+			for _, tr := range d.Deliveries {
+				seen[tr.MandateID] = true
+			}
+			done, covered = m.Type == "state", m.Seq
+		case "state-end":
+			done, covered = true, m.Seq
+		}
+	}
+	if len(seen) != 5000 {
+		t.Errorf("the state holds %d deliveries, want 5000", len(seen))
+	}
+	p.do("POST", "/v1/mandates", mandate("after", incarnation(p, "s")), nil)
+	want := covered + 1
+	for _, m := range until(t, c, "after", "delivered") {
+		var tr transition
+		json.Unmarshal(m.Data, &tr)
+		if m.Type != "mandate" || m.Seq != want || seen[tr.MandateID] {
+			t.Fatalf("after the state covering %d: %s seq %d %+v, want mandate seq %d not in the state", covered, m.Type, m.Seq, tr, want)
+		}
+		want++
+	}
+}

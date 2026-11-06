@@ -44,6 +44,7 @@ const (
 	RingSize         = 1024                   // events kept for a resuming client
 	QueueSize        = 256                    // messages queued per connection before it is slow
 	StreamPageBytes  = 64 << 10               // budget of one followed journal page
+	StatePageBytes   = 256 << 10              // budget of the deliveries of one state-page message
 	PagesPerTick     = 4                      // pages one followed journal publishes per poll
 	PollInterval     = 200 * time.Millisecond // between two reads of a followed journal
 	ShutdownGrace    = 5 * time.Second        // for HTTP handlers and WebSocket closes, beyond the engine's deadline
@@ -187,6 +188,7 @@ func Start(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.eng = eng
+	s.hub.seed(eng.Status()) // the deliveries replayed from the log, before any event
 	fail := func(err error) (*Server, error) {
 		s.stopClaude()
 		eng.Close()
@@ -545,6 +547,15 @@ func (s *Server) status(epoch string, seq uint64) any {
 		}}
 }
 
+// stateEnd ends the state sent after a gap: how many state-page messages and deliveries it held,
+// and the targets and journals (the bounds are in /v1/status).
+type stateEnd struct {
+	Pages      int               `json:"pages"`
+	Deliveries int               `json:"deliveries"`
+	Targets    []targetInfo      `json:"targets"`
+	Journals   map[string]string `json:"journals"`
+}
+
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	epoch, seq := s.hub.current()
 	writeJSON(w, http.StatusOK, s.status(epoch, seq))
@@ -750,7 +761,16 @@ func (s *Server) follow(ctx context.Context, name, path string) {
 
 // --- stream ----------------------------------------------------------------------------------
 
-func (s *Server) onTransition(t deliver.Transition) { s.hub.publish("mandate", t) }
+func (s *Server) onTransition(t deliver.Transition) {
+	if testHookBeforePublish != nil {
+		testHookBeforePublish(t)
+	}
+	s.hub.publish("mandate", t)
+}
+
+// testHookBeforePublish, set by a test only, runs once a transition is applied by the engine and
+// before the hub numbers it.
+var testHookBeforePublish func(deliver.Transition)
 
 // stream serves GET /v1/stream[?since=<seq>&epoch=<epoch>]: hello, then the missed events or a
 // gap and the state, then live events. A connection over MaxConns is refused (503); a client
@@ -789,7 +809,12 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer s.ws.Done()
 	defer c.CloseNow()
 	c.SetReadLimit(MaxClientMessage)
-	sub, first := s.hub.subscribe(resume, since, q.Get("epoch"), s.cfg.Queue, s.status)
+	sub, first, snap := s.hub.subscribe(resume, since, q.Get("epoch"), s.cfg.Queue)
+	if snap != nil { // built outside the hub's lock
+		first = append(first, s.hub.pages(snap, func(pages, deliveries int) any {
+			return stateEnd{Pages: pages, Deliveries: deliveries, Targets: s.status("", 0).(statusView).Targets, Journals: s.journals}
+		})...)
+	}
 	defer s.hub.unsubscribe(sub)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

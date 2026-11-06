@@ -341,8 +341,8 @@ func TestStreamResume(t *testing.T) {
 	if gap.Type != "gap" || g.Reason != "epoch" {
 		t.Errorf("resume with another epoch: %+v, want a gap of reason epoch", gap)
 	}
-	if st := read(t, bad, 5*time.Second); st.Type != "state" {
-		t.Errorf("after the gap: %s, want state", st.Type)
+	if st := read(t, bad, 5*time.Second); st.Type != "state-page" && st.Type != "state-end" {
+		t.Errorf("after the gap: %s, want the state (state-page or state-end)", st.Type)
 	}
 }
 
