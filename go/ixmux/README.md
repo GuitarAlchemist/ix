@@ -9,7 +9,7 @@ picks up its state from the command log.
 
 ```
 ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
-            [--claude-target name ...] [--claude-bin path]
+            [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...]
             [--timeout 30s] [--max-conns 16] [--max-http-conns 64] [--read-timeout 10s] [--queue 256] [--poll 200ms]
 ixmux version
 ```
@@ -59,7 +59,7 @@ HTTP bounds: a request's headers and body are read within `--read-timeout`, and 
 |---|---|
 | 0 | Clean stop: no adapter call left, log closed, lock released. |
 | 1 | Serving failed. |
-| 2 | Bad command line. |
+| 2 | Bad command line, including a `--claude-target` name given twice (refused before any child is launched). |
 | 3 | Start refused: the address is not a loopback IP, the state is held by another ixmux, or the token file failed. |
 | 4 | Stopped while deliveries, reconciles or adapter calls were still under way: the engine's `Close` refused with `calls-in-flight`. |
 | 5 | Stopped, but the token file could not be removed or `ixmux.json` could not be marked stopped. The error is on stderr; it names the file, never the token. The next start rewrites the token. |
@@ -117,9 +117,18 @@ claude -p --input-format stream-json --output-format stream-json --verbose --too
 
 - Never `--bare`, `--dangerously-skip-permissions` or `--permission-mode bypassPermissions`. `--setting-sources` is left alone, so your hooks apply as they are. ixmux sets no permission mode: the child runs in the mode of your configuration (`auto` here). What protects is that it has no tool.
 - The incarnation of the target is the `session_id` of the child's `system/init`. The real claude sends `init` only after a first user message, so ixmux sends a priming message ("ixmux : ouverture de la session. Réponds seulement : OK.") at each start. That costs one model turn per start, and the target is ready about 28 s after the start.
-- If `init` lists any tool, or names another session, ixmux refuses to deliver to that target.
+- If `init` lists any tool, has no `tools` array (absent or `null`), or names another session, ixmux refuses to deliver to that target. The check and the write on the child's stdin happen under one lock: an `init` that arrives in between refuses the mandate, and nothing is written.
 - Each mandate is one user message: `ixmux mandate_id: <id>`, then the instruction to begin with `ACK <id>`, then the text. The answer carries `ack.receipt` (`<session>:<id>`), `ack.text` (at most 4 KiB) and `ack.ack_seen`.
-- The working directory of the child is `<state>\claude-<name>\`, which ixmux creates. It holds `stream.jsonl` (the child's raw stdout, plus `{"ixmux":...}` lines for start, send, result and exit) and `stderr.log`. `stream.jsonl` is served as the journal `claude-<name>`.
+- A `result` counts only if its `session_id` is the target's incarnation and a turn is pending. Any other `result` is journaled (`{"ixmux":"ignored-result"}`) and ignored.
+- The ACK is exact: the answer begins with `ACK <id>`, then a space or the end. `ACK m2-extra` does not acknowledge `m2`.
+  - `ack_seen: true`: the answer acknowledges this mandate.
+  - `ack_seen: false`: the answer has no ACK. The mandate is still `delivered`, since the result is of this session and this turn, but the model did not confirm which mandate it answers.
+  - An ACK naming **another** mandate makes the delivery `uncertain`, never `delivered`, and is journaled (`{"ixmux":"ack-mismatch"}`).
+- The child's environment is a whitelist, not ixmux's whole environment. It holds what Windows, a Unix system and claude need to start (`SystemRoot`, `ComSpec`, `PATH`, `PATHEXT`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `HOME` and a few others, see `claudestream.BaseEnv`), then each variable named with `--claude-env NAME` (repeatable). No variable is added by pattern: a `*_TOKEN` or `*_KEY` reaches the child only when named. Your Claude login comes from your profile.
+- A turn that gets no result by the delivery deadline makes the mandate `uncertain`, but the turn stays reserved: no other mandate is sent while it may still answer (those are refused). The reservation lasts at most `TurnMax`, 10 minutes. Past it, ixmux kills the child through its Job and starts a new one, under a new incarnation, and the target is free again. The mandate cannot be sent again under the new incarnation (409 `stale-incarnation`). With the real claude, that relaunch costs one priming turn.
+- Each incarnation may add at most 256 MiB of stdout to `stream.jsonl` and 16 MiB to `stderr.log`. Past either cap, the child is killed and the pending turn becomes `uncertain` with the reason `stream-too-large` (or `stderr-too-large`). A stdout line over 8 MiB is cut in the journal, and the pending turn becomes `uncertain`. These caps end the incarnation: the child is not relaunched.
+- ixmux waits at most 90 s (`InitWait`) for the child's `init` and its priming answer; past that, the start fails.
+- The working directory of the child is `<state>\claude-<name>\`, which ixmux creates. It holds `stream.jsonl` (the raw stdout of each of the target's children in turn, plus `{"ixmux":...}` lines for start, send, result, exit, stop and the cases above) and `stderr.log`. `stream.jsonl` is served as the journal `claude-<name>`.
 - The child runs in a kill-on-close Job Object: if ixmux dies, killed or not, the child dies with it. A restart starts a new child, so a new incarnation: a mandate that was delivering becomes `uncertain`, its reconcile answers 409 `stale-incarnation`, and resending it answers 409.
 - One real turn often takes longer than the default `--timeout 30s`. Pass `--timeout 120s`.
 - A stop also waits up to 10 s for the child to exit once its stdin is closed, then kills the job. `stream.jsonl` traces it: `{"ixmux":"stop","step":"stdin-closed"}`, then `exited` or `killed` with `after_ms`. A child still running its SessionEnd hooks at 10 s is killed with them.

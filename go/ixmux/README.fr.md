@@ -6,7 +6,7 @@
 
 ```
 ixmux serve --addr 127.0.0.1:0 --state <dossier> [--journal nom=chemin ...] [--target nom=chemin ...]
-            [--claude-target nom ...] [--claude-bin chemin]
+            [--claude-target nom ...] [--claude-bin chemin] [--claude-env NOM ...]
             [--timeout 30s] [--max-conns 16] [--max-http-conns 64] [--read-timeout 10s] [--queue 256] [--poll 200ms]
 ixmux version
 ```
@@ -56,7 +56,7 @@ Bornes HTTP : les en-têtes et le corps d'une requête sont lus en `--read-timeo
 |---|---|
 | 0 | Arrêt propre : plus aucun appel d'adaptateur, journal fermé, verrou libéré. |
 | 1 | Échec du service. |
-| 2 | Ligne de commande invalide. |
+| 2 | Ligne de commande invalide, y compris un nom de `--claude-target` donné deux fois (refusé avant tout lancement d'enfant). |
 | 3 | Démarrage refusé : l'adresse n'est pas une IP de loopback, l'état est tenu par un autre ixmux, ou le fichier jeton a échoué. |
 | 4 | Arrêt alors que des livraisons, des réconciliations ou des appels d'adaptateur étaient encore en cours : le `Close` de l'engine a refusé avec `calls-in-flight`. |
 | 5 | Arrêt, mais le fichier jeton n'a pas pu être supprimé ou `ixmux.json` n'a pas pu être marqué arrêté. L'erreur est sur stderr ; elle nomme le fichier, jamais le jeton. Le démarrage suivant réécrit le jeton. |
@@ -114,9 +114,18 @@ claude -p --input-format stream-json --output-format stream-json --verbose --too
 
 - Jamais `--bare`, `--dangerously-skip-permissions` ni `--permission-mode bypassPermissions`. `--setting-sources` n'est pas touché : tes hooks s'appliquent tels quels. ixmux ne fixe aucun mode de permission : l'enfant tourne dans le mode de ta configuration (`auto` ici). Ce qui protège, c'est qu'il n'a aucun outil.
 - L'incarnation de la cible est le `session_id` du `system/init` de l'enfant. Le vrai claude n'envoie `init` qu'après un premier message utilisateur : ixmux envoie donc un message d'amorce (« ixmux : ouverture de la session. Réponds seulement : OK. ») à chaque démarrage. Cela coûte un tour de modèle par démarrage, et la cible est prête environ 28 s après le démarrage.
-- Si `init` liste un outil, ou nomme une autre session, ixmux refuse de livrer à cette cible.
+- Si `init` liste un outil, n'a pas de tableau `tools` (absent ou `null`), ou nomme une autre session, ixmux refuse de livrer à cette cible. Le contrôle et l'écriture sur l'entrée standard de l'enfant se font sous une même prise : un `init` qui arrive entre les deux fait refuser le mandat, et rien n'est écrit.
 - Chaque mandat est un message utilisateur : `ixmux mandate_id: <id>`, puis la consigne de commencer par `ACK <id>`, puis le texte. La réponse porte `ack.receipt` (`<session>:<id>`), `ack.text` (4 Kio au plus) et `ack.ack_seen`.
-- Le répertoire de travail de l'enfant est `<state>\claude-<nom>\`, qu'ixmux crée. Il contient `stream.jsonl` (la sortie standard brute de l'enfant, plus des lignes `{"ixmux":...}` pour le démarrage, l'envoi, le résultat et la sortie) et `stderr.log`. `stream.jsonl` est servi comme journal `claude-<nom>`.
+- Un `result` ne compte que si son `session_id` est l'incarnation de la cible et qu'un tour est en attente. Tout autre `result` est journalisé (`{"ixmux":"ignored-result"}`) et ignoré.
+- L'ACK est exact : la réponse commence par `ACK <id>`, suivi d'un espace ou de la fin. `ACK m2-extra` n'acquitte pas `m2`.
+  - `ack_seen: true` : la réponse acquitte ce mandat.
+  - `ack_seen: false` : la réponse n'a pas d'ACK. Le mandat reste `delivered`, puisque le résultat est de cette session et de ce tour, mais le modèle n'a pas confirmé à quel mandat il répond.
+  - Un ACK qui nomme un **autre** mandat rend la livraison `uncertain`, jamais `delivered`, et l'écart est journalisé (`{"ixmux":"ack-mismatch"}`).
+- L'environnement de l'enfant est une liste blanche, pas tout l'environnement d'ixmux. Il contient ce que Windows, un système Unix et claude exigent pour démarrer (`SystemRoot`, `ComSpec`, `PATH`, `PATHEXT`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `HOME` et quelques autres, voir `claudestream.BaseEnv`), puis chaque variable nommée avec `--claude-env NOM` (répétable). Aucune variable n'est ajoutée par motif : un `*_TOKEN` ou un `*_KEY` n'atteint l'enfant que s'il est nommé. Ta connexion à Claude vient de ton profil.
+- Un tour sans résultat à l'échéance de la livraison rend le mandat `uncertain`, mais le tour reste réservé : aucun autre mandat ne part tant qu'il peut encore répondre (ils sont refusés). La réservation dure au plus `TurnMax`, 10 minutes. Au-delà, ixmux tue l'enfant par son Job et en lance un nouveau, sous une nouvelle incarnation, et la cible est libérée. Le mandat ne peut pas être renvoyé sous la nouvelle incarnation (409 `stale-incarnation`). Avec le vrai claude, cette relance coûte un tour d'amorce.
+- Chaque incarnation peut ajouter au plus 256 Mio de sortie standard à `stream.jsonl` et 16 Mio à `stderr.log`. Au-delà de l'un ou l'autre plafond, l'enfant est tué et le tour en attente devient `uncertain` avec la raison `stream-too-large` (ou `stderr-too-large`). Une ligne de sortie standard de plus de 8 Mio est coupée dans le journal, et le tour en attente devient `uncertain`. Ces plafonds terminent l'incarnation : l'enfant n'est pas relancé.
+- ixmux attend au plus 90 s (`InitWait`) l'`init` de l'enfant et la réponse à l'amorce ; au-delà, le démarrage échoue.
+- Le répertoire de travail de l'enfant est `<state>\claude-<nom>\`, qu'ixmux crée. Il contient `stream.jsonl` (la sortie standard brute de chacun des enfants de la cible tour à tour, plus des lignes `{"ixmux":...}` pour le démarrage, l'envoi, le résultat, la sortie, l'arrêt et les cas ci-dessus) et `stderr.log`. `stream.jsonl` est servi comme journal `claude-<nom>`.
 - L'enfant tourne dans un Job Object kill-on-close : si ixmux meurt, tué ou non, l'enfant meurt avec lui. Un redémarrage lance un nouvel enfant, donc une nouvelle incarnation : un mandat qui était en livraison devient `uncertain`, sa réconciliation répond 409 `stale-incarnation`, et son renvoi répond 409.
 - Un vrai tour dépasse souvent le `--timeout 30s` par défaut. Passe `--timeout 120s`.
 - Un arrêt attend aussi jusqu'à 10 s que l'enfant sorte une fois son entrée standard fermée, puis tue le job. `stream.jsonl` en garde la trace : `{"ixmux":"stop","step":"stdin-closed"}`, puis `exited` ou `killed` avec `after_ms`. Un enfant qui exécute encore ses hooks SessionEnd à 10 s est tué avec eux.
