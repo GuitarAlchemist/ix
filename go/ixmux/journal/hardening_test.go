@@ -57,6 +57,42 @@ func TestFirstRecordCompletionPromotesTheCheckpoint(t *testing.T) {
 	}
 }
 
+// P1-4: a 64 MiB first record is scanned in calls of at most ScanMax bytes each, resumed from the
+// hint of the previous call, and ends as one line-too-long event.
+func TestHugeFirstRecordScanIsBoundedPerCall(t *testing.T) {
+	const huge = 64 << 20
+	path, inc := writeJournal(t, strings.Repeat("x", huge-1)+"\n{}\n")
+	var n int64
+	testHookRead = func(b int64) { n += b }
+	defer func() { testHookRead = nil }()
+	c := Cursor{Incarnation: inc}
+	for calls := 1; ; calls++ {
+		n = 0
+		page, err := ReadCursor(path, c, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n > ScanMax {
+			t.Fatalf("call %d read %d bytes, ScanMax %d", calls, n, ScanMax)
+		}
+		if len(page.Events) > 0 {
+			ev := page.Events[0]
+			if len(page.Events) != 1 || ev.Invalid != LineTooLong || ev.Offset != 0 || ev.End != huge || page.Next != huge {
+				t.Fatalf("call %d: %d events, first %+v, next %d", calls, len(page.Events), ev, page.Next)
+			}
+			t.Logf("64 MiB first record: one line-too-long after %d calls", calls)
+			return
+		}
+		if page.Pending == nil || page.Pending.Scanned <= c.Scanned || page.Next != 0 {
+			t.Fatalf("call %d: no event and no progressing resume hint: %+v", calls, page.Pending)
+		}
+		c.Scanned = page.Pending.Scanned
+		if calls > huge/(ScanMax/4) {
+			t.Fatalf("still scanning after %d calls", calls)
+		}
+	}
+}
+
 // P1-3: a page of tiny records is bounded by MaxEvents, in events and in measured memory.
 func TestPageEventsAreBounded(t *testing.T) {
 	path, inc := writeJournal(t, strings.Repeat("\n", 1<<20))

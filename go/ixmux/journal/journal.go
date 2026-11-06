@@ -22,6 +22,9 @@ const (
 	// over it (a page of one-byte records would otherwise hold a million of them).
 	MaxEvents = 4096
 
+	// ScanMax is the most bytes one Read reads from the file, identity included.
+	ScanMax = 4 << 20
+
 	scanChunk = 64 << 10 // the smallest buffer a Read scans with
 )
 
@@ -54,10 +57,23 @@ type Event struct {
 	Invalid string `json:"invalid,omitempty"`
 }
 
-// Pending says the record at At has no '\n' yet: Bytes of it are written. Next does not pass it.
+// Pending says no '\n' is known after the record at At: Bytes of the journal follow it, and
+// [At, Scanned) holds no '\n'. Next does not pass it. Scanned == At+Bytes: the record is
+// incomplete, wait for more. Scanned < At+Bytes: the scan stopped at ScanMax, call again at once.
+// Either way, pass Scanned back as Cursor.Scanned (with Cursor.From = At) to resume the scan
+// there instead of from At.
 type Pending struct {
-	At    int64 `json:"at"`
-	Bytes int64 `json:"bytes"`
+	At      int64 `json:"at"`
+	Bytes   int64 `json:"bytes"`
+	Scanned int64 `json:"scanned"`
+}
+
+// Cursor is a checkpoint (Incarnation, From) with an optional resume hint: Scanned, from the
+// Pending of a previous page read at the same From, says [From, Scanned) holds no '\n'.
+type Cursor struct {
+	Incarnation string `json:"incarnation"`
+	From        int64  `json:"from"`
+	Scanned     int64  `json:"scanned,omitempty"`
 }
 
 // Page is the answer of one Read. A page whose Next equals the checkpoint always says why:
@@ -99,7 +115,7 @@ func Identify(path string) (incarnation string, size int64, err error) {
 		return "", 0, err
 	}
 	defer f.Close()
-	inc, _, size, err := identify(f, make([]byte, scanChunk))
+	inc, _, size, err := identify(&src{f: f}, make([]byte, scanChunk))
 	return inc, size, err
 }
 
@@ -113,12 +129,12 @@ func hash12(parts ...[]byte) string {
 
 // identify returns the incarnation, the provisional incarnation of the same file, and the size.
 // It reads at most MaxLine bytes, in chunks of buf.
-func identify(f *os.File, buf []byte) (inc, provisional string, size int64, err error) {
-	id, err := fileIdentity(f)
+func identify(s *src, buf []byte) (inc, provisional string, size int64, err error) {
+	id, err := fileIdentity(s.f)
 	if err != nil {
 		return "", "", 0, err
 	}
-	st, err := f.Stat()
+	st, err := s.f.Stat()
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -129,7 +145,7 @@ func identify(f *os.File, buf []byte) (inc, provisional string, size int64, err 
 	limit := min(size, MaxLine)
 	for pos := int64(0); pos < limit; {
 		chunk := buf[:min(int64(len(buf)), limit-pos)]
-		if err := readAt(f, chunk, pos); err != nil {
+		if err := s.readAt(chunk, pos); err != nil {
 			return "", "", 0, err
 		}
 		if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
@@ -146,12 +162,21 @@ func identify(f *os.File, buf []byte) (inc, provisional string, size int64, err 
 }
 
 // Read returns the complete records of the journal at path from the checkpoint from, within
-// maxBytes (MaxBytes when <= 0, at most ReadMax). The first record of a page is returned even
-// when it exceeds the budget, up to MaxLine, so an event never depends on the budget. A record
-// longer than MaxLine becomes one line-too-long event over its exact range, found by scanning in
-// bounded chunks. A record without its '\n' yet stops the page with Pending. It refuses a checkpoint of
-// another incarnation, one past the end of the journal, and one that is not a record boundary.
+// maxBytes (MaxBytes when <= 0, at most ReadMax) and at most MaxEvents records. The first record
+// of a page is returned even when it exceeds the budget, up to MaxLine, so an event never
+// depends on the budget. A record longer than MaxLine becomes one line-too-long event over its
+// exact range, found by scanning without keeping it. One call reads at most ScanMax bytes of the
+// file: a scan not finished within it, or a record without its '\n' yet, stops the page with
+// Pending, whose Scanned resumes the scan (see ReadCursor). It refuses a checkpoint of another
+// incarnation, one past the end of the journal, and one that is not a record boundary.
 func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
+	return ReadCursor(path, Cursor{Incarnation: incarnation, From: from}, maxBytes)
+}
+
+// ReadCursor is Read from a cursor whose Scanned hint skips the bytes a previous call has
+// already scanned for the end of the record at From.
+func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
+	from := c.From
 	budget := maxBytes
 	if budget <= 0 {
 		budget = MaxBytes
@@ -162,8 +187,9 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 		return Page{}, err
 	}
 	defer f.Close()
-	buf := make([]byte, max(budget, min(scanChunk, ReadMax))) // the only buffer of this read
-	inc, provisional, size, err := identify(f, buf)
+	s := &src{f: f}
+	buf := make([]byte, max(budget, min(scanChunk, ReadMax))) // the page buffer
+	inc, provisional, size, err := identify(s, buf)
 	if err != nil {
 		return Page{}, err
 	}
@@ -172,18 +198,17 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	}
 	promoted := ""
 	switch {
-	case incarnation == inc:
-	case incarnation == provisional: // the same file, whose first record has completed since
+	case c.Incarnation == inc:
+	case c.Incarnation == provisional: // the same file, whose first record has completed since
 		promoted = provisional
 	default:
-		return Page{}, &Refusal{StaleIncarnation, fmt.Sprintf("checkpoint is of incarnation %q, the journal is now %q", incarnation, inc)}
+		return Page{}, &Refusal{StaleIncarnation, fmt.Sprintf("checkpoint is of incarnation %q, the journal is now %q", c.Incarnation, inc)}
 	}
-	switch {
-	case from < 0 || from > size:
-		return Page{}, &Refusal{Truncated, fmt.Sprintf("checkpoint offset %d, the journal holds %d bytes", from, size)}
+	if from < 0 || from > size || c.Scanned > size {
+		return Page{}, &Refusal{Truncated, fmt.Sprintf("checkpoint offset %d (scanned %d), the journal holds %d bytes", from, c.Scanned, size)}
 	}
 	if from > 0 {
-		if err := readAt(f, buf[:1], from-1); err != nil {
+		if err := s.readAt(buf[:1], from-1); err != nil {
 			return Page{}, err
 		}
 		if buf[0] != '\n' {
@@ -192,7 +217,7 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	}
 	page := Page{Incarnation: inc, Next: from, Size: size, Provisional: inc == provisional, PromotedFrom: promoted}
 	rest := buf[:min(budget, size-from)]
-	if err := readAt(f, rest, from); err != nil {
+	if err := s.readAt(rest, from); err != nil {
 		return Page{}, err
 	}
 	page.Events = make([]Event, 0, min(bytes.Count(rest, []byte{'\n'}), MaxEvents)+1) // one allocation
@@ -208,40 +233,60 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	switch {
 	case len(rest) == 0, len(page.Events) == MaxEvents: // read all of it, or the page is full
 	case page.Next+int64(len(rest)) == size:
-		page.Pending = &Pending{At: page.Next, Bytes: size - page.Next}
+		page.Pending = &Pending{At: page.Next, Bytes: size - page.Next, Scanned: size}
 	case len(page.Events) == 0:
-		// The first record is longer than the budget: find its end without keeping it. Up to
-		// MaxLine it is returned whole anyway, so an event never depends on the budget.
-		end, err := recordEnd(f, buf, from+int64(len(rest)), size)
-		if err != nil {
+		if err := s.overBudget(&page, buf, max(from+int64(len(rest)), c.Scanned)); err != nil {
 			return Page{}, err
 		}
-		if end < 0 {
-			page.Pending = &Pending{At: from, Bytes: size - from}
-			break
-		}
-		if end-from <= MaxLine {
-			if end-from > int64(len(buf)) {
-				buf = make([]byte, end-from) // replaces the page buffer: still <= ReadMax
-			}
-			rec := buf[:end-from]
-			if err := readAt(f, rec, from); err != nil {
-				return Page{}, err
-			}
-			page.Events = append(page.Events, lineEvent(rec[:len(rec)-1], from, end))
-		} else {
-			page.Events = append(page.Events, Event{Offset: from, End: end, Invalid: LineTooLong})
-		}
-		page.Next = end
 	}
 	page.AtEnd = page.Next == size && page.Pending == nil
 	return page, nil
 }
 
-// readAt fills b from offset off. Every read of Read lies inside the size snapshot, so fewer
+// overBudget handles a first record at page.Next longer than the budget; [page.Next, known)
+// holds no '\n'. Up to MaxLine it is read whole; longer, its end is scanned for within ScanMax.
+func (s *src) overBudget(page *Page, buf []byte, known int64) error {
+	from, size := page.Next, page.Size
+	if known-from < MaxLine {
+		buf = make([]byte, min(MaxLine, size-from)) // replaces the page buffer: still <= ReadMax
+		if err := s.readAt(buf, from); err != nil {
+			return err
+		}
+		if i := bytes.IndexByte(buf, '\n'); i >= 0 {
+			end := from + int64(i) + 1
+			page.Events = append(page.Events, lineEvent(buf[:i], from, end))
+			page.Next = end
+			return nil
+		}
+		known = from + int64(len(buf))
+	}
+	end, scanned, err := s.recordEnd(buf, known, size)
+	if err != nil {
+		return err
+	}
+	if end < 0 {
+		page.Pending = &Pending{At: from, Bytes: size - from, Scanned: scanned}
+		return nil
+	}
+	page.Events = append(page.Events, Event{Offset: from, End: end, Invalid: LineTooLong})
+	page.Next = end
+	return nil
+}
+
+// src is the journal file of one call, counting the bytes read from it.
+type src struct {
+	f *os.File
+	n int64
+}
+
+// readAt fills b from offset off. Every read of a call lies inside its size snapshot, so fewer
 // bytes than asked means the journal shrank meanwhile: a typed truncated refusal.
-func readAt(f *os.File, b []byte, off int64) error {
-	got, err := f.ReadAt(b, off)
+func (s *src) readAt(b []byte, off int64) error {
+	got, err := s.f.ReadAt(b, off)
+	s.n += int64(got)
+	if testHookRead != nil {
+		testHookRead(int64(got))
+	}
 	switch {
 	case got == len(b):
 		return nil
@@ -254,20 +299,23 @@ func readAt(f *os.File, b []byte, off int64) error {
 // testHookAfterIdentify, when set by a test, runs between the size snapshot and the data reads.
 var testHookAfterIdentify func(path string)
 
-// recordEnd scans [pos, size) in chunks of buf for the next '\n' and returns the offset after it,
-// or -1 when the record is not complete before size.
-func recordEnd(f *os.File, buf []byte, pos, size int64) (int64, error) {
-	for pos < size {
-		chunk := buf[:min(int64(len(buf)), size-pos)]
-		if err := readAt(f, chunk, pos); err != nil {
-			return 0, err
+// testHookRead, when set by a test, sees the bytes of every file read.
+var testHookRead func(n int64)
+
+// recordEnd scans [pos, size) in chunks of buf for the next '\n', until the call has read
+// ScanMax bytes. It returns the offset after the '\n', or -1 and where the scan stopped.
+func (s *src) recordEnd(buf []byte, pos, size int64) (end, scanned int64, err error) {
+	for pos < size && s.n < ScanMax {
+		chunk := buf[:min(int64(len(buf)), size-pos, ScanMax-s.n)]
+		if err := s.readAt(chunk, pos); err != nil {
+			return 0, 0, err
 		}
 		if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
-			return pos + int64(i) + 1, nil
+			return pos + int64(i) + 1, 0, nil
 		}
 		pos += int64(len(chunk))
 	}
-	return -1, nil
+	return -1, pos, nil
 }
 
 func lineEvent(line []byte, at, end int64) Event {

@@ -150,19 +150,19 @@ func TestEmptyFile(t *testing.T) {
 func TestIncompleteLastLineIsPending(t *testing.T) {
 	path, inc := writeJournal(t, "a\nbc")
 	page := mustRead(t, path, inc, 0, 0)
-	if len(page.Events) != 1 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 2}) {
+	if len(page.Events) != 1 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 2, Scanned: 4}) {
 		t.Fatalf("from 0: %d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 	}
 	for range 2 {
 		page = mustRead(t, path, inc, 2, 0)
-		if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 2}) {
+		if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 2, Scanned: 4}) {
 			t.Fatalf("from 2: %d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 		}
 	}
 	// An incomplete first record: a provisional incarnation, and it is pending.
 	path, inc = writeJournal(t, "abc")
 	page = mustRead(t, path, inc, 0, 0)
-	if !page.Provisional || page.Pending == nil || *page.Pending != (Pending{At: 0, Bytes: 3}) {
+	if !page.Provisional || page.Pending == nil || *page.Pending != (Pending{At: 0, Bytes: 3, Scanned: 3}) {
 		t.Errorf("incomplete first record: provisional %v, pending %v", page.Provisional, page.Pending)
 	}
 }
@@ -170,7 +170,7 @@ func TestIncompleteLastLineIsPending(t *testing.T) {
 func TestIncompleteLineLongerThanBudgetIsPending(t *testing.T) {
 	path, inc := writeJournal(t, "a\n"+strings.Repeat("x", 20000))
 	page := mustRead(t, path, inc, 2, 16384)
-	if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 20000}) {
+	if len(page.Events) != 0 || page.Next != 2 || page.Pending == nil || *page.Pending != (Pending{At: 2, Bytes: 20000, Scanned: 20002}) {
 		t.Errorf("%d events, next %d, pending %v", len(page.Events), page.Next, page.Pending)
 	}
 }
@@ -200,19 +200,32 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
-// TestReadMemoryIsBounded: a record of several MiB costs one buffer of at most ReadMax.
+// TestReadMemoryIsBounded: a record of several MiB costs each call one buffer of at most ReadMax;
+// the scan for its end resumes from each call's hint.
 func TestReadMemoryIsBounded(t *testing.T) {
 	const big = 5 << 20
 	path, inc := writeJournal(t, "{}\n"+record(big)+"{}\n")
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	page := mustRead(t, path, inc, 3, 0)
-	runtime.ReadMemStats(&after)
-	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > ReadMax+64<<10 {
-		t.Errorf("one Read allocated %d bytes, bound %d", alloc, ReadMax)
+	c := Cursor{Incarnation: inc, From: 3}
+	for calls := 1; calls < 10; calls++ {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		page, err := ReadCursor(path, c, 0)
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > ReadMax+64<<10 {
+			t.Errorf("call %d allocated %d bytes, bound %d", calls, alloc, ReadMax)
+		}
+		if page.Pending != nil {
+			c.Scanned = page.Pending.Scanned
+			continue
+		}
+		if len(page.Events) != 1 || page.Events[0].Invalid != LineTooLong || page.Next != 3+big {
+			t.Errorf("%d events, next %d", len(page.Events), page.Next)
+		}
+		return
 	}
-	if len(page.Events) != 1 || page.Events[0].Invalid != LineTooLong || page.Next != 3+big {
-		t.Errorf("%d events, next %d", len(page.Events), page.Next)
-	}
+	t.Error("no line-too-long event after 10 calls")
 }
