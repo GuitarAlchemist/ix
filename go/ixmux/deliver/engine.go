@@ -249,6 +249,7 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		}
 	}
 
+	// @ai:invariant the adapter is called only once delivering is synced, so a crash during the call restarts as uncertain [T:test conf:0.85 src:go/ixmux/deliver/kill_test.go:TestKillAfterEffectThenReconcileReceived]
 	cctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 	cl := &call{answered: make(chan struct{}), finished: make(chan struct{})}

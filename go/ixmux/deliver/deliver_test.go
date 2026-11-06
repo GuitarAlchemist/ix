@@ -126,7 +126,6 @@ func TestBlockedTargetDoesNotHoldOthers(t *testing.T) {
 	const timeout = time.Second
 	e, _ := openEngine(t, filepath.Join(t.TempDir(), "cmd.jsonl"), Options{Timeout: timeout})
 	a := &fakeTarget{inc: "ia", block: make(chan struct{}), entered: make(chan struct{})}
-	t.Cleanup(func() { close(a.block) })
 	b := &fakeTarget{inc: "ib"}
 	e.Register("a", a.target())
 	e.Register("b", b.target())
@@ -167,8 +166,16 @@ func TestBlockedTargetDoesNotHoldOthers(t *testing.T) {
 	if refusalCode(err) != UncertainNeedsReconcile {
 		t.Errorf("resending A: %v, want %s", err, UncertainNeedsReconcile)
 	}
-	if a.effects.Load() != 1 {
-		t.Errorf("A: %d effects, want 1", a.effects.Load())
+	// A's adapter answers at last: its late answer settles the uncertain delivery, once.
+	close(a.block)
+	if got := waitState(e, "a", "ma", Delivered, 2*time.Second); got != Delivered {
+		t.Errorf("A after its late answer: %s, want delivered", got)
+	}
+	if res, err := e.Deliver(context.Background(), Mandate{MandateID: "ma", Target: "a", Incarnation: "ia"}); err != nil || !res.Replayed {
+		t.Errorf("resending A after its late answer: %+v %v, want replayed", res, err)
+	}
+	if a.effects.Load() != 1 || a.calls.Load() != 1 {
+		t.Errorf("A: %d effects, %d calls; want 1 and 1", a.effects.Load(), a.calls.Load())
 	}
 }
 
@@ -258,9 +265,11 @@ func TestBounds(t *testing.T) {
 	}
 
 	done := make(chan struct{})
+	var resA Result
+	var errA error
 	go func() {
 		defer close(done)
-		e.Deliver(context.Background(), Mandate{MandateID: "ma", Target: "a", Incarnation: "i"})
+		resA, errA = e.Deliver(context.Background(), Mandate{MandateID: "ma", Target: "a", Incarnation: "i"})
 	}()
 	<-a.entered
 	start := time.Now()
@@ -270,6 +279,9 @@ func TestBounds(t *testing.T) {
 	}
 	close(a.block)
 	<-done
+	if errA != nil || resA.State != Delivered || a.calls.Load() != 1 {
+		t.Errorf("the background delivery: %+v %v, %d calls; want delivered once", resA, errA, a.calls.Load())
+	}
 
 	big := filepath.Join(dir, "big.jsonl")
 	if err := os.WriteFile(big, []byte(strings.Repeat("{}\n", 100)), 0o600); err != nil {

@@ -25,12 +25,21 @@ func (h hangingAdapter) Deliver(ctx context.Context, m Mandate) (Ack, error) {
 		if err := appendEffect(h.effect, m.MandateID); err != nil {
 			return Ack{}, err
 		}
+		if err := os.WriteFile(h.ready, nil, 0o600); err != nil {
+			return Ack{}, err
+		}
+		time.Sleep(time.Hour) // killed here, after the effect, before the answer
+		return Ack{}, errors.New("not killed")
 	}
+	// before-effect: the kill lands on the step right before a real effect operation.
 	if err := os.WriteFile(h.ready, nil, 0o600); err != nil {
 		return Ack{}, err
 	}
-	time.Sleep(time.Hour) // until killed
-	return Ack{}, errors.New("not killed")
+	time.Sleep(time.Hour) // killed here
+	if err := appendEffect(h.effect, m.MandateID); err != nil {
+		return Ack{}, err
+	}
+	return Ack{Receipt: "took " + m.MandateID}, nil
 }
 
 func TestHelperProcess(t *testing.T) {

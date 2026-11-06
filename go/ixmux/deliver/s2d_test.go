@@ -2,6 +2,7 @@ package deliver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,6 +102,53 @@ func TestReconcileGoroutinesAreBounded(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if grown := runtime.NumGoroutine() - base; grown > 0 {
 		t.Errorf("%d goroutines left once Status answered", grown)
+	}
+}
+
+// halfWriter writes half of its first write, then fails it; later writes pass.
+type halfWriter struct {
+	logFile
+	failed bool
+}
+
+func (h *halfWriter) Write(b []byte) (int, error) {
+	if h.failed {
+		return h.logFile.Write(b)
+	}
+	h.failed = true
+	n, _ := h.logFile.Write(b[:len(b)/2])
+	return n, errors.New("disk full")
+}
+
+// S2D-5: after a partial write, the log stops: no fragment is glued to a later record, and a
+// restart cuts the fragment as a torn tail instead of refusing the log as corrupt.
+func TestPartialWriteBreaksTheLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	e, _, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg := &fakeTarget{inc: "i"}
+	e.Register("a", tg.target())
+	e.log.f = &halfWriter{logFile: e.log.f}
+	if _, err := e.Deliver(context.Background(), Mandate{MandateID: "m1", Target: "a", Incarnation: "i"}); err == nil {
+		t.Fatal("a delivery whose accepted record was half written succeeded")
+	}
+	_, err = e.Deliver(context.Background(), Mandate{MandateID: "m2", Target: "a", Incarnation: "i"})
+	if refusalCode(err) != LogBroken {
+		t.Errorf("after a partial write: %v, want %s", err, LogBroken)
+	}
+	if tg.calls.Load() != 0 {
+		t.Errorf("%d adapter calls, want 0", tg.calls.Load())
+	}
+	e.Close()
+	e2, rec, err := Open(path, Options{})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer e2.Close()
+	if rec.Torn == nil || rec.Records != 0 {
+		t.Errorf("reopen: %+v, want the fragment cut as a torn tail and no record", rec)
 	}
 }
 

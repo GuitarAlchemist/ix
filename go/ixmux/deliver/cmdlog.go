@@ -27,9 +27,17 @@ type logRecord struct {
 // cmdLog is the append-only command log, written by one engine at a time: lock is held on
 // <log>.lock from Open to close.
 type cmdLog struct {
-	mu   sync.Mutex
-	f    *os.File
-	lock io.Closer
+	mu     sync.Mutex
+	f      logFile
+	lock   io.Closer
+	broken error // set by a failed write or sync: no more appends
+}
+
+// logFile is the append handle of the log (an *os.File; a test may wrap it).
+type logFile interface {
+	Write(b []byte) (int, error)
+	Sync() error
+	Close() error
 }
 
 var errLocked = errors.New("locked")
@@ -96,7 +104,11 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	return &cmdLog{f: af}, recs, torn, nil
 }
 
-// append writes r as one line and syncs it.
+// append writes r as one line and syncs it. A failed write or sync breaks the log: a fragment
+// may be on disk, and any later line would be glued to it into one corrupt record. Every later
+// append is then refused (log-broken) until the engine is reopened, which cuts the fragment as a
+// torn tail.
+// @ai:invariant a transition counts only once its whole line is written and synced, and nothing is appended after a failed write [T:test conf:0.85 src:go/ixmux/deliver/s2d_test.go:TestPartialWriteBreaksTheLog]
 func (l *cmdLog) append(r logRecord) error {
 	b, err := json.Marshal(r)
 	if err != nil {
@@ -105,10 +117,18 @@ func (l *cmdLog) append(r logRecord) error {
 	b = append(b, '\n')
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if _, err := l.f.Write(b); err != nil {
-		return err
+	if l.broken != nil {
+		return &Refusal{LogBroken, "the command log stopped after a failed write (" + l.broken.Error() + "); reopen the engine"}
 	}
-	return l.f.Sync()
+	if n, err := l.f.Write(b); err != nil || n != len(b) {
+		l.broken = fmt.Errorf("wrote %d of %d bytes: %v", n, len(b), err)
+		return l.broken
+	}
+	if err := l.f.Sync(); err != nil {
+		l.broken = fmt.Errorf("sync: %w", err)
+		return l.broken
+	}
+	return nil
 }
 
 func (l *cmdLog) close() error {

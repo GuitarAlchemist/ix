@@ -13,16 +13,20 @@ import (
 
 // Bounds of one read. A record's length counts its bytes up to and including its '\n', so a
 // record of exactly MaxLine bytes fits in a ReadMax buffer and is accepted.
+// @ai:invariant an event's content and id never depend on the read budget [T:test conf:0.9 src:go/ixmux/journal/journal_test.go:TestEventDoesNotDependOnBudget]
 const (
-	MaxLine  = 1 << 20 // a longer record is one line-too-long event
+	MaxLine = 1 << 20 // a longer record is one line-too-long event
+	// @ai:invariant one Read allocates at most ReadMax bytes of buffer, even facing a record of several MiB [T:test conf:0.85 src:go/ixmux/journal/journal_test.go:TestReadMemoryIsBounded]
 	ReadMax  = 1 << 20 // what one Read keeps in memory at most
 	MaxBytes = ReadMax // the default budget of one Read
 
 	// MaxEvents is the most events one page holds: ReadMax bounds the buffer, not the events
 	// over it (a page of one-byte records would otherwise hold a million of them).
+	// @ai:invariant a page holds at most MaxEvents events in one allocation [T:test conf:0.9 src:go/ixmux/journal/hardening_test.go:TestPageEventsAreBounded]
 	MaxEvents = 4096
 
 	// ScanMax is the most bytes one Read reads from the file, identity included.
+	// @ai:invariant one Read reads at most ScanMax bytes of the file [T:test conf:0.9 src:go/ixmux/journal/hardening_test.go:TestHugeFirstRecordScanIsBoundedPerCall]
 	ScanMax = 4 << 20
 
 	scanChunk = 64 << 10 // the smallest buffer a Read scans with
@@ -70,6 +74,7 @@ type Pending struct {
 
 // Cursor is a checkpoint (Incarnation, From) with an optional resume hint: Scanned, from the
 // Pending of a previous page read at the same From, says [From, Scanned) holds no '\n'.
+// @ai:assumption a caller's Scanned comes from a Pending read at the same From; it is checked only against the size [U:uncertain conf:0.5]
 type Cursor struct {
 	Incarnation string `json:"incarnation"`
 	From        int64  `json:"from"`
