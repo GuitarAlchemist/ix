@@ -18,6 +18,10 @@ const (
 	ReadMax  = 1 << 20 // what one Read keeps in memory at most
 	MaxBytes = ReadMax // the default budget of one Read
 
+	// MaxEvents is the most events one page holds: ReadMax bounds the buffer, not the events
+	// over it (a page of one-byte records would otherwise hold a million of them).
+	MaxEvents = 4096
+
 	scanChunk = 64 << 10 // the smallest buffer a Read scans with
 )
 
@@ -159,7 +163,8 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	if err := readAt(f, rest, from); err != nil {
 		return Page{}, err
 	}
-	for {
+	page.Events = make([]Event, 0, min(bytes.Count(rest, []byte{'\n'}), MaxEvents)+1) // one allocation
+	for len(page.Events) < MaxEvents {
 		i := bytes.IndexByte(rest, '\n')
 		if i < 0 {
 			break
@@ -169,7 +174,7 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 		rest, page.Next = rest[i+1:], end
 	}
 	switch {
-	case len(rest) == 0:
+	case len(rest) == 0, len(page.Events) == MaxEvents: // read all of it, or the page is full
 	case page.Next+int64(len(rest)) == size:
 		page.Pending = &Pending{At: page.Next, Bytes: size - page.Next}
 	case len(page.Events) == 0:

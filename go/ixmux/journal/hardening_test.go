@@ -3,8 +3,42 @@ package journal
 import (
 	"errors"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
+	"unsafe"
 )
+
+// P1-3: a page of tiny records is bounded by MaxEvents, in events and in measured memory.
+func TestPageEventsAreBounded(t *testing.T) {
+	path, inc := writeJournal(t, strings.Repeat("\n", 1<<20))
+	// The bound: the page buffer, one events slice of MaxEvents+1, and 64 KiB of slack.
+	bound := uint64(ReadMax + (MaxEvents+1)*int(unsafe.Sizeof(Event{})) + 64<<10)
+	next, reads := int64(0), 0
+	for next < 1<<20 {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		page := mustRead(t, path, inc, next, 0)
+		runtime.ReadMemStats(&after)
+		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > bound {
+			t.Fatalf("read %d: %d events, %d bytes allocated, bound %d", reads, len(page.Events), alloc, bound)
+		}
+		if len(page.Events) > MaxEvents || len(page.Events) == 0 {
+			t.Fatalf("read %d: %d events, want 1..%d", reads, len(page.Events), MaxEvents)
+		}
+		for i, ev := range page.Events {
+			if ev.Offset != next+int64(i) || ev.End != ev.Offset+1 || !ev.Blank {
+				t.Fatalf("read %d, event %d: %+v (gap or duplicate)", reads, i, ev)
+			}
+		}
+		next = page.Next
+		reads++
+	}
+	if want := (1 << 20) / MaxEvents; reads != want {
+		t.Errorf("%d reads, want %d", reads, want)
+	}
+}
 
 // typed reports whether a page that does not advance says why.
 func typed(p Page, from int64) bool {
