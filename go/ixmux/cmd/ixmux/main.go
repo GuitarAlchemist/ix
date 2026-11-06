@@ -1,6 +1,7 @@
 // Command ixmux is the durable ixmux process.
 //
 //	ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
+//	            [--claude-target name ...] [--claude-bin path]
 //	ixmux version
 //
 // Exit codes: 0 stopped cleanly; 1 serving failed; 2 bad command line; 3 start refused (address
@@ -37,6 +38,17 @@ func (n *named) Set(v string) error {
 	return nil
 }
 
+type names []string
+
+func (n *names) String() string { return fmt.Sprint(*n) }
+func (n *names) Set(v string) error {
+	if v == "" || strings.ContainsAny(v, `/\:=`) {
+		return fmt.Errorf("want a plain name, got %q", v)
+	}
+	*n = append(*n, v)
+	return nil
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stderr)) }
 
 func run(args []string, stderr io.Writer) int {
@@ -52,10 +64,13 @@ func run(args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	cfg := server.Config{Version: version}
 	var journals, targets named
+	var claude names
 	fs.StringVar(&cfg.Addr, "addr", "127.0.0.1:0", "loopback IP address and port")
 	fs.StringVar(&cfg.State, "state", "", "state directory: command log, ixmux.json, token")
 	fs.Var(&journals, "journal", "a journal to serve and follow, name=path (repeatable)")
 	fs.Var(&targets, "target", "a fake session (JSONL file), name=path (repeatable)")
+	fs.Var(&claude, "claude-target", "a real Claude session: one claude -p child in stream-json, no tools (repeatable)")
+	fs.StringVar(&cfg.ClaudeBin, "claude-bin", "", "the claude executable (default: claude on PATH)")
 	fs.DurationVar(&cfg.Timeout, "timeout", 0, "deadline of one adapter call (default 30s)")
 	fs.IntVar(&cfg.MaxConns, "max-conns", server.MaxConns, "simultaneous stream connections")
 	fs.IntVar(&cfg.Queue, "queue", server.QueueSize, "messages queued per stream connection")
@@ -63,7 +78,7 @@ func run(args []string, stderr io.Writer) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return server.ExitUsage
 	}
-	cfg.Journals, cfg.Targets = journals, targets
+	cfg.Journals, cfg.Targets, cfg.Claude = journals, targets, claude
 	s, err := server.Start(cfg)
 	if err != nil {
 		fmt.Fprintln(stderr, "ixmux:", err)

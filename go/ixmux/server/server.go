@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/GuitarAlchemist/ix/go/ixmux/claudestream"
 	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
 	"github.com/GuitarAlchemist/ix/go/ixmux/journal"
 )
@@ -67,15 +69,17 @@ type Named struct{ Name, Path string }
 
 // Config of one ixmux serve.
 type Config struct {
-	Addr     string
-	State    string
-	Journals []Named
-	Targets  []Named
-	Timeout  time.Duration // of one adapter call (deliver.Options.Timeout)
-	MaxConns int
-	Queue    int
-	Poll     time.Duration
-	Version  string
+	Addr      string
+	State     string
+	Journals  []Named
+	Targets   []Named
+	Claude    []string      // claude targets: one stream-json child each, in <state>\claude-<name>
+	ClaudeBin string        // the claude executable (default: claude on PATH)
+	Timeout   time.Duration // of one adapter call (deliver.Options.Timeout)
+	MaxConns  int
+	Queue     int
+	Poll      time.Duration
+	Version   string
 }
 
 // StartError refuses a start (ExitRefused).
@@ -97,9 +101,14 @@ type Info struct {
 }
 
 type targetInfo struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Incarnation string `json:"incarnation"`
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Path        string   `json:"path,omitempty"`
+	Incarnation string   `json:"incarnation"`
+	PID         int      `json:"pid,omitempty"`
+	Alive       bool     `json:"alive,omitempty"`
+	Tools       []string `json:"tools,omitempty"`
+	Error       string   `json:"error,omitempty"`
 }
 
 // Server is one running ixmux.
@@ -112,6 +121,7 @@ type Server struct {
 	info     Info
 	targets  []targetInfo
 	journals map[string]string
+	claude   map[string]*claudestream.Adapter
 	ln       net.Listener
 	srv      *http.Server
 	conns    atomic.Int64
@@ -157,7 +167,7 @@ func Start(cfg Config) (*Server, error) {
 	if err := os.MkdirAll(cfg.State, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, journals: map[string]string{}, stopping: make(chan struct{}), stopReq: make(chan struct{}), served: make(chan error, 1)}
+	s := &Server{cfg: cfg, journals: map[string]string{}, claude: map[string]*claudestream.Adapter{}, stopping: make(chan struct{}), stopReq: make(chan struct{}), served: make(chan error, 1)}
 	epoch := hex.EncodeToString(random(6))
 	s.hub = newHub(epoch, RingSize)
 	eng, _, err := deliver.Open(filepath.Join(cfg.State, CommandFile), deliver.Options{Timeout: cfg.Timeout, Notify: s.onTransition})
@@ -169,6 +179,7 @@ func Start(cfg Config) (*Server, error) {
 	}
 	s.eng = eng
 	fail := func(err error) (*Server, error) {
+		s.stopClaude()
 		eng.Close()
 		return nil, err
 	}
@@ -178,7 +189,22 @@ func Start(cfg Config) (*Server, error) {
 			return fail(err)
 		}
 		eng.Register(t.Name, f.Target())
-		s.targets = append(s.targets, targetInfo{t.Name, f.Path, f.Inc})
+		s.targets = append(s.targets, targetInfo{Name: t.Name, Kind: "fake", Path: f.Path, Incarnation: f.Inc})
+	}
+	for _, name := range cfg.Claude {
+		bin := cfg.ClaudeBin
+		if bin == "" {
+			if bin, err = exec.LookPath("claude"); err != nil {
+				return fail(&StartError{"--claude-target needs claude on PATH or --claude-bin: " + err.Error()})
+			}
+		}
+		a, err := claudestream.Start(claudestream.Config{Name: name, Dir: filepath.Join(cfg.State, "claude-"+name), Bin: bin})
+		if err != nil {
+			return fail(&StartError{"claude target " + name + ": " + err.Error()})
+		}
+		s.claude[name] = a
+		eng.Register(name, a.Target())
+		s.journals["claude-"+name] = a.StreamPath()
 	}
 	for _, j := range cfg.Journals {
 		abs, err := filepath.Abs(j.Path)
@@ -282,6 +308,9 @@ func (s *Server) stop(code int) int {
 	case <-wsDone:
 	case <-time.After(ShutdownGrace):
 	}
+	// The claude children are stopped before the engine is closed: closing stdin ends their turn
+	// or kills them, so no adapter call is left running (Close is not relied on for that).
+	s.stopClaude()
 	s.cancel()
 	if err := s.eng.Close(); err != nil {
 		if code == ExitOK {
@@ -296,6 +325,15 @@ func (s *Server) stop(code int) int {
 	s.writeInfo()
 	os.Remove(filepath.Join(s.cfg.State, TokenFile))
 	return code
+}
+
+func (s *Server) stopClaude() {
+	var wg sync.WaitGroup
+	for _, a := range s.claude {
+		wg.Add(1)
+		go func() { defer wg.Done(); a.Stop() }()
+	}
+	wg.Wait()
 }
 
 // --- guard -----------------------------------------------------------------------------------
@@ -456,7 +494,17 @@ type statusView struct {
 }
 
 func (s *Server) status(epoch string, seq uint64) any {
-	return statusView{Version: s.info.Version, Started: s.info.Started, Epoch: epoch, Seq: seq, Targets: s.targets,
+	targets := append([]targetInfo(nil), s.targets...)
+	for name, a := range s.claude {
+		ti := targetInfo{Name: name, Kind: "claude", PID: a.PID(), Alive: a.Alive(), Tools: a.Tools()}
+		if inc, err := a.Incarnation(); err != nil {
+			ti.Error = err.Error()
+		} else {
+			ti.Incarnation = inc
+		}
+		targets = append(targets, ti)
+	}
+	return statusView{Version: s.info.Version, Started: s.info.Started, Epoch: epoch, Seq: seq, Targets: targets,
 		Journals: s.journals, Deliveries: s.eng.Status(), Connections: s.conns.Load(),
 		Bounds: map[string]any{
 			"max_conns": s.cfg.MaxConns, "max_client_message": MaxClientMessage, "max_stream_message": MaxStreamMessage,

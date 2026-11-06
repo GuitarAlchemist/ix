@@ -25,7 +25,7 @@ import (
 )
 
 // The integration tests build the real binary once and run it as a process; no shell.
-var binary string
+var binary, fakeClaude string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "ixmux-bin")
@@ -38,6 +38,11 @@ func TestMain(m *testing.M) {
 	cmd := exec.Command(gobin, "build", "-o", binary, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "go build: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	fakeClaude = filepath.Join(dir, "claude"+exeSuffix())
+	if out, err := exec.Command(gobin, "build", "-o", fakeClaude, "../../claudestream/internal/fakeclaude").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build fakeclaude: %v\n%s", err, out)
 		os.Exit(1)
 	}
 	code := m.Run()

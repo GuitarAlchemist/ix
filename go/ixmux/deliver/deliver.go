@@ -77,6 +77,8 @@ type Mandate struct {
 // Ack is what an adapter returns once the target took the mandate.
 type Ack struct {
 	Receipt string `json:"receipt,omitempty"`
+	Text    string `json:"text,omitempty"`     // the target's answer, bounded by the adapter
+	AckSeen bool   `json:"ack_seen,omitempty"` // the answer began with the ACK the adapter asked for
 }
 
 // Adapter delivers a mandate to its target. An error wrapping ErrRefused says the target
