@@ -20,6 +20,10 @@ path = "src/bin/jev_router.rs"
 name = "context-list"
 path = "src/bin/context_list.rs"
 
+[[bin]]
+name = "claude-stream"
+path = "src/bin/claude_stream.rs"
+
 [dependencies]
 ndarray = "0.17"
 serde = { version = "1", features = ["derive"] }
