@@ -56,13 +56,15 @@ type Pending struct {
 	Bytes int64 `json:"bytes"`
 }
 
-// Page is the answer of one Read. Next == Size with no Pending means the consumer is caught up.
+// Page is the answer of one Read. A page whose Next equals the checkpoint always says why:
+// Pending (a record without its '\n' yet) or AtEnd (the consumer is caught up).
 type Page struct {
 	Incarnation string   `json:"incarnation"`
 	Events      []Event  `json:"events"`
 	Next        int64    `json:"next"`
 	Size        int64    `json:"size"`
 	Pending     *Pending `json:"pending,omitempty"`
+	AtEnd       bool     `json:"at_end,omitempty"`
 }
 
 // EventID names an event the same way on every read: source/session@incarnation:offset.
@@ -99,19 +101,16 @@ func identify(f *os.File, buf []byte) (string, int64, error) {
 	h := sha256.New()
 	h.Write([]byte(id + "\n"))
 	for pos := int64(0); pos < size; {
-		got, err := f.ReadAt(buf[:min(int64(len(buf)), size-pos)], pos)
-		if i := bytes.IndexByte(buf[:got], '\n'); i >= 0 {
-			h.Write(buf[:i])
-			return fmt.Sprintf("%x", h.Sum(nil)[:6]), size, nil
-		}
-		h.Write(buf[:got])
-		pos += int64(got)
-		if err != nil && !errors.Is(err, io.EOF) {
+		chunk := buf[:min(int64(len(buf)), size-pos)]
+		if err := readAt(f, chunk, pos); err != nil {
 			return "", 0, err
 		}
-		if got == 0 {
-			break
+		if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
+			h.Write(chunk[:i])
+			return fmt.Sprintf("%x", h.Sum(nil)[:6]), size, nil
 		}
+		h.Write(chunk)
+		pos += int64(len(chunk))
 	}
 	return "", size, nil
 }
@@ -138,6 +137,9 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
+	if testHookAfterIdentify != nil {
+		testHookAfterIdentify(path)
+	}
 	switch {
 	case inc != incarnation:
 		return Page{}, &Refusal{StaleIncarnation, fmt.Sprintf("checkpoint is of incarnation %q, the journal is now %q", incarnation, inc)}
@@ -145,16 +147,18 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 		return Page{}, &Refusal{Truncated, fmt.Sprintf("checkpoint offset %d, the journal holds %d bytes", from, size)}
 	}
 	if from > 0 {
-		if _, err := f.ReadAt(buf[:1], from-1); err != nil || buf[0] != '\n' {
+		if err := readAt(f, buf[:1], from-1); err != nil {
+			return Page{}, err
+		}
+		if buf[0] != '\n' {
 			return Page{}, &Refusal{BadCheckpoint, fmt.Sprintf("offset %d is not a record boundary", from)}
 		}
 	}
 	page := Page{Incarnation: inc, Events: []Event{}, Next: from, Size: size}
-	got, err := f.ReadAt(buf[:min(budget, size-from)], from)
-	if err != nil && !errors.Is(err, io.EOF) {
+	rest := buf[:min(budget, size-from)]
+	if err := readAt(f, rest, from); err != nil {
 		return Page{}, err
 	}
-	rest := buf[:got]
 	for {
 		i := bytes.IndexByte(rest, '\n')
 		if i < 0 {
@@ -184,7 +188,7 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 				buf = make([]byte, end-from) // replaces the page buffer: still <= ReadMax
 			}
 			rec := buf[:end-from]
-			if _, err := f.ReadAt(rec, from); err != nil && !errors.Is(err, io.EOF) {
+			if err := readAt(f, rec, from); err != nil {
 				return Page{}, err
 			}
 			page.Events = append(page.Events, lineEvent(rec[:len(rec)-1], from, end))
@@ -193,24 +197,38 @@ func Read(path, incarnation string, from, maxBytes int64) (Page, error) {
 		}
 		page.Next = end
 	}
+	page.AtEnd = page.Next == size && page.Pending == nil
 	return page, nil
 }
+
+// readAt fills b from offset off. Every read of Read lies inside the size snapshot, so fewer
+// bytes than asked means the journal shrank meanwhile: a typed truncated refusal.
+func readAt(f *os.File, b []byte, off int64) error {
+	got, err := f.ReadAt(b, off)
+	switch {
+	case got == len(b):
+		return nil
+	case err == nil || errors.Is(err, io.EOF):
+		return &Refusal{Truncated, fmt.Sprintf("the journal shrank during the read: %d of %d bytes at offset %d", got, len(b), off)}
+	}
+	return err
+}
+
+// testHookAfterIdentify, when set by a test, runs between the size snapshot and the data reads.
+var testHookAfterIdentify func(path string)
 
 // recordEnd scans [pos, size) in chunks of buf for the next '\n' and returns the offset after it,
 // or -1 when the record is not complete before size.
 func recordEnd(f *os.File, buf []byte, pos, size int64) (int64, error) {
 	for pos < size {
-		got, err := f.ReadAt(buf[:min(int64(len(buf)), size-pos)], pos)
-		if i := bytes.IndexByte(buf[:got], '\n'); i >= 0 {
-			return pos + int64(i) + 1, nil
-		}
-		pos += int64(got)
-		if err != nil && !errors.Is(err, io.EOF) {
+		chunk := buf[:min(int64(len(buf)), size-pos)]
+		if err := readAt(f, chunk, pos); err != nil {
 			return 0, err
 		}
-		if got == 0 {
-			break
+		if i := bytes.IndexByte(chunk, '\n'); i >= 0 {
+			return pos + int64(i) + 1, nil
 		}
+		pos += int64(len(chunk))
 	}
 	return -1, nil
 }
