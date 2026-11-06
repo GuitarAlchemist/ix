@@ -150,6 +150,18 @@ type Options struct {
 	Timeout     time.Duration
 	MaxInFlight int
 	MaxLogBytes int64
+	// Notify, when set, is called once per transition written to the log, after it is applied
+	// and outside the engine's lock. It must not block: it runs on the delivery's path.
+	Notify func(Transition)
+}
+
+// Transition is one state change written to the log.
+type Transition struct {
+	At        time.Time `json:"at"`
+	Target    string    `json:"target"`
+	MandateID string    `json:"mandate_id"`
+	State     State     `json:"state"`
+	Reason    string    `json:"reason,omitempty"`
 }
 
 // Torn is the incomplete last record of the log, ignored and cut at Open.

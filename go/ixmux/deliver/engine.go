@@ -32,6 +32,7 @@ type record struct {
 // target that never answers holds only its own delivery, its target and one slot.
 type Engine struct {
 	log     *cmdLog
+	notify  func(Transition)
 	timeout time.Duration
 	slots   chan struct{} // one per adapter call not yet returned
 
@@ -88,7 +89,7 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 		return nil, Recovery{}, err
 	}
 	l.lock = lock
-	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
+	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
 		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, idClaim: map[string]idHold{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
@@ -158,6 +159,9 @@ func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *A
 	e.mu.Lock()
 	e.apply(lr)
 	e.mu.Unlock()
+	if e.notify != nil {
+		e.notify(Transition{At: lr.At, Target: lr.Target, MandateID: lr.MandateID, State: lr.State, Reason: lr.Reason})
+	}
 	return nil
 }
 
