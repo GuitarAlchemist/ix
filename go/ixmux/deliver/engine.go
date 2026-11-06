@@ -34,6 +34,16 @@ type Engine struct {
 	recs    map[key]*record
 	claims  map[key]bool    // a Deliver or Reconcile of this key is running
 	running map[string]bool // targets with an adapter call not yet returned
+	calling map[key]bool    // keys whose adapter call has not returned, even past its deadline
+}
+
+// call is one adapter call, shared by the caller and the goroutine that runs it.
+type call struct {
+	returned  bool          // the adapter has answered (under e.mu)
+	abandoned bool          // the caller gave up at its deadline (under e.mu)
+	res       callResult    // the answer, once returned
+	answered  chan struct{} // closed once the answer is in res, for a caller still waiting
+	finished  chan struct{} // closed once an abandoning caller has recorded uncertain
 }
 
 // Open replays the command log at path (created if missing) and returns an Engine appending to
@@ -63,7 +73,8 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	}
 	l.lock = lock
 	e := &Engine{log: l, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
-		targets: map[string]Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{}}
+		targets: map[string]Target{}, recs: map[key]*record{}, claims: map[key]bool{}, running: map[string]bool{},
+		calling: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
 	}
@@ -212,11 +223,12 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		e.mu.Unlock()
 		return Result{}, &Refusal{Busy, fmt.Sprintf("%d deliveries in flight", cap(e.slots))}
 	}
-	e.claims[k], e.running[m.Target] = true, true
+	e.claims[k], e.running[m.Target], e.calling[k] = true, true, true
 	e.mu.Unlock()
 	release := func() {
 		e.mu.Lock()
 		delete(e.running, m.Target)
+		delete(e.calling, k)
 		e.mu.Unlock()
 		<-e.slots
 	}
@@ -230,29 +242,68 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 
 	cctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
-	done := make(chan callResult, 1)
+	cl := &call{answered: make(chan struct{}), finished: make(chan struct{})}
 	go func() {
 		ack, err := t.Adapter.Deliver(cctx, m)
-		release() // before the answer, so a caller that has it finds the target free
-		done <- callResult{ack, err}
-	}()
-	var c callResult
-	select {
-	case c = <-done:
-	case <-cctx.Done():
-		select {
-		case c = <-done:
-		default:
-			return e.finish(k, inc, Uncertain, "no answer within the delivery deadline: "+cctx.Err().Error(), nil)
+		e.mu.Lock()
+		cl.returned, cl.res = true, callResult{ack, err}
+		abandoned := cl.abandoned
+		e.mu.Unlock()
+		if abandoned {
+			// The caller recorded uncertain at its deadline; this answer is an observation.
+			// Reconcile stays refused (calling) until it is written.
+			<-cl.finished
+			e.observeLate(k, inc, cl.res)
 		}
+		release()
+		close(cl.answered)
+	}()
+	select {
+	case <-cl.answered:
+	case <-cctx.Done():
+		e.mu.Lock()
+		if !cl.returned {
+			cl.abandoned = true
+			e.mu.Unlock()
+			res, err := e.finish(k, inc, Uncertain, "no answer within the delivery deadline: "+cctx.Err().Error(), nil)
+			close(cl.finished)
+			return res, err
+		}
+		e.mu.Unlock()
+		<-cl.answered
 	}
+	to, reason, ack := outcome(cl.res)
+	return e.finish(k, inc, to, reason, ack)
+}
+
+// outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
+// other error leaves the outcome unknown.
+func outcome(c callResult) (State, string, *Ack) {
 	switch {
 	case c.err == nil:
-		return e.finish(k, inc, Delivered, "", &c.ack)
+		return Delivered, "", &c.ack
 	case errors.Is(c.err, ErrRefused):
-		return e.finish(k, inc, Refused, c.err.Error(), nil)
+		return Refused, c.err.Error(), nil
 	}
-	return e.finish(k, inc, Uncertain, "adapter error, outcome unknown: "+c.err.Error(), nil)
+	return Uncertain, "adapter error, outcome unknown: " + c.err.Error(), nil
+}
+
+// observeLate records the answer of an adapter call that returned after its caller's deadline.
+// A certain answer settles the uncertain delivery; an unknown one is logged and leaves it so.
+func (e *Engine) observeLate(k key, inc string, c callResult) {
+	to, reason, ack := outcome(c)
+	if reason == "" {
+		reason = "late answer of the adapter after the deadline"
+	} else {
+		reason = "late answer of the adapter after the deadline: " + reason
+	}
+	e.mu.Lock()
+	r := e.recs[k]
+	still := r != nil && r.state == Uncertain && !e.claims[k]
+	e.mu.Unlock()
+	if still {
+		e.transition(k, inc, to, reason, ack) // a failed write leaves it uncertain, as a restart would
+	}
 }
 
 // finish records the final state of a delivery or reconcile and releases its claim. If the log
@@ -294,6 +345,10 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 		refusal = &Refusal{UnknownMandate, fmt.Sprintf("no delivery %s/%s", target, mandateID)}
 	case e.claims[k]:
 		refusal = &Refusal{InFlight, fmt.Sprintf("%s/%s is being delivered or reconciled", target, mandateID)}
+	case e.calling[k]:
+		// The adapter call that made it uncertain may still take effect: asking the target now
+		// could refuse a delivery that is about to happen.
+		refusal = &Refusal{DeliveryStillRunning, fmt.Sprintf("the adapter call of %s/%s has not returned", target, mandateID)}
 	case r.state != Uncertain:
 		refusal = &Refusal{NotUncertain, fmt.Sprintf("%s/%s is %s", target, mandateID, r.state)}
 	default:

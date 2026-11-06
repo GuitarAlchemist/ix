@@ -46,6 +46,8 @@ const (
 	LogCorrupt              = "log-corrupt"
 	MandateIDReuse          = "mandate-id-reuse"
 	JournalLocked           = "journal-locked"
+	DeliveryStillRunning    = "delivery-still-running"
+	LogBroken               = "log-broken"
 )
 
 // Refusal is a typed refusal.
