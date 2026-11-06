@@ -31,12 +31,21 @@ func (l *limitListener) Accept() (net.Conn, error) {
 	}
 }
 
-// refuseConn answers 503 too-many-connections, bounded in time, then closes c.
+// refuseConn answers 503 too-many-connections, then closes c, within one second in all. Closing
+// with the client's request unread would reset the connection, and on Windows the reset discards
+// the 503 the client has not read yet: the write side is closed first, and what the client sent
+// is drained, bounded.
 func refuseConn(c net.Conn, bound int) {
 	defer c.Close()
+	c.SetDeadline(time.Now().Add(time.Second))
 	body := fmt.Sprintf(`{"error":"too-many-connections","detail":"bound %d"}`+"\n", bound)
-	c.SetWriteDeadline(time.Now().Add(time.Second))
-	io.WriteString(c, fmt.Sprintf("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: %d\r\n\r\n%s", len(body), body))
+	if _, err := io.WriteString(c, fmt.Sprintf("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: %d\r\n\r\n%s", len(body), body)); err != nil {
+		return
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		tc.CloseWrite()
+	}
+	io.Copy(io.Discard, io.LimitReader(c, MaxBody))
 }
 
 // limitConn frees its slot once closed, by net/http or, for a stream, by the WebSocket.
