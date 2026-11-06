@@ -632,6 +632,60 @@ synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash pe
 ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
 un contrat distinct qui s'annoncerait lui-même (porte 3).
 
+## Service Windows
+
+`ixctl service run <spec.json> --state DIR` héberge une instance pour un gestionnaire de services :
+le SCM de Windows quand c'est lui qui a lancé le processus, sinon la console (une interruption vaut
+un arrêt). C'est la même instance qu'`ixctl up`, avec son verrou, son jeton, son écoute en boucle
+locale et ses Job Objects. Ce que l'hôte ajoute :
+
+- **États.** Il rapporte `start-pending`, puis `running` dès que l'instance sert (arrêt et extinction
+  acceptés), puis `stop-pending` avec un point de contrôle qui croît et le temps restant comme délai
+  annoncé, puis `stopped`. Codes de sortie, propres au service : 0 un arrêt observé ; 1 l'instance
+  n'a pas démarré ; 2 le nom est tenu par une instance en marche (rien n'est rapporté `running`) ;
+  3 les arbres n'ont pas été vus disparus dans `--stop-timeout` (30 s par défaut) — le processus
+  sort quand même et les jobs se ferment avec lui, ce qui tue ce qui reste, mais l'hôte ne prétend
+  pas l'avoir vu ; de même si un arbre tenait encore un processus quand le superviseur a cessé de
+  l'attendre. En console, le processus sort avec le même code. Sous le SCM, la spec, le répertoire
+  d'état et le journal du service sont ouverts après la connexion au SCM : un échec à cette étape
+  est le code 1, que le SCM voit.
+- **Un arrêt en trois moments.** `host.stop` sur `ctl` avec `phase: requested` (la commande a atteint
+  l'hôte ; `source` vaut `scm`, `signal` ou `api` pour `/v1/shutdown`), puis `phase: received` (le
+  plan n'admet plus rien : un apply répond 503), tous deux avant l'arrêt de tout service ; puis
+  `observed` (tous les arbres vus disparus dans la borne, avec `ms`) ou `unobserved` (avec
+  `bound_ms` ou `trees_not_seen_gone`), dans le journal du service seulement, puisque le journal du
+  plan est fermé à ce moment. Pour `api`, le plan a fermé ses admissions en prenant la requête, avant
+  que l'hôte la voie : un apply peut alors recevoir 503 avant l'un ou l'autre événement.
+- **Journal du service.** `<nom>.service.log` dans le répertoire d'état, un objet JSON par ligne
+  (`host.ready`, `host.refused`, `host.failed`, `host.stop`), jamais le jeton ; borné à deux fichiers
+  de 4 Mio (`.service.log` et `.service.log.1`).
+- **Après un crash.** Les jobs meurent avec l'hôte. Le démarrage suivant tire un nouvel epoch, en
+  génération 0, comme tout redémarrage (voir Journal) : ce que l'hôte mort devait faire tourner n'est
+  pas relancé, et une exécution coupée par le crash reste l'effet que run/1 appelle `unknown`, à
+  réconcilier par une personne ou un client.
+
+`ixctl service plan --spec FICHIER --client-user DOMAINE\UTILISATEUR` affiche les commandes
+d'installation, de démarrage, de statut, d'arrêt et de désinstallation, pour un PowerShell élevé ;
+ixctl n'en exécute aucune. Le plan utilise le compte virtuel `NT SERVICE\ixctl` (aucun mot de passe
+enregistré), un démarrage manuel, aucun redémarrage automatique (un plan redémarré part de sa spec,
+pas de ce qu'il faisait tourner), la boucle locale seulement, et un répertoire d'état sous
+`C:\ProgramData\ixctl` dont l'ACL donne la lecture au seul utilisateur client nommé, qui y lit le
+jeton. Il demande PowerShell 7.4 ou plus : chaque section s'ouvre sur
+`$ErrorActionPreference = 'Stop'` et `$PSNativeCommandUseErrorActionPreference = $true`, et s'arrête
+donc au premier échec, celui d'une commande native compris. Un démarrage ou un arrêt ne fait que
+demander au SCM : chacun est suivi d'un `WaitForStatus` borné (30 s pour running, 60 s pour stopped)
+dont l'expiration termine la section ; un service qui échoue dans sa préparation finit arrêté, et
+l'attente du démarrage le dit. Le plan lit la spec pour le nom de l'instance, et désigne la spec et
+le binaire qui l'a affiché par des chemins absolus. Un test en vérifie le contenu ; ses sections
+d'installation, de démarrage et de statut ont tourné une fois sur Windows 11 (2026-10-31), pas encore
+celles d'arrêt et de désinstallation. `--delta-journal FICHIER`, sur les deux commandes, donne au
+service le journal de Delta pour le type de sonde `delta@1`, comme `ixctl up --delta-journal` : le
+plan le passe dans la ligne de commande du service, accorde au compte du service la lecture de ce
+seul fichier, et retire cet accord à la désinstallation. Limite connue : la borne d'arrêt part de la demande,
+mais l'hôte écrit ses rapports, ses événements et son journal sur la même goroutine, de sorte qu'une
+écriture du journal qui ne revient jamais retient l'hôte au-delà de la borne. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
+`ixctl up` de la session de l'utilisateur, pair du service.
+
 ## Barrière
 
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
