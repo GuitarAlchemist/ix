@@ -65,6 +65,9 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	if errors.Is(err, errLocked) {
 		return nil, Recovery{}, &Refusal{JournalLocked, path + " is held by another engine"}
 	}
+	if errors.Is(err, errLockUnsupported) {
+		return nil, Recovery{}, &Refusal{LockUnsupported, "no exclusive file lock on this system: an engine cannot be sure to be alone on " + path}
+	}
 	if err != nil {
 		return nil, Recovery{}, err
 	}

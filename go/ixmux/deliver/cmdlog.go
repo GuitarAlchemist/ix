@@ -40,7 +40,10 @@ type logFile interface {
 	Close() error
 }
 
-var errLocked = errors.New("locked")
+var (
+	errLocked          = errors.New("locked")
+	errLockUnsupported = errors.New("no file lock on this system")
+)
 
 // logFormat names the command log format; logHeader is its first line. A log without it, or
 // with another version, is refused (log-format-unsupported): no log of an earlier format was

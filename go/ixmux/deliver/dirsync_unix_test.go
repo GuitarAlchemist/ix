@@ -1,5 +1,7 @@
 //go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
 
+// (Open needs flock: on the other unix systems it is refused lock-unsupported.)
+
 package deliver
 
 import (
