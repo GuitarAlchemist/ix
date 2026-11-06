@@ -66,4 +66,7 @@ func TestLogWithoutFormatVersionIsRefused(t *testing.T) {
 		}
 		t.Errorf("an unknown format version: %v, want %s", err, LogFormatUnsupported)
 	}
+	if b, _ := os.ReadFile(path); string(b) != other {
+		t.Errorf("the refused unknown-version log was changed:\n%s", b)
+	}
 }

@@ -100,7 +100,10 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 			break
 		}
 		var r logRecord
-		if err := json.Unmarshal(data[at:at+int64(i)], &r); err != nil || r.Target == "" || r.MandateID == "" || r.State == "" {
+		// A v1 accepted or delivering record carries the mandate's fingerprint (Deliver writes it):
+		// without it, the same mandate would later be refused mandate-id-reuse.
+		if err := json.Unmarshal(data[at:at+int64(i)], &r); err != nil || r.Target == "" || r.MandateID == "" || r.State == "" ||
+			((r.State == Accepted || r.State == Delivering) && r.Fingerprint == "") {
 			return fail(&Refusal{LogCorrupt, fmt.Sprintf("record at offset %d of %s is unreadable", at, path)})
 		}
 		recs = append(recs, r)

@@ -74,7 +74,7 @@ func TestReconcileGoroutinesAreBounded(t *testing.T) {
 	var log strings.Builder
 	log.WriteString(logHeader)
 	for i := range 10 {
-		fmt.Fprintf(&log, `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m%d","incarnation":"i","state":"delivering"}`+"\n", i)
+		fmt.Fprintf(&log, `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m%d","incarnation":"i","state":"delivering","fp":"x"}`+"\n", i)
 	}
 	if err := os.WriteFile(path, []byte(log.String()), 0o600); err != nil {
 		t.Fatal(err)

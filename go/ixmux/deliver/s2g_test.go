@@ -2,7 +2,9 @@ package deliver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -49,5 +51,44 @@ func TestConcurrentSameIDToTargetsIsDeliveredOnce(t *testing.T) {
 	}
 	if calls != 1 || ok != 1 {
 		t.Errorf("%d adapter calls and %d successes for one mandate id sent to %d targets (answers %v); want 1 and 1", calls, ok, n, codes)
+	}
+}
+
+// S2G-3 (P2): in a v1 log, an accepted or delivering record without its fingerprint is corrupt:
+// rebuilt without it, the same mandate would later be refused mandate-id-reuse.
+func TestV1RecordWithoutFingerprintIsCorrupt(t *testing.T) {
+	for _, state := range []State{Accepted, Delivering} {
+		t.Run(string(state), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cmd.jsonl")
+			log := logHeader + `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m1","incarnation":"i","state":"` + string(state) + `"}` + "\n"
+			if err := os.WriteFile(path, []byte(log), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e, rec, err := Open(path, Options{})
+			if err == nil {
+				e.Close()
+			}
+			if refusalCode(err) != LogCorrupt {
+				t.Errorf("%s without fp: recovery %+v, %v; want %s", state, rec, err, LogCorrupt)
+			}
+			if b, _ := os.ReadFile(path); string(b) != log {
+				t.Errorf("the refused log was changed:\n%s", b)
+			}
+		})
+	}
+}
+
+// S2G-3 (P2): a MaxLogBytes below the header is refused at Open, before anything is written.
+func TestMaxLogBytesBelowTheHeaderIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	e, _, err := Open(path, Options{MaxLogBytes: 1})
+	if err == nil {
+		e.Close()
+	}
+	if refusalCode(err) != LogTooLarge {
+		t.Errorf("MaxLogBytes 1: %v, want %s", err, LogTooLarge)
+	}
+	if _, serr := os.Stat(path); !errors.Is(serr, os.ErrNotExist) {
+		t.Errorf("the refused Open wrote %s (%v)", path, serr)
 	}
 }

@@ -81,3 +81,29 @@ func TestIdentifyFromResumesPastScanMax(t *testing.T) {
 		t.Errorf("after %d calls: IdentifyFrom %s, Read %s; want the same named incarnation, past ScanMax", calls, id.Incarnation, read)
 	}
 }
+
+// S2G-3 (P2): the Resume cursor of a short record without its '\n' resumes it once completed.
+func TestShortPendingResumeContinues(t *testing.T) {
+	path, inc := writeJournal(t, "{}\n{\"a\":")
+	page := mustRead(t, path, inc, 0, 0)
+	if page.Pending == nil || page.Pending.At != 3 || page.Next != 3 {
+		t.Fatalf("short record without its '\\n': %+v", page)
+	}
+	want := Cursor{Incarnation: inc, From: 3, Scanned: page.Pending.Scanned, ScanFrom: 3, ScanIncarnation: inc}
+	if page.Pending.Resume != want {
+		t.Errorf("Resume %+v, want %+v", page.Pending.Resume, want)
+	}
+	fh, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.WriteString("1}\n")
+	fh.Close()
+	next, err := ReadCursor(path, page.Pending.Resume, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Events) != 1 || next.Events[0].Offset != 3 || string(next.Events[0].Line) != `{"a":1}` || next.Pending != nil {
+		t.Errorf("resumed after the append: %+v", next)
+	}
+}

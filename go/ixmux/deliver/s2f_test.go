@@ -128,7 +128,7 @@ func TestReconcileAsksOnlyTheMandatesIncarnation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "cmd.jsonl")
 			log := logHeader + `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m1","incarnation":"i1","state":"accepted","fp":"x"}` + "\n" +
-				`{"at":"2026-11-05T00:00:01Z","target":"a","mandate_id":"m1","incarnation":"i1","state":"delivering"}` + "\n"
+				`{"at":"2026-11-05T00:00:01Z","target":"a","mandate_id":"m1","incarnation":"i1","state":"delivering","fp":"x"}` + "\n"
 			if err := os.WriteFile(path, []byte(log), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -205,7 +205,7 @@ func TestStatusShowsStillRunning(t *testing.T) {
 // S2F-4 (P2): one Status call per (target, mandate id) at a time, even with slots to spare.
 func TestReconcileIsOnePerKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cmd.jsonl")
-	log := logHeader + `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m1","incarnation":"i","state":"delivering"}` + "\n"
+	log := logHeader + `{"at":"2026-11-05T00:00:00Z","target":"a","mandate_id":"m1","incarnation":"i","state":"delivering","fp":"x"}` + "\n"
 	if err := os.WriteFile(path, []byte(log), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -69,6 +69,9 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	if opt.MaxLogBytes <= 0 {
 		opt.MaxLogBytes = MaxLogBytes
 	}
+	if opt.MaxLogBytes < int64(len(logHeader)) { // refused before anything is written
+		return nil, Recovery{}, &Refusal{LogTooLarge, fmt.Sprintf("MaxLogBytes %d cannot hold the %d-byte log header", opt.MaxLogBytes, len(logHeader))}
+	}
 	lock, err := lockFile(path + ".lock")
 	if errors.Is(err, errLocked) {
 		return nil, Recovery{}, &Refusal{JournalLocked, path + " is held by another engine"}
