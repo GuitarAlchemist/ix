@@ -302,6 +302,69 @@ func TestStopAndPrecompactDigestsAreValidAndQuoted(t *testing.T) {
 	}
 }
 
+// When the archive cannot be written (a file where the archive directory should be), each hook
+// that replaces latest.md keeps the previous digest instead of losing it, says so on stderr and
+// still exits 0.
+func TestAFailedArchiveKeepsTheLatestDigest(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct{ hook, stdin, env string }{
+		{"digest-activity-tracker", "", "IX_DIGEST_MID_COUNT"},
+		{"digest-stop-finalize", "", ""},
+		{"precompact-digest", `{"session_id":"s-1"}`, ""},
+	} {
+		root := t.TempDir()
+		latest := writeDigest(t, root, "digest-skill", 2*time.Hour, now)
+		before, _ := os.ReadFile(latest)
+		os.WriteFile(digestsOf(root).archive, []byte("not a directory\n"), 0o644)
+		sys := fakeSystem(root, now)
+		if c.env != "" {
+			sys.getenv = func(name string) string {
+				if name == c.env {
+					return "1"
+				}
+				return ""
+			}
+		}
+		code, _, errs := runHook(t, sys, c.hook, c.stdin)
+		after, _ := os.ReadFile(latest)
+		if code != 0 || !bytes.Equal(before, after) || !strings.Contains(errs, "could not archive latest.md, kept as it is") {
+			t.Errorf("%s: exit %d, stderr %q, latest.md now %q", c.hook, code, errs, after)
+		}
+		left, _ := filepath.Glob(filepath.Join(digestsOf(root).dir, ".latest-*.tmp"))
+		if len(left) != 0 {
+			t.Errorf("%s: temporary files left: %v", c.hook, left)
+		}
+	}
+}
+
+// With a writable archive the same three hooks archive, then replace latest.md, leaving no
+// temporary file behind.
+func TestAnArchivedDigestIsReplaced(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct{ hook, stdin, archived string }{
+		{"digest-activity-tracker", "", "2026-11-05T12-00-00Z-pre-mid.md"},
+		{"digest-stop-finalize", "", "2026-11-05T12-00-00Z-stop.md"},
+		{"precompact-digest", `{"session_id":"s-1"}`, "2026-11-05T12-00-00Z-s-1.md"},
+	} {
+		root := t.TempDir()
+		latest := writeDigest(t, root, "digest-skill", 2*time.Hour, now)
+		sys := fakeSystem(root, now)
+		sys.getenv = func(name string) string {
+			if name == "IX_DIGEST_MID_COUNT" {
+				return "1"
+			}
+			return ""
+		}
+		runHook(t, sys, c.hook, c.stdin)
+		archived, _ := os.ReadFile(filepath.Join(digestsOf(root).archive, c.archived))
+		after, _ := os.ReadFile(latest)
+		left, _ := filepath.Glob(filepath.Join(digestsOf(root).dir, ".latest-*.tmp"))
+		if !strings.Contains(string(archived), "DIGEST-MARKER") || strings.Contains(string(after), "DIGEST-MARKER") || len(left) != 0 {
+			t.Errorf("%s: archived %q, latest %q, temporary files %v", c.hook, archived, after, left)
+		}
+	}
+}
+
 func TestDigestValidate(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "d.md")

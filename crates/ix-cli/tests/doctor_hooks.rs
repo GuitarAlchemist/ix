@@ -120,6 +120,41 @@ fn a_hook_run_through_a_shell_fails_the_check_naming_its_command() {
 }
 
 #[test]
+fn a_single_quoted_program_or_an_env_launcher_is_a_shell() {
+    for command in [
+        "'C:/Program Files/Git/bin/bash.exe' -c true",
+        "'/bin/sh' -c true",
+        "env bash -c true",
+        "/usr/bin/env bash -c true",
+        "\"C:/Program Files/Git/usr/bin/env.exe\" sh -c true",
+        "env -i PATH=/usr/bin HOME=/tmp sh -c true",
+        "env -u HOME -C /tmp zsh -c true",
+        "env -- pwsh -NoProfile -Command 1",
+        "env -S \"bash -c true\"",
+        "env --split-string='python3 -c 1'",
+    ] {
+        assert!(hooks::runs_shell(command), "{command}");
+    }
+    let repo = seeded(&settings_with(&["env bash -c true"]), &[]);
+    let result = hooks::check(repo.path(), None);
+    assert_eq!(result.status, Status::Fail, "{result:?}");
+}
+
+#[test]
+fn a_shell_name_as_an_ordinary_argument_is_not_a_shell() {
+    for command in [
+        "node hook.js env bash",
+        "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" correction-detector bash",
+        "'C:/tools/ix-hooks.exe' sh",
+        "env FOO=1 node hook.js bash",
+        "env -u bash node hook.js",
+        "env",
+    ] {
+        assert!(!hooks::runs_shell(command), "{command}");
+    }
+}
+
+#[test]
 fn wmux_style_tool_name_arguments_are_not_shells() {
     assert!(!hooks::runs_shell(
         "node \"C:/Program Files/wmux/resources/cli/wmux-hook.js\" Bash"

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,10 +84,43 @@ func (e *env) openPR(root string) string {
 	return "#" + n
 }
 
-func copyFile(from, to string) {
-	if data, err := os.ReadFile(from); err == nil {
-		os.WriteFile(to, data, 0o644)
+// archiveLatest copies latest.md into the archive before a hook replaces it, when there is one.
+// On an error the previous digest would be lost: the caller keeps latest.md as it is (the
+// scripts' `set -e` stopped at a failed `cp` the same way).
+func archiveLatest(e *env, d digestPaths, name, hook string) bool {
+	data, err := os.ReadFile(d.latest)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
 	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(d.archive, name), data, 0o644)
+	}
+	if err != nil {
+		fmt.Fprintf(e.stderr, "[%s] could not archive latest.md, kept as it is: %v\n", hook, err)
+		return false
+	}
+	return true
+}
+
+// replaceLatest writes latest.md through a temporary file and a rename, so a failed write never
+// leaves it truncated.
+func replaceLatest(d digestPaths, body string) error {
+	tmp, err := os.CreateTemp(d.dir, ".latest-*.tmp")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.WriteString(body)
+	cerr := tmp.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), d.latest)
+	}
+	if werr != nil {
+		os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // digestStalenessNudge (UserPromptSubmit) says when the digest is missing or has drifted;
@@ -145,10 +180,10 @@ func digestActivityTracker(e *env) int {
 
 	now := e.sys.now().UTC()
 	tsIso, tsFile := now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15-04-05Z")
-	branch, sha, subject := e.head(root)
-	if _, err := os.Stat(d.latest); err == nil {
-		copyFile(d.latest, filepath.Join(d.archive, tsFile+"-pre-mid.md"))
+	if !archiveLatest(e, d, tsFile+"-pre-mid.md", "digest-activity-tracker") {
+		return 0
 	}
+	branch, sha, subject := e.head(root)
 	body := fmt.Sprintf(`---
 schema_version: 1
 session_id: mid-session-auto
@@ -173,7 +208,7 @@ and **Success criteria**._
 `, tsIso, branch, sha, subject, mid, branch, sha, subject, mid, ageMin)
 	midFile := filepath.Join(d.dir, "mid-"+tsFile+".md")
 	os.WriteFile(midFile, []byte(body), 0o644)
-	copyFile(midFile, d.latest)
+	replaceLatest(d, body)
 	return 0
 }
 
@@ -198,8 +233,8 @@ func digestStopFinalize(e *env) int {
 	os.MkdirAll(d.archive, 0o755)
 	now := e.sys.now().UTC()
 	tsIso, tsFile := now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15-04-05Z")
-	if _, err := os.Stat(d.latest); err == nil {
-		copyFile(d.latest, filepath.Join(d.archive, tsFile+"-stop.md"))
+	if !archiveLatest(e, d, tsFile+"-stop.md", "digest-stop-finalize") {
+		return 0
 	}
 	branch, sha, subject := e.head(root)
 	pr := e.openPR(root)
@@ -228,7 +263,7 @@ _Session ended without a recent `+"`/digest`"+`. Next session: re-orient from
 `+"`git log`"+` + open PR. Prior digests (if any) are in `+"`state/digests/archive/`"+`._
 `, tsIso, safeYAML(branch, 200), safeYAML(sha, 200), safeYAML(subject, 200), safeYAML(pr, 200),
 		branch, sha, subject, prLine)
-	os.WriteFile(d.latest, []byte(body), 0o644)
+	replaceLatest(d, body)
 	validateDigest(d.latest, discard{}) // the script ran digest-validate and ignored its verdict
 	return 0
 }
@@ -249,8 +284,10 @@ func precompactDigest(e *env) int {
 	}
 	now := e.sys.now().UTC()
 	ts, tsFile := now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15-04-05Z")
+	if !archiveLatest(e, d, tsFile+"-"+safeID(session, "unknown", 64)+".md", "precompact-digest") {
+		return 0
+	}
 	if _, err := os.Stat(d.latest); err == nil {
-		copyFile(d.latest, filepath.Join(d.archive, tsFile+"-"+safeID(session, "unknown", 64)+".md"))
 		if age, _ := e.ageMinutes(d.latest); age < 30 {
 			return 0
 		}
@@ -284,7 +321,7 @@ _No `+"`/digest`"+` invocation was captured before this compaction. Re-orient fr
 **Do NOT carry forward** sections before the next compaction event._
 `, safeYAML(session, 200), ts, safeYAML(branch, 200), safeYAML(sha, 200), safeYAML(subject, 200), safeYAML(pr, 200),
 		branch, sha, subject, prLine)
-	os.WriteFile(d.latest, []byte(body), 0o644)
+	replaceLatest(d, body)
 	return 0
 }
 

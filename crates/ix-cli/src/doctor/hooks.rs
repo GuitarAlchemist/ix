@@ -112,18 +112,57 @@ pub fn find_go() -> Option<PathBuf> {
         .map(|_| PathBuf::from("go"))
 }
 
-/// Whether a hook command runs a shell or a script interpreter: its program (first word) is one
-/// of [`INTERPRETERS`], or a word names a script by its extension.
+/// Whether a hook command runs a shell or a script interpreter: its program is one of
+/// [`INTERPRETERS`], directly or through `env`, or a word names a script by its extension.
+/// Only the program counts: a shell's name as an ordinary argument (`node hook.js bash`) does not.
 pub fn runs_shell(command: &str) -> bool {
-    let words: Vec<&str> = command
-        .split_whitespace()
-        .map(|w| w.trim_matches(|c| c == '"' || c == '\''))
-        .collect();
-    // A quoted program may hold spaces ("C:/Program Files/Git/bin/bash.exe").
-    let trimmed = command.trim_start();
-    let program = match trimmed.strip_prefix('"') {
-        Some(rest) => rest.split('"').next().unwrap_or(""),
-        None => words.first().copied().unwrap_or(""),
+    let words = split_words(command);
+    program_is_interpreter(&words)
+        || words.iter().any(|w| {
+            let w = w.to_ascii_lowercase();
+            SCRIPT_EXTENSIONS.iter().any(|ext| w.ends_with(ext))
+        })
+}
+
+/// The words of a command line, with `'…'` and `"…"` quoting (no escapes), quotes removed: a
+/// quoted program may hold spaces (`'C:/Program Files/Git/bin/bash.exe'`).
+fn split_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    for c in command.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_word = true;
+            }
+            None if c.is_whitespace() => {
+                if in_word {
+                    words.push(std::mem::take(&mut word));
+                    in_word = false;
+                }
+            }
+            None => {
+                word.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(word);
+    }
+    words
+}
+
+/// Whether `words[0]` is an interpreter, or `env` whose program is one. `env`'s options and
+/// `NAME=value` assignments are skipped (`-u NAME` and `-C DIR` take an argument), and
+/// `-S` / `--split-string` hands a whole command line, checked as one.
+fn program_is_interpreter(words: &[String]) -> bool {
+    let Some(program) = words.first() else {
+        return false;
     };
     let base = program
         .rsplit(['/', '\\'])
@@ -134,10 +173,29 @@ pub fn runs_shell(command: &str) -> bool {
     if INTERPRETERS.contains(&base) {
         return true;
     }
-    words.iter().any(|w| {
-        let w = w.to_ascii_lowercase();
-        SCRIPT_EXTENSIONS.iter().any(|ext| w.ends_with(ext))
-    })
+    if base != "env" {
+        return false;
+    }
+    let mut rest = &words[1..];
+    while let Some(word) = rest.first() {
+        if word == "-S" || word == "--split-string" {
+            return rest.get(1).is_some_and(|line| runs_shell(line));
+        }
+        if let Some(line) = word.strip_prefix("--split-string=") {
+            return runs_shell(line);
+        }
+        if let Some(line) = word.strip_prefix("-S") {
+            if !line.is_empty() && !word.starts_with("--") {
+                return runs_shell(line);
+            }
+        }
+        rest = match word.as_str() {
+            "-u" | "--unset" | "-C" | "--chdir" => rest.get(2..).unwrap_or(&[]),
+            w if w.starts_with('-') || w.contains('=') => &rest[1..],
+            _ => break,
+        };
+    }
+    program_is_interpreter(rest)
 }
 
 /// Scan `root`. `go` runs the hooks' tests; `None` skips step 4.
