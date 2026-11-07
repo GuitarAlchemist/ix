@@ -82,6 +82,8 @@ var (
 	testHookStatusFrom func(int64)
 	// testHookBeforeRelaunch runs in watch between its read of stopped and the relaunch.
 	testHookBeforeRelaunch func()
+	// testHookBeforeRelease runs in watch once the turn has ended, before the reservation is freed.
+	testHookBeforeRelease func()
 	// killJob kills a child's job; a test replaces it to make the kill fail.
 	killJob = func(j *job) error { return j.kill() }
 )
@@ -757,13 +759,19 @@ func (a *Adapter) Deliver(ctx context.Context, m deliver.Mandate) (deliver.Ack, 
 		}
 		return deliver.Ack{}, fmt.Errorf("send to claude: %w", err)
 	}
-	go a.watch(c, p)
+	released := make(chan struct{})
+	go a.watch(c, p, released)
 	// Once the message is written, the call waits for the turn's end, not for ctx: the engine
 	// records uncertain at its own deadline, keeps the call (still_running) and settles the
 	// delivery with this late answer. The wait is bounded all the same: watch kills the child at
 	// TurnMax, and Stop past StopWait; either resolves p with the child's death.
 	// @ai:invariant after the send, Deliver returns with the turn's result or the child's death, never at ctx's end [T:test conf:0.85 src:go/ixmux/claudestream/s6b_test.go:TestLateAnswerIsDelivered]
 	<-p.done
+	// The reservation is freed before the engine gets the turn back: a mandate the engine lets
+	// through once its slot is free is never refused by a reservation still held here. Past
+	// TurnMax this also waits for the relaunch, bounded by InitWait and cut short by Stop.
+	// @ai:invariant when Deliver returns after a send, the adapter's reservation is already free [T:test conf:0.85 src:go/ixmux/claudestream/s6c_test.go:TestReservationIsFreeWhenDeliverReturns]
+	<-released
 	r := p.res
 	if r.err != nil {
 		return deliver.Ack{}, r.err
@@ -789,12 +797,16 @@ func (a *Adapter) release() {
 
 // watch holds the reservation until p is resolved, or TurnMax: then the child is killed (its
 // turn resolves with its death) and a new one starts, unless the target is stopping.
-func (a *Adapter) watch(c *child, p *turn) {
+func (a *Adapter) watch(c *child, p *turn, released chan<- struct{}) {
+	defer close(released) // after the release: Deliver hands the turn back only then
 	defer a.release()
 	t := time.NewTimer(a.cfg.TurnMax)
 	defer t.Stop()
 	select {
 	case <-p.done:
+		if testHookBeforeRelease != nil {
+			testHookBeforeRelease()
+		}
 		return
 	case <-t.C:
 	}

@@ -2,6 +2,7 @@ package claudestream
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -55,6 +56,22 @@ func TestStopDuringTheRelaunch(t *testing.T) {
 	}
 	if n := effects(t, eff); n != 2 { // the first child's opening turn, then m1
 		t.Errorf("%d turns, want 2: an opening turn was sent during the stop", n)
+	}
+}
+
+// S6C, the end-of-turn window (Branche: closed): the adapter frees its reservation before it
+// hands the turn back. The watcher is held between the end of the turn and its release; a mandate
+// sent as soon as Deliver has returned, as the engine would once its slot is free, is delivered.
+func TestReservationIsFreeWhenDeliverReturns(t *testing.T) {
+	a, _, _ := setup(t, 5*time.Second)
+	testHookBeforeRelease = func() { time.Sleep(300 * time.Millisecond) }
+	t.Cleanup(func() { testHookBeforeRelease = nil })
+	inc, _ := a.Incarnation()
+	for _, id := range []string{"w1", "w2"} {
+		ack, err := a.Deliver(context.Background(), deliver.Mandate{MandateID: id, Target: "c", Incarnation: inc, Text: "x"})
+		if err != nil || !ack.AckSeen {
+			t.Fatalf("%s, sent once the previous Deliver returned: %+v %v, want delivered", id, ack, err)
+		}
 	}
 }
 
