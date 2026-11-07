@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,13 +67,32 @@ type proc struct {
 	info   server.Info
 	exited chan struct{}
 	err    error
-	out    *bytes.Buffer
+	out    *syncBuffer
+}
+
+// syncBuffer is the child's output: os/exec copies into it from its own goroutine while the
+// process runs, so a test may read it at any time (S5-1: a bytes.Buffer read then is a data race).
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 // start runs ixmux serve on state and waits for its ixmux.json.
 func start(t *testing.T, state string, env []string, args ...string) *proc {
 	t.Helper()
-	p := &proc{t: t, state: state, exited: make(chan struct{}), out: &bytes.Buffer{}}
+	p := &proc{t: t, state: state, exited: make(chan struct{}), out: &syncBuffer{}}
 	p.cmd = exec.Command(binary, append([]string{"serve", "--addr", "127.0.0.1:0", "--state", state}, args...)...)
 	p.cmd.Env = append(os.Environ(), env...)
 	p.cmd.Stdout, p.cmd.Stderr = p.out, p.out
@@ -569,7 +589,11 @@ func TestTokenFileIsTheUsersOnly(t *testing.T) {
 func TestBounds(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "journal.jsonl")
-	p := start(t, filepath.Join(dir, "state"), nil, "--max-conns", "3", "--queue", "4", "--poll", "20ms",
+	// The queue (256 messages) holds more than the whole journal below (2048 records of 4 KB in
+	// pages of 64 KiB: 128 pages), so the fast client's queue cannot overflow, however slowly the
+	// machine runs. The slow client is server.TestSlowClientGetsGapThenClose: it holds the writer
+	// before the socket, where a client here would count on the socket buffers.
+	p := start(t, filepath.Join(dir, "state"), nil, "--max-conns", "3", "--queue", "256", "--poll", "20ms",
 		"--journal", "j="+path, "--target", "s="+filepath.Join(dir, "session.jsonl"))
 
 	// A message over MaxClientMessage closes the connection with 1009.
@@ -587,34 +611,24 @@ func TestBounds(t *testing.T) {
 	}
 	big.CloseNow()
 
-	// A slow client (small receive buffer, not reading) and a fast one.
-	slowClient := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-		if err == nil {
-			c.(*net.TCPConn).SetReadBuffer(4096)
-		}
-		return c, err
-	}}}
-	var slow, fast *websocket.Conn
+	// Two connections, one fast: with a third, --max-conns 3 is reached and a fourth is refused.
+	var idle, fast *websocket.Conn
 	deadline := time.Now().Add(5 * time.Second)
-	for slow == nil || fast == nil { // wait for the closed connection to be counted out
+	for idle == nil || fast == nil { // wait for the closed connection to be counted out
 		if time.Now().After(deadline) {
-			t.Fatal("could not open the slow and fast connections")
+			t.Fatal("could not open the idle and fast connections")
 		}
-		if slow == nil {
-			slow, _, _ = p.dial("", slowClient)
+		if idle == nil {
+			idle, _, _ = p.dial("", nil)
 		}
 		if fast == nil {
 			fast, _, _ = p.dial("", nil)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	defer slow.CloseNow()
+	defer idle.CloseNow()
 	defer fast.CloseNow()
 	read(t, fast, 5*time.Second)
-
-	// One more connection than --max-conns 3 (slow, fast, and this one is the third: allowed;
-	// the fourth is refused).
 	third, _, err := p.dial("", nil)
 	if err != nil {
 		t.Fatalf("third connection: %v", err)
@@ -627,6 +641,7 @@ func TestBounds(t *testing.T) {
 		t.Errorf("a fourth connection over --max-conns 3: %v (%v), want 503", err, resp)
 	}
 	third.CloseNow()
+	idle.CloseNow() // it reads nothing: left open during the flood, it would be a slow client
 
 	// 8 MiB of records appear in the followed journal.
 	fh, _ := os.Create(path)
@@ -666,37 +681,13 @@ func TestBounds(t *testing.T) {
 			}
 		}
 	}()
-	// The engine is not blocked by the slow client.
-	time.Sleep(300 * time.Millisecond)
-	begun := time.Now()
+	// A delivery during the flood.
 	var res result
-	if code := p.do("POST", "/v1/mandates", mandate("m1", incarnation(p, "s")), &res); code != 200 || time.Since(begun) > 2*time.Second {
-		t.Errorf("a delivery beside the slow client: %d %+v in %s", code, res, time.Since(begun))
+	if code := p.do("POST", "/v1/mandates", mandate("m1", incarnation(p, "s")), &res); code != 200 {
+		t.Errorf("a delivery during the journal flood: %d %+v", code, res)
 	}
 	<-done
 	if fastErr != nil || fastGap {
 		t.Errorf("the fast client: error %v, gap %v; want every page", fastErr, fastGap)
-	}
-	// The slow client now reads: its backlog, then a gap of reason slow, then the close.
-	var gap *server.Gap
-	for gap == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		_, b, err := slow.Read(ctx)
-		cancel()
-		if err != nil {
-			t.Fatalf("slow client: %v before any gap", err)
-		}
-		var m msg
-		json.Unmarshal(b, &m)
-		if m.Type == "gap" {
-			gap = &server.Gap{}
-			json.Unmarshal(m.Data, gap)
-		}
-	}
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	_, _, err = slow.Read(ctx)
-	cancel()
-	if gap.Reason != "slow" || websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
-		t.Errorf("slow client: gap %+v then %v, want reason slow then close 1008", gap, err)
 	}
 }

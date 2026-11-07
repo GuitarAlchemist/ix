@@ -84,7 +84,7 @@ func (h *hub) frame(typ string, seq uint64, data any) []byte {
 // publish numbers one event and offers it to every queue. A full queue is not waited for: its
 // connection is marked slow and dropped from the hub. It returns false, publishing nothing, if
 // the message would exceed MaxStreamMessage.
-// @ai:invariant publishing never blocks on a connection: a full queue drops its connection [T:test conf:0.8 src:go/ixmux/cmd/ixmux/integration_test.go:TestBounds]
+// @ai:invariant publishing never blocks on a connection: a full queue drops its connection [T:test conf:0.9 src:go/ixmux/server/s5_test.go:TestSlowClientGetsGapThenClose]
 func (h *hub) publish(typ string, data any) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

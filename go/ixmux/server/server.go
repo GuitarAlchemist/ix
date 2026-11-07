@@ -805,6 +805,11 @@ func (s *Server) onTransition(t deliver.Transition) {
 // before the hub numbers it.
 var testHookBeforePublish func(deliver.Transition)
 
+// testHookStreamLive, set by a test only, runs in a connection's writer before each wait on its
+// queue: holding it holds the writer before the socket, so the queue fills whatever the socket
+// buffers absorb.
+var testHookStreamLive func()
+
 // stream serves GET /v1/stream[?since=<seq>&epoch=<epoch>]: hello, then the missed events or a
 // gap and the state, then live events. A connection over MaxConns is refused (503); a client
 // message over MaxClientMessage closes it (1009); a full queue sends a gap and closes it (1008);
@@ -870,6 +875,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for {
+		if testHookStreamLive != nil {
+			testHookStreamLive()
+		}
 		select {
 		case b := <-sub.q:
 			if !write(b) {
