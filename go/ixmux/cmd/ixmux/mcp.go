@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -77,23 +79,66 @@ type mcp struct {
 	client *http.Client
 	posts  chan struct{} // one per POST of ixmux_submit still running
 
-	tokMu  sync.Mutex
-	tokens map[string]bool // every token read from the state directory, cut out of each answer
+	tokMu   sync.Mutex
+	windows map[[tokenWindow]byte]bool // every 8-byte window of every form of every token read
+	shorts  [][]byte                   // forms shorter than a window, matched whole
 }
 
-// redact cuts the bytes of every token read out of b. A token is hex: JSON encodes it as it is,
-// so a string that holds it holds its bytes.
-func (m *mcp) redact(b []byte) []byte {
+// tokenWindow is the length of the pieces of a token an answer may not hold.
+const tokenWindow = 8
+
+// keep records the token's forms (raw, upper case, hex, base64): no answer may hold any
+// tokenWindow bytes of one.
+func (m *mcp) keep(tok []byte) {
+	forms := []string{string(tok), strings.ToUpper(string(tok)), hex.EncodeToString(tok), strings.ToUpper(hex.EncodeToString(tok)),
+		base64.StdEncoding.EncodeToString(tok), base64.URLEncoding.EncodeToString(tok)}
 	m.tokMu.Lock()
 	defer m.tokMu.Unlock()
-	for tok := range m.tokens {
-		b = bytes.ReplaceAll(b, []byte(tok), []byte("[token]"))
+	for _, f := range forms {
+		if len(f) < tokenWindow {
+			m.shorts = append(m.shorts, []byte(f))
+			continue
+		}
+		for i := 0; i+tokenWindow <= len(f); i++ {
+			m.windows[[tokenWindow]byte([]byte(f[i:i+tokenWindow]))] = true
+		}
 	}
-	return b
+}
+
+// leaks says whether b holds a piece of a token the adapter read.
+func (m *mcp) leaks(b []byte) bool {
+	m.tokMu.Lock()
+	defer m.tokMu.Unlock()
+	for _, s := range m.shorts {
+		if bytes.Contains(b, s) {
+			return true
+		}
+	}
+	if len(m.windows) == 0 {
+		return false
+	}
+	for i := 0; i+tokenWindow <= len(b); i++ {
+		if m.windows[[tokenWindow]byte(b[i:i+tokenWindow])] {
+			return true
+		}
+	}
+	return false
+}
+
+// ixmuxCodes are the refusal codes of ixmux, the only text of a refusal that passes as it is.
+var ixmuxCodes = map[string]bool{
+	deliver.BadMandate: true, deliver.TextTooLong: true, deliver.UnknownTarget: true, deliver.StaleIncarnation: true,
+	deliver.UncertainNeedsReconcile: true, deliver.InFlight: true, deliver.TargetBusy: true, deliver.Busy: true,
+	deliver.UnknownMandate: true, deliver.NotUncertain: true, deliver.ReconcileUnsupported: true, deliver.LogTooLarge: true,
+	deliver.LogCorrupt: true, deliver.MandateIDReuse: true, deliver.JournalLocked: true, deliver.DeliveryStillRunning: true,
+	deliver.LogBroken: true, deliver.LogFormatUnsupported: true, deliver.LockUnsupported: true, deliver.CallsInFlight: true,
+	deliver.EngineClosed:   true,
+	"too-many-connections": true, "host-not-loopback": true, "origin-refused": true, "internal": true,
+	"body-too-large": true, "bad-request": true, "stopping": true,
 }
 
 func newMCP(state string, stdout io.Writer) *mcp {
-	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts), tokens: map[string]bool{},
+	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts), windows: map[[tokenWindow]byte]bool{},
 		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
 		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
 }
@@ -308,12 +353,15 @@ func (m *mcp) handle(line []byte) {
 		if terr != nil {
 			v = terr
 		}
-		// Everything a tool answers may hold text from the network (a refusal's detail, a target's
-		// name): a service that took ixmux's port could echo the Authorization header. The token's
-		// bytes are cut out of the whole answer, the text block and structuredContent alike.
-		// @ai:invariant no tool answer holds the bytes of a token the adapter read [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestEchoedTokenIsNeverShown]
+		// A tool answer may hold text from the network (a target's name, a reason, an answer): a
+		// service that took ixmux's port could echo the Authorization header, whole, cut or
+		// encoded. An answer that holds any 8 bytes of a token's forms is withheld whole.
+		// @ai:invariant no tool answer holds 8 bytes of a token the adapter read, raw, in hex or in base64 [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6c_mcp_test.go:TestTokenPiecesAreNeverShown]
 		text, _ := json.Marshal(v)
-		text = m.redact(text)
+		if m.leaks(text) {
+			terr = fail(reasonIxmuxError, "an answer of ixmux held a piece of the token; it is withheld")
+			text, _ = json.Marshal(terr)
+		}
 		var sc any
 		json.Unmarshal(text, &sc)
 		m.reply(req.id, map[string]any{"content": []any{map[string]any{"type": "text", "text": string(text)}},
@@ -376,9 +424,7 @@ func (m *mcp) connect() (conn, *toolErr) {
 	if err != nil || len(tok) == 0 {
 		return conn{}, fail(reasonUnavailable, "no token in the state directory")
 	}
-	m.tokMu.Lock()
-	m.tokens[string(tok)] = true
-	m.tokMu.Unlock()
+	m.keep(tok)
 	return conn{info.Addr, string(tok)}, nil
 }
 
@@ -416,14 +462,16 @@ func (m *mcp) do(ctx context.Context, c conn, method, path string, body, out any
 		return fail(reasonUnavailable, "ixmux refused the token of the state directory")
 	}
 	if resp.StatusCode != http.StatusOK {
+		// Only a known code of ixmux passes, and no detail: the network's text does not reach the
+		// client as it is.
+		// @ai:invariant a refusal of ixmux passes only as one of its known codes, without its detail [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6c_mcp_test.go:TestOnlyKnownCodesPass]
 		var e struct {
-			Error  string `json:"error"`
-			Detail string `json:"detail"`
+			Error string `json:"error"`
 		}
-		if json.Unmarshal(b, &e) == nil && e.Error != "" {
-			return fail(e.Error, e.Detail)
+		if json.Unmarshal(b, &e) == nil && ixmuxCodes[e.Error] {
+			return fail(e.Error, "")
 		}
-		return fail(reasonIxmuxError, fmt.Sprintf("HTTP %d", resp.StatusCode))
+		return fail(reasonIxmuxError, fmt.Sprintf("HTTP %d without a known code of ixmux", resp.StatusCode))
 	}
 	if out != nil && json.Unmarshal(b, out) != nil {
 		return fail(reasonIxmuxError, "an answer of ixmux is unreadable")
