@@ -24,6 +24,7 @@ go -C %USERPROFILE%\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<gi
 
 | Route | Rôle |
 |---|---|
+| `POST /v1/hello` `{nonce}` | La seule route sans jeton (le `Host` en loopback et l'absence d'`Origin` restent exigés, le corps est borné). `nonce` fait 32 octets en hexadécimal minuscule, sinon 400 `bad-nonce`. La réponse est `{mac}` : l'hexadécimal de HMAC-SHA-256(HMAC-SHA-256(jeton, `ixmux/hello/v1`), les 32 octets du nonce). Un client le vérifie avant d'envoyer le jeton, sur la même connexion : le jeton ne part alors que vers un serveur qui a prouvé le détenir. `ixmux mcp` le fait toujours ; le runbook ci-dessous et les autres clients envoient le Bearer seul, et peuvent faire le même défi. La clé dérivée ne signe rien d'autre, et les curseurs de journal sont signés par une autre clé, aléatoire à chaque processus. |
 | `POST /v1/mandates` `{mandate_id, target, incarnation, text}` | Livre au plus une fois. La réponse donne `state` et `replayed`. Un refus revient sous la forme `{error, detail}`, avec 400, 404, 409, 413 ou 503. |
 | `GET /v1/mandates/{id}` | L'état d'une livraison et, une fois livrée, son résultat : `ack` (`receipt`, `text`, `ack_seen`, `truncated`), lu dans le journal de commandes, donc aussi après un redémarrage. |
 | `POST /v1/mandates/{id}/reconcile` | Demande à la cible si une livraison incertaine est arrivée. |
@@ -157,7 +158,10 @@ La session Claude elle-même est gardée par claude sous ton profil, comme toute
 dossier d'état. Il y lit l'adresse et le jeton à chaque appel, et suit donc un ixmux redémarré
 entre-temps. Il a trois outils : `ixmux_status`, `ixmux_submit` (un reçu en 2 s, même quand le tour
 dure plus longtemps) et `ixmux_result` (lu dans le journal de commandes). Aucun outil n'arrête
-ixmux. Le contrat, avec la commande exacte, les schémas et les erreurs : [MCP.fr.md](MCP.fr.md).
+ixmux. Il n'envoie le jeton qu'à un serveur qui a répondu à son défi `/v1/hello`, sur la même
+connexion ; un processus qui aurait pris le port sans le jeton n'obtient rien (`ixmux-unverified`).
+Un processus qui peut lire le fichier du jeton est hors de ce modèle. Le contrat, avec la commande
+exacte, les schémas et les erreurs : [MCP.fr.md](MCP.fr.md).
 
 ## Limites de cette tranche
 

@@ -14,8 +14,14 @@ ixmux mcp --state <dossier>
 
 - `<dossier>` est le dossier `--state` de l'`ixmux serve` à joindre. À chaque appel d'outil,
   l'adaptateur y lit l'adresse dans `ixmux.json` et le jeton dans `ixmux.token`. Il ne prend le
-  jeton ni en argument ni en variable, et ne l'écrit jamais lui-même : ni sur stdout, ni sur
-  stderr, ni dans une réponse d'outil. Ce qu'ixmux répond passe comme donnée (voir Outils).
+  jeton ni en argument ni en variable, et ne l'écrit nulle part : ni sur stdout, ni sur stderr, ni
+  dans une réponse d'outil. Il ne l'envoie qu'à un serveur qui a prouvé le détenir : pour chaque
+  requête, il ouvre une connexion TCP, poste `/v1/hello` avec un nonce frais de 32 octets, vérifie
+  le `mac` avec `hmac.Equal` contre HMAC-SHA-256(HMAC-SHA-256(jeton, `ixmux/hello/v1`), nonce), et
+  n'écrit qu'ensuite la requête authentifiée, sur cette même connexion. Un `mac` absent, mal formé
+  ou faux (un rejeu compris) donne `ixmux-unverified`, et le jeton n'est pas envoyé. Un processus
+  qui a pris le port sans le jeton ne l'obtient jamais ; un processus qui peut lire le fichier du
+  jeton est hors de ce modèle.
 - JSON-RPC 2.0 sur stdin et stdout, un message par ligne (`\n` ; un `\r` avant est accepté).
   stdout ne porte que du JSON-RPC ; stderr ne reçoit que le message d'usage d'une ligne de commande
   fausse.
@@ -75,12 +81,12 @@ raison d'un mandat, l'erreur d'une cible) n'atteint une réponse d'outil.
 | `bad-mandate-id` | un `mandate_id` vide, de plus de 128 octets, fait d'autre chose que des lettres, chiffres, `.`, `_` et `-`, ou qui commence par `.` |
 | `submits-in-flight` | 4 dépôts attendent encore la réponse d'ixmux (leurs POST courent au-delà du reçu) ; réessayer une fois l'un d'eux fini |
 | `ixmux-answer-too-large` | une réponse HTTP d'ixmux de plus de 4 Mio |
+| `ixmux-unverified` | le serveur à l'adresse d'`ixmux.json` n'a pas répondu au défi `/v1/hello` avec le mac du jeton : le jeton n'a pas été envoyé |
 | `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire, ou un refus sans code connu |
 
 Ce qui passe d'ixmux n'est que de la donnée : des identifiants (noms, types, incarnations, ids de
 mandat, états, reçus) et la réponse d'une cible (`text`), tels qu'ixmux les donne. Rien n'est
-analysé : un service local qui aurait pris le port d'ixmux pourrait mettre n'importe quoi dans ces
-champs.
+analysé ; ces champs ne viennent que d'un serveur qui a prouvé détenir le jeton.
 
 ### `ixmux_status`
 
@@ -181,6 +187,9 @@ ixmux continue de tourner dans tous les cas.
 ## Limites
 
 - Un `ixmux_submit` long retient les appels suivants : l'adaptateur répond à un appel à la fois.
+- `ixmux_status` et `ixmux_result` font une requête, donc une connexion, par appel. `ixmux_submit`
+  en fait plusieurs (son POST tient une connexion pendant tout le tour, pendant qu'il interroge) :
+  chacune sur sa propre connexion, chacune après son propre défi.
 - Les 2 s du reçu sont 1,5 s d'attente plus le temps d'une lecture HTTP en loopback ; une machine
   bloquée au-delà répond plus tard.
 - Testé contre le faux claude seulement (`claudestream/internal/fakeclaude`) ; aucun appel de

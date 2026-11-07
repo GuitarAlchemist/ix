@@ -14,8 +14,14 @@ ixmux mcp --state <dir>
 
 - `<dir>` is the `--state` directory of the `ixmux serve` to talk to. At each tool call, the
   adapter reads the address in `ixmux.json` and the token in `ixmux.token` there. It never takes
-  the token as an argument or a variable, and never writes it itself: not to stdout, not to stderr,
-  not in a tool answer. What ixmux answers passes as data (see Tools).
+  the token as an argument or a variable, and never writes it: not to stdout, not to stderr, not in
+  a tool answer. It sends it only to a server that proved it holds it: for each request, it dials
+  one TCP connection, posts `/v1/hello` with a fresh 32-byte nonce, checks the `mac` with
+  `hmac.Equal` against HMAC-SHA-256(HMAC-SHA-256(token, `ixmux/hello/v1`), nonce), and only then
+  writes the authenticated request on that same connection. A missing, malformed or wrong `mac`
+  (a replay included) is `ixmux-unverified`, and the token is not sent. A process that took the
+  port without the token never gets it; a process that can read the token file is outside this
+  model.
 - JSON-RPC 2.0 over stdin and stdout, one message per line (`\n`, a `\r` before it is accepted).
   stdout carries JSON-RPC only; stderr gets the usage message of a bad command line, and nothing
   else.
@@ -74,11 +80,12 @@ a mandate's reason, a target's error) reaches a tool answer.
 | `bad-mandate-id` | a `mandate_id` that is empty, over 128 bytes, not made of letters, digits, `.`, `_` and `-`, or starting with `.` |
 | `submits-in-flight` | 4 submissions still wait for ixmux's answer (their POSTs run past the receipt); try again once one ends |
 | `ixmux-answer-too-large` | an HTTP answer of ixmux over 4 MiB |
+| `ixmux-unverified` | the server at the address of `ixmux.json` did not answer the `/v1/hello` challenge with the mac of the token: the token was not sent |
 | `ixmux-error` | an answer of ixmux the adapter cannot read, or a refusal without a known code |
 
 What passes from ixmux is data only: identifiers (names, kinds, incarnations, mandate ids,
-states, receipts) and a target's answer (`text`), as ixmux gives them. Nothing is scanned: a local
-service that took ixmux's port could put anything in those fields.
+states, receipts) and a target's answer (`text`), as ixmux gives them. Nothing is scanned; those
+fields come only from a server that proved it holds the token.
 
 ### `ixmux_status`
 
@@ -174,6 +181,9 @@ running in every case.
 ## Limits
 
 - A long `ixmux_submit` holds the next calls: the adapter answers one call at a time.
+- `ixmux_status` and `ixmux_result` are one request, so one connection, per call. `ixmux_submit`
+  makes several (its POST holds a connection for the whole turn while it polls): each on its own
+  connection, each after its own challenge.
 - The receipt's 2 s are 1.5 s of wait plus the time of one HTTP read on loopback; a machine stalled
   beyond that answers later.
 - Tested against the fake claude only (`claudestream/internal/fakeclaude`); no real model call.

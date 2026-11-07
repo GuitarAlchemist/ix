@@ -27,6 +27,7 @@ go -C %USERPROFILE%\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<gi
 
 | Route | What it does |
 |---|---|
+| `POST /v1/hello` `{nonce}` | The only route without the token (Host on loopback and no Origin still hold, the body is bounded). `nonce` is 32 bytes in lower-case hex, else 400 `bad-nonce`. The answer is `{mac}`: the hex of HMAC-SHA-256(HMAC-SHA-256(token, `ixmux/hello/v1`), the nonce's 32 bytes). A client checks it before it sends the token, on the same connection: then the token goes only to a server that proved it holds it. `ixmux mcp` always does; the runbook below and the other clients send the Bearer alone, and may run the challenge the same way. The derived key signs nothing else, and the journal cursors are signed by another key, random per process. |
 | `POST /v1/mandates` `{mandate_id, target, incarnation, text}` | Delivers at most once. The answer gives `state` and `replayed`. A refusal comes back as `{error, detail}`, with 400, 404, 409, 413 or 503. |
 | `GET /v1/mandates/{id}` | The state of one delivery and, once delivered, its result: `ack` (`receipt`, `text`, `ack_seen`, `truncated`), read from the command log, so also after a restart. |
 | `POST /v1/mandates/{id}/reconcile` | Asks the target whether an uncertain delivery arrived. |
@@ -160,7 +161,10 @@ The Claude session itself is kept by claude under your profile, as any `claude -
 directory. It reads the address and the token there at each call, so it follows an ixmux restarted
 since, and has three tools: `ixmux_status`, `ixmux_submit` (a receipt within 2 s, even when the
 turn lasts longer) and `ixmux_result` (read from the command log). It has no tool that stops ixmux.
-The contract, with the exact command, the schemas and the errors: [MCP.md](MCP.md).
+It sends the token only to a server that answered its `/v1/hello` challenge, on the same
+connection; a process that took the port without the token gets nothing (`ixmux-unverified`). A
+process that can read the token file is outside this model. The contract, with the exact command,
+the schemas and the errors: [MCP.md](MCP.md).
 
 ## Limits of this slice
 
