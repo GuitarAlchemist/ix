@@ -38,6 +38,8 @@ on:
       - '!.claude/**'
       - '.claude/settings.json'
       - '.claude/hooks/**'
+  # The merge queue on main runs the required jobs on each merge group.
+  merge_group:
 
 # The matrix runs the pull request's code; nothing in it writes to the repository, and the
 # repository's default token is a write token.
