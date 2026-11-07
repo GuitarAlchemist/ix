@@ -333,7 +333,8 @@ func (m *mcp) handle(line []byte) {
 			Arguments json.RawMessage `json:"arguments"`
 		}
 		if req.params == nil || !objectParams(req.params, &p) || p.Name == nil ||
-			(p.Arguments != nil && jsonKind(p.Arguments) != '{' && jsonKind(p.Arguments) != 'n') {
+			(p.Arguments != nil && jsonKind(p.Arguments) != '{') { // absent is {}; null is not an object
+			// @ai:invariant tools/call arguments are absent or an object; null or any other type is -32602 [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6c_mcp_test.go:TestNullArgumentsAreRefused]
 			badParams("tools/call needs name (a string) and arguments (an object)")
 			return
 		}
@@ -381,7 +382,7 @@ func fail(code, detail string) *toolErr { return &toolErr{code, detail} }
 
 // args decodes a tool's arguments; an unknown field or a wrong type is bad-arguments.
 func args(raw json.RawMessage, v any) *toolErr {
-	if len(bytes.TrimSpace(raw)) == 0 || string(raw) == "null" {
+	if len(bytes.TrimSpace(raw)) == 0 { // absent: tools/call refused null before this
 		raw = []byte("{}")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
