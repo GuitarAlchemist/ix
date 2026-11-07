@@ -2,6 +2,7 @@
 //
 //	ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
 //	            [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...]
+//	ixmux mcp --state <dir>        a local MCP server on stdio over that ixmux (MCP.md)
 //	ixmux version
 //
 // Exit codes: 0 stopped cleanly; 1 serving failed; 2 bad command line (a --claude-target named
@@ -56,6 +57,9 @@ func run(args []string, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "version" {
 		fmt.Fprintln(stderr, version)
 		return server.ExitOK
+	}
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCP(args[1:], os.Stdin, os.Stdout, stderr)
 	}
 	if len(args) == 0 || args[0] != "serve" {
 		fmt.Fprintln(stderr, "usage: ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]")
