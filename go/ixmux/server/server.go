@@ -258,6 +258,7 @@ func Start(cfg Config) (*Server, error) {
 		return fail(err)
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/hello", s.hello) // no token: the challenge a client runs before it sends one
 	mux.HandleFunc("POST /v1/mandates", s.guard(s.postMandate))
 	mux.HandleFunc("GET /v1/mandates/{id}", s.guard(s.getMandate))
 	mux.HandleFunc("POST /v1/mandates/{id}/reconcile", s.guard(s.reconcile))
@@ -421,7 +422,7 @@ func loopbackHost(hostport string) bool {
 
 // guard: Host on loopback (403), no Origin (403: no browser page may call ixmux), the Bearer
 // token (401), then a bounded body.
-// @ai:invariant every route needs a loopback Host, no Origin and the Bearer token [T:test conf:0.85 src:go/ixmux/cmd/ixmux/integration_test.go:TestSecurity]
+// @ai:invariant every route but /v1/hello needs a loopback Host, no Origin and the Bearer token [T:test conf:0.85 src:go/ixmux/cmd/ixmux/integration_test.go:TestSecurity]
 func (s *Server) guard(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {

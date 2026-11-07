@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,8 +23,34 @@ import (
 
 const fakeToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-// fakeIxmux serves h on loopback and writes the state directory the adapter reads.
+// fakeIxmux serves h on loopback and writes the state directory the adapter reads. It answers the
+// hello challenge as ixmux does, with the token in the state directory at the time of the hello;
+// rawIxmux leaves /v1/hello to h.
 func fakeIxmux(t *testing.T, h http.HandlerFunc) string {
+	t.Helper()
+	var state string
+	state = rawIxmux(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/hello" {
+			h(w, r)
+			return
+		}
+		tok, _ := os.ReadFile(filepath.Join(state, server.TokenFile))
+		answerHello(w, r, tok)
+	})
+	return state
+}
+
+// answerHello answers a hello as an ixmux that holds tok.
+func answerHello(w http.ResponseWriter, r *http.Request, tok []byte) {
+	var req struct {
+		Nonce string `json:"nonce"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	nonce, _ := hex.DecodeString(req.Nonce)
+	json.NewEncoder(w).Encode(map[string]string{"mac": hex.EncodeToString(server.HelloMAC(tok, nonce))})
+}
+
+func rawIxmux(t *testing.T, h http.HandlerFunc) string {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)

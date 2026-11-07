@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -62,7 +65,13 @@ const (
 	reasonPostsInFlight = "submits-in-flight"
 	// reasonAnswerTooLarge: an HTTP answer of ixmux over MCPMaxAnswer bytes.
 	reasonAnswerTooLarge = "ixmux-answer-too-large"
+	// reasonUnverified: the server at ixmux.json's address did not answer the hello challenge
+	// with the mac of the token; the token was not sent.
+	reasonUnverified = "ixmux-unverified"
 )
+
+// mcpHelloMax bounds the answer to the hello (a mac is 64 hex digits in a small JSON object).
+const mcpHelloMax = 1 << 10
 
 type rpcError struct {
 	Code    int            `json:"code"`
@@ -71,11 +80,9 @@ type rpcError struct {
 }
 
 type mcp struct {
-	state  string
-	out    *json.Encoder
-	client *http.Client
-	posts  chan struct{} // one per POST of ixmux_submit still running
-
+	state string
+	out   *json.Encoder
+	posts chan struct{} // one per POST of ixmux_submit still running
 }
 
 // ixmuxCodes are the refusal codes of ixmux, the only text of a refusal that passes, each with
@@ -112,9 +119,8 @@ var ixmuxCodes = map[string]string{
 }
 
 func newMCP(state string, stdout io.Writer) *mcp {
-	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts),
-		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
-		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
+	// Each request dials its own connection (see exchange): loopback only, no proxy, none kept.
+	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts)}
 }
 
 func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -394,6 +400,76 @@ func (m *mcp) connect() (conn, *toolErr) {
 	return conn{info.Addr, string(tok)}, nil
 }
 
+// exchange opens one TCP connection to ixmux, runs the hello challenge on it (a fresh nonce, whose
+// mac only a holder of the token can give), and only then writes the authenticated request, on
+// that same connection: a port taken over between the two cannot get the token. The connection is
+// driven by hand (req.Write, http.ReadResponse) so no transport can open another one.
+// @ai:invariant the adapter writes the token only on a connection whose server answered a fresh nonce with its hello mac [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6e_test.go:TestHostileServerNeverGetsTheToken]
+func exchange(ctx context.Context, c conn, method, path string, body io.Reader) (*http.Response, func(), *toolErr) {
+	var d net.Dialer
+	nc, err := d.DialContext(ctx, "tcp", c.addr)
+	if err != nil {
+		return nil, nil, unavailable(ctx, c)
+	}
+	stop := context.AfterFunc(ctx, func() { nc.Close() }) // a read past ctx's end returns
+	done := func() { stop(); nc.Close() }
+	br := bufio.NewReader(nc)
+
+	nonce := make([]byte, server.HelloNonceBytes)
+	rand.Read(nonce)
+	hb, _ := json.Marshal(map[string]string{"nonce": hex.EncodeToString(nonce)})
+	hreq, _ := http.NewRequest("POST", "http://"+c.addr+"/v1/hello", bytes.NewReader(hb))
+	hreq.Header.Set("Content-Type", "application/json")
+	if hreq.Write(nc) != nil {
+		done()
+		return nil, nil, unavailable(ctx, c)
+	}
+	hresp, err := http.ReadResponse(br, hreq)
+	if err != nil {
+		done()
+		if ctx.Err() != nil {
+			return nil, nil, unavailable(ctx, c)
+		}
+		return nil, nil, fail(reasonUnverified, "the server at the address of ixmux.json did not answer the hello")
+	}
+	hbody, _ := io.ReadAll(io.LimitReader(hresp.Body, mcpHelloMax+1))
+	hresp.Body.Close()
+	var h struct {
+		MAC string `json:"mac"`
+	}
+	mac, merr := []byte(nil), error(nil)
+	if json.Unmarshal(hbody, &h) == nil {
+		mac, merr = hex.DecodeString(h.MAC)
+	}
+	if hresp.StatusCode != http.StatusOK || len(hbody) > mcpHelloMax || mac == nil || merr != nil ||
+		!hmac.Equal(mac, server.HelloMAC([]byte(c.token), nonce)) {
+		done()
+		return nil, nil, fail(reasonUnverified, "the server at the address of ixmux.json did not prove it holds the token; the token was not sent")
+	}
+
+	req, _ := http.NewRequest(method, "http://"+c.addr+path, body)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Close = true // one request after the hello, then the connection ends
+	if req.Write(nc) != nil {
+		done()
+		return nil, nil, unavailable(ctx, c)
+	}
+	resp, err := http.ReadResponse(br, req)
+	if err != nil {
+		done()
+		return nil, nil, unavailable(ctx, c)
+	}
+	return resp, done, nil
+}
+
+// unavailable: no answer, or none in time. The error never names the token.
+func unavailable(ctx context.Context, c conn) *toolErr {
+	if ctx.Err() != nil {
+		return fail(reasonUnavailable, "no answer from ixmux in time")
+	}
+	return fail(reasonUnavailable, "ixmux does not answer at "+c.addr)
+}
+
 // do sends one request to ixmux and decodes a 200 answer into out. A refusal of ixmux comes back
 // with its own code; no answer at all is ixmux-unavailable. No error names the token.
 func (m *mcp) do(ctx context.Context, c conn, method, path string, body, out any) *toolErr {
@@ -402,19 +478,11 @@ func (m *mcp) do(ctx context.Context, c conn, method, path string, body, out any
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://"+c.addr+path, rd)
-	if err != nil {
-		return fail(reasonIxmuxError, err.Error())
+	resp, done, terr := exchange(ctx, c, method, path, rd)
+	if terr != nil {
+		return terr
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := m.client.Do(req)
-	if err != nil { // err.Error() would name the URL, never the header; the address is enough
-		if ctx.Err() != nil {
-			return fail(reasonUnavailable, "no answer from ixmux in time")
-		}
-		return fail(reasonUnavailable, "ixmux does not answer at "+c.addr)
-	}
-	defer resp.Body.Close()
+	defer done()
 	// The bound plus one byte: an answer over the bound is seen, and refused, never cut and misread.
 	// @ai:invariant an HTTP answer over MCPMaxAnswer bytes is refused ixmux-answer-too-large [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestAnswerOverTheBoundIsRefused]
 	b, err := io.ReadAll(io.LimitReader(resp.Body, MCPMaxAnswer+1))
