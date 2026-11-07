@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -88,6 +89,84 @@ func (p *inproc) tool(name string, args map[string]any) toolResult {
 
 // statusJSON is a /v1/status of one claude target c.
 const statusJSON = `{"version":"fake","epoch":"e","targets":[{"name":"c","kind":"claude","incarnation":"inc-1"}],"deliveries":[],"bounds":{"delivery_timeout":"30s"}}`
+
+// S6B P2: a line of MCPMaxLine bytes is read, one of MCPMaxLine+1 is too long, whatever its end
+// of line.
+func TestLineBoundIsExact(t *testing.T) {
+	for _, c := range []struct {
+		n       int
+		eol     string
+		tooLong bool
+	}{{MCPMaxLine, "\n", false}, {MCPMaxLine, "\r\n", false}, {MCPMaxLine + 1, "\n", true}, {MCPMaxLine + 1, "", true}} {
+		br := bufio.NewReaderSize(strings.NewReader(strings.Repeat("x", c.n)+c.eol), 64<<10)
+		line, tooLong, _ := readRPCLine(br, MCPMaxLine)
+		if tooLong != c.tooLong || (!tooLong && len(line) != c.n) {
+			t.Errorf("a line of %d bytes + %q: tooLong %v, %d bytes kept; want tooLong %v", c.n, c.eol, tooLong, len(line), c.tooLong)
+		}
+	}
+}
+
+// S6B P2: no answer from ixmux within the receipt's bound, and no entry: the receipt says
+// submitted, not accepted, within 2 s, without the GET ever showing the mandate.
+func TestReceiptFallbackWithoutEntry(t *testing.T) {
+	var hold chan struct{}
+	state := fakeIxmux(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/status":
+			w.Write([]byte(statusJSON))
+		case r.Method == "POST":
+			select {
+			case <-hold:
+			case <-r.Context().Done():
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"unknown-mandate"}`))
+		}
+	})
+	hold = release(t)
+	p := newInproc(t, state)
+	began := time.Now()
+	rc := p.tool("ixmux_submit", map[string]any{"target": "c", "mandate_id": "m1", "text": "x"})
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("the fallback receipt took %s, want 2 s at most", took)
+	}
+	if rc.IsError || rc.Structured["accepted"] != false || rc.Structured["state"] != "submitted" {
+		t.Errorf("no answer and no entry: %v, want accepted false, state submitted", rc.Structured)
+	}
+}
+
+// S6B P2: stdin closes while a POST is still in flight: the adapter exits 0 at once, without
+// waiting for it.
+func TestEOFWithAPOSTInFlight(t *testing.T) {
+	var hold chan struct{}
+	state := fakeIxmux(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/status":
+			w.Write([]byte(statusJSON))
+		case r.Method == "POST":
+			select {
+			case <-hold:
+			case <-r.Context().Done():
+			}
+		default:
+			w.Write([]byte(`{"target":"c","mandate_id":"m1","state":"accepted"}`))
+		}
+	})
+	hold = release(t)
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ixmux_submit","arguments":{"target":"c","mandate_id":"m1","text":"x"}}}` + "\n"
+	var out, errb bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- runMCP([]string{"--state", state}, strings.NewReader(in), &out, &errb) }()
+	select {
+	case code := <-done:
+		if code != 0 || !strings.Contains(out.String(), `\"accepted\":true`) {
+			t.Errorf("exit %d, out %s", code, out.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the adapter waits for its POST in flight after stdin closed")
+	}
+}
 
 // S6B Codex 7: an answer of ixmux over the bound is refused, typed, not cut and then misread; an
 // answer at the bound is read.

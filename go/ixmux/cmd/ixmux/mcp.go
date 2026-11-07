@@ -139,7 +139,11 @@ func readRPCLine(br *bufio.Reader, max int) (line []byte, tooLong bool, err erro
 		if err == bufio.ErrBufferFull {
 			continue
 		}
-		return bytes.TrimRight(line, "\r\n"), tooLong, err
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > max { // kept up to max+2 bytes for the end of line: the content alone counts
+			return nil, true, err
+		}
+		return line, tooLong, err
 	}
 }
 
