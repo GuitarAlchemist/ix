@@ -213,14 +213,17 @@ func stopSteps(t *testing.T, path string) []map[string]any {
 func TestStopIsTraced(t *testing.T) {
 	for _, tc := range []struct {
 		name, linger, last string
+		stopWait           time.Duration
 	}{
-		{"exits", "", "exited"},
-		{"lingers past StopWait", "5s", "killed"},
+		// A child that exits on its own is given a wide StopWait: under load its exit may take
+		// longer than 300 ms (S6B saw it once at 1.92 s), and it must still be "exited".
+		{"exits", "", "exited", 10 * time.Second},
+		{"lingers past StopWait", "5s", "killed", 300 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			a, err := Start(Config{Name: "c", Dir: filepath.Join(dir, "claude-c"), Bin: fake, Env: []string{"FAKE_LINGER=" + tc.linger},
-				InitWait: 5 * time.Second, StopWait: 300 * time.Millisecond})
+				InitWait: 5 * time.Second, StopWait: tc.stopWait})
 			if err != nil {
 				t.Fatal(err)
 			}
