@@ -9,11 +9,15 @@ import (
 	"unsafe"
 )
 
-// P1-2: an empty journal replaced by another, incomplete one is another incarnation.
-func TestReplacedEmptyJournalIsStale(t *testing.T) {
+// S5-3 (CI Linux, run 42326800534; was P1-2): a file system may give a new file the identity of
+// the one it replaces (Linux reuses a freed inode), so an empty journal names no file. Every
+// empty journal has EmptyIncarnation, and a checkpoint taken on one reads whatever file is at the
+// path from 0: nothing is lost or repeated, since no record had completed. The same on every OS.
+func TestEmptyJournalCheckpointPromisesNothing(t *testing.T) {
 	path, incA := writeJournal(t, "")
-	if len(incA) != 12 {
-		t.Errorf("empty journal: incarnation %q, want 12 hex naming the file", incA)
+	_, incOther := writeJournal(t, "")
+	if len(incA) != 12 || incA != EmptyIncarnation || incOther != EmptyIncarnation {
+		t.Errorf("two empty journals: %q and %q, want both %q (12 hex)", incA, incOther, EmptyIncarnation)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -22,9 +26,27 @@ func TestReplacedEmptyJournalIsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := Read(path, incA, 0, 0)
+	if err != nil || !page.Provisional || page.Incarnation == EmptyIncarnation || page.PromotedFrom != EmptyIncarnation ||
+		page.Next != 0 || page.Pending == nil || !pendingIs(page.Pending, 0, 3, 3) {
+		t.Errorf("A (empty) replaced by B (incomplete): %+v %v, want B's provisional page from 0, promoted from %s", page, err, EmptyIncarnation)
+	}
+	if err := os.WriteFile(path, []byte("abc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	named, _, _ := Identify(path)
+	page, err = Read(path, incA, 0, 0)
+	if err != nil || page.Provisional || page.Incarnation != named || page.PromotedFrom != EmptyIncarnation ||
+		len(page.Events) != 1 || string(page.Events[0].Line) != "abc" {
+		t.Errorf("A (empty), then B complete: %+v %v, want B's first record under %s, promoted from %s", page, err, named, EmptyIncarnation)
+	}
+	// A journal emptied in place is empty too: a checkpoint of its former incarnation is stale.
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Read(path, named, 0, 0)
 	var r *Refusal
 	if !errors.As(err, &r) || r.Code != StaleIncarnation {
-		t.Errorf("A (empty) replaced by B (incomplete): %+v %v, want %s", page, err, StaleIncarnation)
+		t.Errorf("a named checkpoint on the emptied journal: %v, want %s", err, StaleIncarnation)
 	}
 }
 

@@ -38,6 +38,9 @@ const (
 // LineTooLong marks a record longer than MaxLine, whatever the request's budget.
 const LineTooLong = "line-too-long"
 
+// EmptyIncarnation is the incarnation of every empty journal (12 hex, as any incarnation).
+var EmptyIncarnation = hash12([]byte("empty\n"))
+
 // Refusal codes.
 const (
 	StaleIncarnation = "stale-incarnation" // the checkpoint is of another journal
@@ -119,11 +122,18 @@ func (p Page) EventID(key string, e Event) string { return EventID(key, p.Incarn
 //
 // The incarnation is 12 hex of SHA-256 over the file's identity and its first record (the bytes
 // before the first '\n', or the first MaxLine bytes of a longer first record): another file
-// under the same path, or another first record, is another incarnation. While the journal has
-// neither (it is empty, or its first record is shorter than MaxLine and has no '\n' yet), the
-// incarnation is provisional: 12 hex of SHA-256 over the file's identity alone. Once the first
-// record completes, Read accepts a provisional checkpoint of the same file and says so
-// (Page.PromotedFrom); a provisional checkpoint of another file is stale.
+// under the same path, or another first record, is another incarnation. An empty journal has
+// EmptyIncarnation, which names no file: its checkpoint is read from 0 on whatever file is at the
+// path (Page.PromotedFrom says so once that file has content). While the first record is shorter
+// than MaxLine and has no '\n' yet, the incarnation is provisional: 12 hex of SHA-256 over the
+// file's identity alone. Once the first record completes, Read accepts a provisional checkpoint
+// of the same file and says so (Page.PromotedFrom); a provisional checkpoint of another file is
+// stale when the file system gives that file another identity.
+//
+// The identity is the device and inode (Unix) or the volume and file index (Windows). A file
+// system may give a new file the identity of a deleted one (Linux reuses inodes): two files at
+// the same path are then told apart by their first record only.
+// @ai:assumption a replaced journal's first record differs from the one it replaces, where its identity is reused [U:uncertain conf:0.5 src:none]
 //
 // A first record longer than MaxLine is named once its '\n' is found, as Read names it. Identify
 // looks for that '\n' within ScanMax bytes; a longer record needs IdentifyFrom.
@@ -204,6 +214,9 @@ func identify(s *src, buf []byte) (named, provisional string, complete bool, siz
 		return "", "", false, 0, err
 	}
 	size = st.Size()
+	if size == 0 { // an empty journal names no file (see EmptyIncarnation)
+		return EmptyIncarnation, EmptyIncarnation, false, 0, nil
+	}
 	provisional = hash12([]byte("provisional\n" + id))
 	h := sha256.New()
 	h.Write([]byte(id + "\n"))
@@ -262,7 +275,10 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 	if testHookAfterIdentify != nil {
 		testHookAfterIdentify(path)
 	}
-	if c.Incarnation != named && c.Incarnation != provisional {
+	// A checkpoint of an empty journal promises nothing: read from 0, the file now at the path
+	// loses and repeats nothing, since no record had completed.
+	fromEmpty := c.Incarnation == EmptyIncarnation && from == 0 && c.Scanned == 0
+	if c.Incarnation != named && c.Incarnation != provisional && !fromEmpty {
 		now := provisional
 		if complete {
 			now = named
@@ -320,6 +336,9 @@ func ReadCursor(path string, c Cursor, maxBytes int64) (Page, error) {
 		}
 	} else {
 		page.Incarnation, page.Provisional = provisional, true
+	}
+	if fromEmpty && page.Incarnation != EmptyIncarnation {
+		page.PromotedFrom = EmptyIncarnation
 	}
 	if p := page.Pending; p != nil {
 		p.Resume = Cursor{Incarnation: page.Incarnation, From: p.At, Scanned: p.Scanned, ScanFrom: p.At, ScanIncarnation: page.Incarnation}
