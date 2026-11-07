@@ -60,10 +60,11 @@ A request without an `id` member is a notification and gets no answer, unless it
 ## Tools
 
 A tool that fails answers `isError: true` with `structuredContent` `{error, detail}`. `error` is a
-typed reason: one of the adapter's (below) or the refusal code of ixmux as it is
-(`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`,
-`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, ...).
-`detail` is for a person; never parse it.
+typed reason: one of the adapter's (below) or a known refusal code of ixmux (`mandate-id-reuse`,
+`stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`, `in-flight`, `target-busy`,
+`busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, ...). A code the adapter does not
+know is `ixmux-error`. `detail` is the adapter's own text, for a person; never parse it. The
+`detail` of an ixmux refusal is not passed on.
 
 | Reason of the adapter | When |
 |---|---|
@@ -72,10 +73,12 @@ typed reason: one of the adapter's (below) or the refusal code of ixmux as it is
 | `bad-mandate-id` | a `mandate_id` that is empty, over 128 bytes, not made of letters, digits, `.`, `_` and `-`, or starting with `.` |
 | `submits-in-flight` | 4 submissions still wait for ixmux's answer (their POSTs run past the receipt); try again once one ends |
 | `ixmux-answer-too-large` | an HTTP answer of ixmux over 4 MiB |
-| `ixmux-error` | an answer of ixmux the adapter cannot read |
+| `ixmux-error` | an answer of ixmux the adapter cannot read, a refusal without a known code, or an answer that holds a piece of the token |
 
-No answer holds the token: its bytes are cut out of every tool answer (`[token]`), whatever the
-network sent, in case a local service that took ixmux's port echoes the `Authorization` header.
+A tool answer that holds any 8 bytes of a token the adapter read, raw, in hex or in base64, is
+withheld whole and becomes `ixmux-error`, in case a local service that took ixmux's port echoes the
+`Authorization` header. Another encoding of the token, or a piece shorter than 8 bytes, is not
+detected.
 
 ### `ixmux_status`
 
@@ -139,7 +142,8 @@ Input: `{mandate_id}`. Output:
   most 4 KiB; `truncated: true` says the answer was longer and its end is missing. A mandate made
   `delivered` by a reconcile (the target said it received it) has none of them: no answer was read.
 - A turn longer than ixmux's delivery deadline is `uncertain` with `still_running: true` while it
-  runs; its answer, if it comes before TurnMax, makes it `delivered` with its result.
+  runs. Its answer, if it comes before TurnMax, makes it `delivered` with its result, unless the
+  result is an error (`is_error`) or acknowledges another mandate: then it stays `uncertain`.
 - It is read from the command log of ixmux (`GET /v1/mandates/{id}`): it survives a restart of the
   adapter and a restart of ixmux.
 - An unknown id is `unknown-mandate`.
@@ -158,8 +162,8 @@ running in every case.
   tunnel, no service, no network beyond the loopback address of `ixmux.json`.
 - It keeps no durable state of its own: what it says of a mandate comes from ixmux. Its own
   answers are `initialize`, the tool schemas, the protocol and validation errors, the
-  `submitted` receipt of a submission ixmux did not confirm in time, and the tokens it read, held
-  in memory to cut them out of its answers.
+  `submitted` receipt of a submission ixmux did not confirm in time, and the pieces of the tokens
+  it read, held in memory to withhold an answer that holds one.
 - No resources, prompts, sampling or notifications of its own.
 
 ## Limits

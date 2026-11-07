@@ -60,10 +60,12 @@ Une requête sans membre `id` est une notification et n'a pas de réponse, sauf 
 ## Outils
 
 Un outil qui échoue répond `isError: true`, avec un `structuredContent` `{error, detail}`. `error`
-est une raison typée : une de celles de l'adaptateur (ci-dessous), ou le code de refus d'ixmux tel
-quel (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`,
-`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`…).
-`detail` s'adresse à une personne : ne jamais l'analyser.
+est une raison typée : une de celles de l'adaptateur (ci-dessous), ou un code de refus connu
+d'ixmux (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`,
+`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`…). Un code
+que l'adaptateur ne connaît pas devient `ixmux-error`. `detail` est le texte propre de
+l'adaptateur et s'adresse à une personne : ne jamais l'analyser. Le `detail` d'un refus d'ixmux
+n'est pas transmis.
 
 | Raison de l'adaptateur | Quand |
 |---|---|
@@ -72,11 +74,12 @@ quel (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-need
 | `bad-mandate-id` | un `mandate_id` vide, de plus de 128 octets, fait d'autre chose que des lettres, chiffres, `.`, `_` et `-`, ou qui commence par `.` |
 | `submits-in-flight` | 4 dépôts attendent encore la réponse d'ixmux (leurs POST courent au-delà du reçu) ; réessayer une fois l'un d'eux fini |
 | `ixmux-answer-too-large` | une réponse HTTP d'ixmux de plus de 4 Mio |
-| `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire |
+| `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire, un refus sans code connu, ou une réponse qui contient un morceau du jeton |
 
-Aucune réponse ne contient le jeton : ses octets sont retirés de chaque réponse d'outil (`[token]`),
-quoi que le réseau ait envoyé, au cas où un service local qui aurait pris le port d'ixmux renverrait
-l'en-tête `Authorization`.
+Une réponse d'outil qui contient 8 octets quelconques d'un jeton lu par l'adaptateur, brut, en
+hexadécimal ou en base64, est retenue en entier et devient `ixmux-error`, au cas où un service local
+qui aurait pris le port d'ixmux renverrait l'en-tête `Authorization`. Un autre encodage du jeton, ou
+un morceau de moins de 8 octets, n'est pas détecté.
 
 ### `ixmux_status`
 
@@ -144,8 +147,9 @@ Entrée : `{mandate_id}`. Sortie :
   manque. Un mandat passé à `delivered` par une réconciliation (la cible a dit l'avoir reçu) n'en a
   aucun : aucune réponse n'a été lue.
 - Un tour plus long que le délai de livraison d'ixmux est `uncertain` avec `still_running: true`
-  tant qu'il court ; sa réponse, si elle vient avant TurnMax, le fait passer à `delivered` avec son
-  résultat.
+  tant qu'il court. Sa réponse, si elle vient avant TurnMax, le fait passer à `delivered` avec son
+  résultat, sauf si ce résultat est une erreur (`is_error`) ou acquitte un autre mandat : il reste
+  alors `uncertain`.
 - Le résultat est lu dans le journal de commandes d'ixmux (`GET /v1/mandates/{id}`) : il survit à
   un redémarrage de l'adaptateur et à un redémarrage d'ixmux.
 - Un id inconnu donne `unknown-mandate`.
@@ -165,8 +169,8 @@ ixmux continue de tourner dans tous les cas.
   d'`ixmux.json`.
 - Il ne garde aucun état durable à lui : ce qu'il dit d'un mandat vient d'ixmux. Ses réponses
   propres sont `initialize`, les schémas des outils, les erreurs de protocole et de validation, le
-  reçu `submitted` d'un dépôt qu'ixmux n'a pas confirmé à temps, et les jetons lus, gardés en
-  mémoire pour les retirer de ses réponses.
+  reçu `submitted` d'un dépôt qu'ixmux n'a pas confirmé à temps, et les morceaux des jetons lus,
+  gardés en mémoire pour retenir une réponse qui en contient un.
 - Ni ressources, ni prompts, ni sampling, ni notifications à lui.
 
 ## Limites
