@@ -40,7 +40,7 @@ Démonstration sans client, depuis PowerShell, une fois `ixmux serve` lancé sur
 
 | Méthode | Réponse |
 |---|---|
-| `initialize` | `protocolVersion` : celle demandée si l'adaptateur la parle (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`), sinon `2025-11-25`. `capabilities.tools.listChanged` vaut faux. `serverInfo` est `ixmux` et sa version. Elle marche sans ixmux. |
+| `initialize` | `params` exige `protocolVersion` (une chaîne), `capabilities` (un objet) et `clientInfo` `{name, version}`, sinon -32602. `protocolVersion` : celle demandée si l'adaptateur la tient (`2025-11-25`, `2025-06-18`), sinon `2025-11-25`. Les versions plus anciennes ne sont pas proposées : leurs lots sont refusés ici. `capabilities.tools.listChanged` vaut faux. `serverInfo` est `ixmux` et sa version. Elle marche sans ixmux. |
 | `notifications/initialized` | Une notification : pas de réponse. Toute autre notification est ignorée. |
 | `ping` | `{}`. |
 | `tools/list` | Les trois outils ci-dessous, avec leur `inputSchema`. |
@@ -51,9 +51,11 @@ Les erreurs de protocole sont des erreurs JSON-RPC, et l'adaptateur continue de 
 | Code | Quand | `data.reason` |
 |---|---|---|
 | -32700 | une ligne qui n'est pas du JSON | |
-| -32600 | une ligne de plus de 1 Mio (lue jusqu'au bout puis écartée), un lot, pas de `jsonrpc: "2.0"` ou pas de `method` | `line-too-long` pour la première |
+| -32600 | une ligne de plus de 1 Mio (lue jusqu'au bout puis écartée), un lot, une valeur qui n'est pas un objet, un `id` qui n'est ni une chaîne ni un nombre (`null` compris : MCP l'interdit), pas de `jsonrpc: "2.0"`, une `method` qui n'est pas une chaîne, des `params` qui ne sont ni un objet ni un tableau. Répondu même sans `id`, avec l'`id` de la requête quand il est valide, sinon `null` | `line-too-long` pour la première |
 | -32601 | une méthode inconnue | |
-| -32602 | un outil inconnu, ou des `params` de `tools/call` illisibles | `unknown-tool`, `bad-arguments` |
+| -32602 | un outil inconnu ; `initialize` sans ses champs ; `tools/call` sans `name` chaîne, ou avec des `arguments` qui ne sont pas un objet | `unknown-tool`, `bad-arguments` |
+
+Une requête sans membre `id` est une notification et n'a pas de réponse, sauf si elle est invalide.
 
 ## Outils
 
@@ -68,7 +70,13 @@ quel (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-need
 | `ixmux-unavailable` | pas d'`ixmux.json` ou pas de jeton dans `<dossier>`, `ixmux.json` dit `stopped`, son adresse n'est pas en loopback, ixmux ne répond pas, ou refuse le jeton |
 | `bad-arguments` | un argument inconnu, un mauvais type, `target` absent |
 | `bad-mandate-id` | un `mandate_id` vide, de plus de 128 octets, fait d'autre chose que des lettres, chiffres, `.`, `_` et `-`, ou qui commence par `.` |
+| `submits-in-flight` | 4 dépôts attendent encore la réponse d'ixmux (leurs POST courent au-delà du reçu) ; réessayer une fois l'un d'eux fini |
+| `ixmux-answer-too-large` | une réponse HTTP d'ixmux de plus de 4 Mio |
 | `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire |
+
+Aucune réponse ne contient le jeton : ses octets sont retirés de chaque réponse d'outil (`[token]`),
+quoi que le réseau ait envoyé, au cas où un service local qui aurait pris le port d'ixmux renverrait
+l'en-tête `Authorization`.
 
 ### `ixmux_status`
 
@@ -100,10 +108,13 @@ Sortie, le reçu, en 2 s au plus, même quand le tour dure 10 minutes :
 
 - `accepted: true` seulement une fois la ligne `accepted` du mandat écrite et synchronisée dans le
   journal de commandes d'ixmux : soit ixmux a répondu au POST, soit `GET /v1/mandates/{id}` le
-  montre `accepted` ou `delivering`, ce que le moteur ne montre qu'après la synchronisation.
+  montre dans un état durable (`accepted`, `delivering`, `delivered`, `refused`, `uncertain`), ce
+  que le moteur ne montre qu'après la synchronisation. Un POST coupé au transport ne prouve rien :
+  l'entrée est relue jusqu'à la borne.
 - `state` vaut `accepted` ou `delivering` (le tour continue), `delivered` (il a été rapide, ou
-  c'est un rejeu : alors `replayed: true` et aucun nouveau tour), ou `refused` (la cible ne l'a
-  certainement pas pris).
+  c'est un rejeu : alors `replayed: true` et aucun nouveau tour), `refused` (la cible ne l'a
+  certainement pas pris) ou `uncertain`. Lu dans l'entrée, il peut être l'état d'un dépôt antérieur
+  du même `mandate_id`.
 - `accepted: false, state: "submitted"` : ixmux n'a rien confirmé en 1,5 s. Rien n'est promis ;
   `ixmux_result` le dira, et refaire le même dépôt est sans risque (au plus une fois par
   `mandate_id`).
@@ -112,7 +123,9 @@ Sortie, le reçu, en 2 s au plus, même quand le tour dure 10 minutes :
 Pourquoi ce choix : `POST /v1/mandates` attend la fin du tour. L'adaptateur l'envoie et le laisse
 courir, lit `GET /v1/mandates/{id}` toutes les 25 ms, et répond à la première preuve, ou au bout
 de 1,5 s. ixmux livre que l'adaptateur attende encore ou non : un adaptateur tué n'annule pas le
-tour. C'est le plus petit changement qui tient la promesse : aucun mode nouveau côté serveur.
+tour. C'est le plus petit changement qui tient la promesse : aucun mode nouveau côté serveur. Un
+POST laissé en cours est borné : 4 au plus à la fois, chacun dans le délai de livraison d'ixmux
+(lu dans `/v1/status`) plus 15 s.
 
 ### `ixmux_result`
 
@@ -126,8 +139,13 @@ Entrée : `{mandate_id}`. Sortie :
 
 - `state` : `accepted`, `delivering`, `delivered`, `refused` ou `uncertain`. Un mandat
   `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`.
-- `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré. `text` fait 4 Kio au
-  plus ; `truncated: true` dit que la réponse était plus longue et que sa fin manque.
+- `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré avec une réponse.
+  `text` fait 4 Kio au plus ; `truncated: true` dit que la réponse était plus longue et que sa fin
+  manque. Un mandat passé à `delivered` par une réconciliation (la cible a dit l'avoir reçu) n'en a
+  aucun : aucune réponse n'a été lue.
+- Un tour plus long que le délai de livraison d'ixmux est `uncertain` avec `still_running: true`
+  tant qu'il court ; sa réponse, si elle vient avant TurnMax, le fait passer à `delivered` avec son
+  résultat.
 - Le résultat est lu dans le journal de commandes d'ixmux (`GET /v1/mandates/{id}`) : il survit à
   un redémarrage de l'adaptateur et à un redémarrage d'ixmux.
 - Un id inconnu donne `unknown-mandate`.
@@ -145,7 +163,10 @@ ixmux continue de tourner dans tous les cas.
 - Aucun shell, aucun accès fichier hors d'`ixmux.json` et `ixmux.token`, aucun contrôle de
   sessions WMUX, aucun tunnel, aucun service, aucun réseau au-delà de l'adresse loopback
   d'`ixmux.json`.
-- Il ne garde aucun état propre : tout ce qu'il répond vient d'ixmux.
+- Il ne garde aucun état durable à lui : ce qu'il dit d'un mandat vient d'ixmux. Ses réponses
+  propres sont `initialize`, les schémas des outils, les erreurs de protocole et de validation, le
+  reçu `submitted` d'un dépôt qu'ixmux n'a pas confirmé à temps, et les jetons lus, gardés en
+  mémoire pour les retirer de ses réponses.
 - Ni ressources, ni prompts, ni sampling, ni notifications à lui.
 
 ## Limites
