@@ -17,7 +17,7 @@ ixmux version
 ## Build
 
 ```
-go -C C:\Users\spare\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<git describe>" -o C:\Users\spare\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe ./cmd/ixmux
+go -C %USERPROFILE%\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<git describe>" -o %USERPROFILE%\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe ./cmd/ixmux
 ```
 
 `bin/` is ignored by git. `ixmux.json` records the SHA-256 of the running executable.
@@ -70,18 +70,18 @@ A stop (Ctrl+C, Ctrl+Break or `POST /v1/shutdown`) refuses new deliveries and re
 
 ## Runbook (cmd.exe, absolute paths)
 
-The session in this runbook is a fake one: the JSONL file `C:\Users\spare\.cache\ixmux-fake\session.jsonl`, created at start if missing. Its incarnation names the path and the file there: it is the same across restarts, and another one if another file is put at the path.
+The session in this runbook is a fake one: the JSONL file `%USERPROFILE%\.cache\ixmux-fake\session.jsonl`, created at start if missing. Its incarnation names the path and the file there: it is the same across restarts, and another one if another file is put at the path.
 
 1. Start ixmux in its own window:
 
    ```
-   start "ixmux" C:\Users\spare\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe serve --addr 127.0.0.1:47011 --state C:\Users\spare\.cache\ixmux-fake\state --target fake=C:\Users\spare\.cache\ixmux-fake\session.jsonl
+   start "ixmux" %USERPROFILE%\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe serve --addr 127.0.0.1:47011 --state %USERPROFILE%\.cache\ixmux-fake\state --target fake=%USERPROFILE%\.cache\ixmux-fake\session.jsonl
    ```
 
 2. Check the status. Note the `incarnation` of the target `fake`.
 
    ```
-   set /p IXMUX_TOKEN=<C:\Users\spare\.cache\ixmux-fake\state\ixmux.token
+   set /p IXMUX_TOKEN=<%USERPROFILE%\.cache\ixmux-fake\state\ixmux.token
    C:\Windows\System32\curl.exe -s -H "Authorization: Bearer %IXMUX_TOKEN%" http://127.0.0.1:47011/v1/status
    ```
 
@@ -97,12 +97,12 @@ The session in this runbook is a fake one: the JSONL file `C:\Users\spare\.cache
    C:\Windows\System32\curl.exe -s -X POST -H "Authorization: Bearer %IXMUX_TOKEN%" http://127.0.0.1:47011/v1/shutdown
    ```
 
-   `C:\Users\spare\.cache\ixmux-fake\state\ixmux.json` then says `"state": "stopped"` and `"exit_code": 0`.
+   `%USERPROFILE%\.cache\ixmux-fake\state\ixmux.json` then says `"state": "stopped"` and `"exit_code": 0`.
 
 **Rollback:** stop ixmux (step 4), then delete the fake session's state and file:
 
 ```
-rmdir /s /q C:\Users\spare\.cache\ixmux-fake
+rmdir /s /q %USERPROFILE%\.cache\ixmux-fake
 ```
 
 Nothing else is written: no service, no registry key, no file outside `--state` and the `--target` files.
@@ -136,7 +136,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose --too
 Runbook (cmd.exe), with a throwaway state:
 
 ```
-start "ixmux" C:\Users\spare\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe serve --addr 127.0.0.1:47012 --state C:\Users\spare\.cache\ixmux-claude\state --claude-target c --timeout 120s
+start "ixmux" %USERPROFILE%\.cache\ix-ixmux\go\ixmux\bin\ixmux.exe serve --addr 127.0.0.1:47012 --state %USERPROFILE%\.cache\ixmux-claude\state --claude-target c --timeout 120s
 ```
 
 ixmux writes `ixmux.json` and answers only once the child is ready (about 30 s). `/v1/status` then shows the target `c` with its `incarnation` and `"alive":true`. Send Hello as in step 3, with `"target":"c"`. Stop it as in step 4.
@@ -146,7 +146,7 @@ ixmux writes `ixmux.json` and answers only once the child is ready (about 30 s).
 **Rollback:** stop ixmux, check that no `claude` child is left (`tasklist /fi "imagename eq claude.exe"`), then delete the throwaway state:
 
 ```
-rmdir /s /q C:\Users\spare\.cache\ixmux-claude
+rmdir /s /q %USERPROFILE%\.cache\ixmux-claude
 ```
 
 The Claude session itself is kept by claude under your profile, as any `claude -p` session is. ixmux writes nothing else.
