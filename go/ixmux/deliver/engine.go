@@ -333,8 +333,8 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 // testHookCloseWaits once, when Close finds work it must wait for.
 var testHookAfterIncarnation, testHookBeforeFinish, testHookCloseWaits func()
 
-// testHookMandateRead runs in Mandate before it reads the delivery (a test writes a transition
-// there).
+// testHookMandateRead runs in Mandate between its read of the entry and its read of the Ack (a
+// test starts a transition there).
 var testHookMandateRead func()
 
 // outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
@@ -552,21 +552,22 @@ func (e *Engine) Status() []Entry {
 // The entry and its Ack are read under one lock: a transition is seen whole or not at all.
 // @ai:invariant Mandate reads the state and the Ack of a delivery in one snapshot [T:test conf:0.85 src:go/ixmux/deliver/s6b_test.go:TestMandateReadsOneSnapshot]
 func (e *Engine) Mandate(id string) (Entry, *Ack, bool) {
-	if testHookMandateRead != nil {
-		testHookMandateRead()
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	r := e.ids[id] // an id is unique in the whole log: its first record is its only one
 	if r == nil {
 		return Entry{}, nil, false
 	}
+	en := e.entry(r, time.Now())
+	if testHookMandateRead != nil {
+		testHookMandateRead()
+	}
 	var ack *Ack
 	if r.ack != nil {
 		a := *r.ack
 		ack = &a
 	}
-	return e.entry(r, time.Now()), ack, true
+	return en, ack, true
 }
 
 // entry is r as Status lists it (under e.mu).
