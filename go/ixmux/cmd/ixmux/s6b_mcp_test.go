@@ -261,13 +261,19 @@ func TestJSONRPCValidation(t *testing.T) {
 	}
 }
 
-// S6B Codex 3: a local service that took the port and echoes the Authorization header: no text
-// from the network reaches stdout with the token's bytes in it.
+// S6B Codex 3, narrowed in S6D: a local service that took the port and echoes the Authorization
+// header in ixmux's free text (a refusal's code and detail, a target's error, a mandate's reason):
+// none of it reaches stdout. Identifiers and a target's answer pass as ixmux gives them.
 func TestEchoedTokenIsNeverShown(t *testing.T) {
 	state := fakeIxmux(t, func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if r.URL.Path == "/v1/status" {
-			b, _ := json.Marshal(map[string]any{"version": auth, "targets": []any{map[string]any{"name": "c", "kind": auth, "incarnation": auth}}})
+			b, _ := json.Marshal(map[string]any{"version": "fake", "targets": []any{map[string]any{"name": "c", "kind": "claude", "incarnation": "i", "error": auth}}})
+			w.Write(b)
+			return
+		}
+		if r.URL.Path == "/v1/mandates/m2" {
+			b, _ := json.Marshal(map[string]any{"target": "c", "mandate_id": "m2", "state": "uncertain", "reason": auth})
 			w.Write(b)
 			return
 		}
@@ -281,6 +287,7 @@ func TestEchoedTokenIsNeverShown(t *testing.T) {
 		name string
 		args map[string]any
 	}{{"ixmux_status", map[string]any{}}, {"ixmux_result", map[string]any{"mandate_id": "m1"}},
+		{"ixmux_result", map[string]any{"mandate_id": "m2"}},
 		{"ixmux_submit", map[string]any{"target": "c", "mandate_id": "m1", "text": "x", "incarnation": "i"}}} {
 		p.tool(c.name, c.args)
 		all.Write(p.out.Bytes())

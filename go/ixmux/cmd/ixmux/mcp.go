@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
@@ -79,66 +76,43 @@ type mcp struct {
 	client *http.Client
 	posts  chan struct{} // one per POST of ixmux_submit still running
 
-	tokMu   sync.Mutex
-	windows map[[tokenWindow]byte]bool // every 8-byte window of every form of every token read
-	shorts  [][]byte                   // forms shorter than a window, matched whole
 }
 
-// tokenWindow is the length of the pieces of a token an answer may not hold.
-const tokenWindow = 8
-
-// keep records the token's forms (raw, upper case, hex, base64): no answer may hold any
-// tokenWindow bytes of one.
-func (m *mcp) keep(tok []byte) {
-	forms := []string{string(tok), strings.ToUpper(string(tok)), hex.EncodeToString(tok), strings.ToUpper(hex.EncodeToString(tok)),
-		base64.StdEncoding.EncodeToString(tok), base64.URLEncoding.EncodeToString(tok)}
-	m.tokMu.Lock()
-	defer m.tokMu.Unlock()
-	for _, f := range forms {
-		if len(f) < tokenWindow {
-			m.shorts = append(m.shorts, []byte(f))
-			continue
-		}
-		for i := 0; i+tokenWindow <= len(f); i++ {
-			m.windows[[tokenWindow]byte([]byte(f[i:i+tokenWindow]))] = true
-		}
-	}
-}
-
-// leaks says whether b holds a piece of a token the adapter read.
-func (m *mcp) leaks(b []byte) bool {
-	m.tokMu.Lock()
-	defer m.tokMu.Unlock()
-	for _, s := range m.shorts {
-		if bytes.Contains(b, s) {
-			return true
-		}
-	}
-	if len(m.windows) == 0 {
-		return false
-	}
-	for i := 0; i+tokenWindow <= len(b); i++ {
-		if m.windows[[tokenWindow]byte(b[i:i+tokenWindow])] {
-			return true
-		}
-	}
-	return false
-}
-
-// ixmuxCodes are the refusal codes of ixmux, the only text of a refusal that passes as it is.
-var ixmuxCodes = map[string]bool{
-	deliver.BadMandate: true, deliver.TextTooLong: true, deliver.UnknownTarget: true, deliver.StaleIncarnation: true,
-	deliver.UncertainNeedsReconcile: true, deliver.InFlight: true, deliver.TargetBusy: true, deliver.Busy: true,
-	deliver.UnknownMandate: true, deliver.NotUncertain: true, deliver.ReconcileUnsupported: true, deliver.LogTooLarge: true,
-	deliver.LogCorrupt: true, deliver.MandateIDReuse: true, deliver.JournalLocked: true, deliver.DeliveryStillRunning: true,
-	deliver.LogBroken: true, deliver.LogFormatUnsupported: true, deliver.LockUnsupported: true, deliver.CallsInFlight: true,
-	deliver.EngineClosed:   true,
-	"too-many-connections": true, "host-not-loopback": true, "origin-refused": true, "internal": true,
-	"body-too-large": true, "bad-request": true, "stopping": true,
+// ixmuxCodes are the refusal codes of ixmux, the only text of a refusal that passes, each with
+// the message the adapter writes for it: no text from the network reaches a tool answer.
+var ixmuxCodes = map[string]string{
+	deliver.BadMandate:              "ixmux refused the mandate as malformed",
+	deliver.TextTooLong:             "the text is over ixmux's bound",
+	deliver.UnknownTarget:           "ixmux has no such target",
+	deliver.StaleIncarnation:        "the incarnation is not the target's current one",
+	deliver.UncertainNeedsReconcile: "the mandate is uncertain; it is never sent again before a reconcile",
+	deliver.InFlight:                "a delivery of this mandate is under way",
+	deliver.TargetBusy:              "the target is taking another mandate",
+	deliver.Busy:                    "ixmux has too many deliveries under way",
+	deliver.UnknownMandate:          "ixmux has no mandate with this id",
+	deliver.NotUncertain:            "the mandate is not uncertain",
+	deliver.ReconcileUnsupported:    "the target cannot be asked whether it received a mandate",
+	deliver.LogTooLarge:             "ixmux's command log is over its bound",
+	deliver.LogCorrupt:              "ixmux's command log is corrupt",
+	deliver.MandateIDReuse:          "this mandate id was first accepted for another target, incarnation or text",
+	deliver.JournalLocked:           "ixmux's command log is held by another process",
+	deliver.DeliveryStillRunning:    "a delivery is still running",
+	deliver.LogBroken:               "ixmux could not write its command log",
+	deliver.LogFormatUnsupported:    "ixmux's command log has a format it does not read",
+	deliver.LockUnsupported:         "ixmux cannot lock its command log here",
+	deliver.CallsInFlight:           "ixmux is stopping with calls still under way",
+	deliver.EngineClosed:            "ixmux is stopping",
+	"too-many-connections":          "ixmux holds its maximum of connections",
+	"host-not-loopback":             "ixmux refused the request's host",
+	"origin-refused":                "ixmux refused the request's origin",
+	"internal":                      "ixmux failed on this request",
+	"body-too-large":                "the request is over ixmux's bound",
+	"bad-request":                   "ixmux could not read the request",
+	"stopping":                      "ixmux is stopping",
 }
 
 func newMCP(state string, stdout io.Writer) *mcp {
-	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts), windows: map[[tokenWindow]byte]bool{},
+	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts),
 		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
 		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
 }
@@ -354,15 +328,7 @@ func (m *mcp) handle(line []byte) {
 		if terr != nil {
 			v = terr
 		}
-		// A tool answer may hold text from the network (a target's name, a reason, an answer): a
-		// service that took ixmux's port could echo the Authorization header, whole, cut or
-		// encoded. An answer that holds any 8 bytes of a token's forms is withheld whole.
-		// @ai:invariant no tool answer holds 8 bytes of a token the adapter read, raw, in hex or in base64 [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6c_mcp_test.go:TestTokenPiecesAreNeverShown]
 		text, _ := json.Marshal(v)
-		if m.leaks(text) {
-			terr = fail(reasonIxmuxError, "an answer of ixmux held a piece of the token; it is withheld")
-			text, _ = json.Marshal(terr)
-		}
 		var sc any
 		json.Unmarshal(text, &sc)
 		m.reply(req.id, map[string]any{"content": []any{map[string]any{"type": "text", "text": string(text)}},
@@ -425,7 +391,6 @@ func (m *mcp) connect() (conn, *toolErr) {
 	if err != nil || len(tok) == 0 {
 		return conn{}, fail(reasonUnavailable, "no token in the state directory")
 	}
-	m.keep(tok)
 	return conn{info.Addr, string(tok)}, nil
 }
 
@@ -463,14 +428,14 @@ func (m *mcp) do(ctx context.Context, c conn, method, path string, body, out any
 		return fail(reasonUnavailable, "ixmux refused the token of the state directory")
 	}
 	if resp.StatusCode != http.StatusOK {
-		// Only a known code of ixmux passes, and no detail: the network's text does not reach the
-		// client as it is.
-		// @ai:invariant a refusal of ixmux passes only as one of its known codes, without its detail [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6c_mcp_test.go:TestOnlyKnownCodesPass]
+		// Only a known code of ixmux passes, with the adapter's own message: the network's text
+		// does not reach the client.
+		// @ai:invariant a refusal of ixmux passes only as one of its known codes, with the adapter's message, never ixmux's detail [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6d_mcp_test.go:TestNoFreeTextFromTheNetwork]
 		var e struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(b, &e) == nil && ixmuxCodes[e.Error] {
-			return fail(e.Error, "")
+		if json.Unmarshal(b, &e) == nil && ixmuxCodes[e.Error] != "" {
+			return fail(e.Error, ixmuxCodes[e.Error])
 		}
 		return fail(reasonIxmuxError, fmt.Sprintf("HTTP %d without a known code of ixmux", resp.StatusCode))
 	}
@@ -523,12 +488,11 @@ func (m *mcp) status(raw json.RawMessage) (any, *toolErr) {
 		Kind        string     `json:"kind"`
 		Incarnation string     `json:"incarnation"`
 		Alive       bool       `json:"alive,omitempty"`
-		Error       string     `json:"error,omitempty"`
 		InFlight    []inFlight `json:"in_flight"`
 	}
-	out := []target{}
+	out := []target{} // a target's error is ixmux's free text: it does not pass
 	for _, t := range st.Targets {
-		tg := target{Name: t.Name, Kind: t.Kind, Incarnation: t.Incarnation, Alive: t.Alive, Error: t.Error, InFlight: []inFlight{}}
+		tg := target{Name: t.Name, Kind: t.Kind, Incarnation: t.Incarnation, Alive: t.Alive, InFlight: []inFlight{}}
 		for _, d := range st.Deliveries {
 			if d.Target == t.Name && (d.State == deliver.Accepted || d.State == deliver.Delivering || d.StillRunning) {
 				tg.InFlight = append(tg.InFlight, inFlight{d.MandateID, d.State, d.StillRunning})
@@ -680,11 +644,10 @@ func (m *mcp) result(raw json.RawMessage) (any, *toolErr) {
 	if e := m.do(ctx, c, "GET", "/v1/mandates/"+a.MandateID, nil, &v); e != nil {
 		return nil, e
 	}
+	// The entry's reason is ixmux's free text (an adapter's error may quote anything): it does not
+	// pass. The state and last transition say what is known.
 	out := map[string]any{"mandate_id": v.MandateID, "target": v.Target, "state": v.State, "last": v.Last,
 		"still_running": v.StillRunning}
-	if v.Reason != "" {
-		out["reason"] = v.Reason
-	}
 	if v.Ack != nil {
 		text, cut := v.Ack.Text, v.Ack.Truncated
 		if len(text) > MCPMaxResultText {
