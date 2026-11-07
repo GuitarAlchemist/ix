@@ -80,6 +80,8 @@ type Config struct {
 var (
 	testHookAfterCheck func(route func([]byte))
 	testHookStatusFrom func(int64)
+	// testHookBeforeRelaunch runs in watch between its read of stopped and the relaunch.
+	testHookBeforeRelaunch func()
 )
 
 // childEnv builds the child's environment: the variables of BaseEnv and pass that the parent
@@ -110,6 +112,7 @@ type Adapter struct {
 	cur      *child
 	reserved bool // a turn was sent and may still answer: no other turn starts
 	stopped  bool
+	quit     chan struct{}  // closed with stopped set: a relaunch under way gives up
 	watchers sync.WaitGroup // one per reserved turn, relaunch included
 
 	statusMu sync.Mutex
@@ -207,7 +210,7 @@ func Start(cfg Config) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Adapter{cfg: cfg, stream: stream, marks: map[[2]string]*mark{}}
+	a := &Adapter{cfg: cfg, stream: stream, marks: map[[2]string]*mark{}, quit: make(chan struct{})}
 	c, err := a.startChild()
 	if err != nil {
 		stream.Close()
@@ -245,8 +248,19 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return w.f.Write(p)
 }
 
+// errStopping: a start that began, or would begin, once Stop was called.
+var errStopping = errors.New("the claude target is stopping")
+
+// startChild starts one child and waits for its init (and opening turn). Once Stop is called,
+// none starts, and one under way is killed: no opening turn is sent past that point.
+// @ai:invariant no child starts and no opening turn is sent once stopped is set [T:test conf:0.85 src:go/ixmux/claudestream/s6c_test.go:TestStopDuringTheRelaunch]
 func (a *Adapter) startChild() (*child, error) {
 	cfg := a.cfg
+	select {
+	case <-a.quit:
+		return nil, errStopping
+	default:
+	}
 	stderr, err := os.OpenFile(filepath.Join(cfg.Dir, StderrFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
@@ -275,6 +289,9 @@ func (a *Adapter) startChild() (*child, error) {
 	go c.router(lines, stderr)
 
 	fail := func(err error) (*child, error) {
+		if errors.Is(err, errStopping) {
+			c.job.kill() // the same Stop ends it: no wait for a child that is not needed
+		}
 		c.stop()
 		return nil, err
 	}
@@ -285,9 +302,22 @@ func (a *Adapter) startChild() (*child, error) {
 		select {
 		case <-c.initCh:
 			done = true
+		case <-a.quit:
+			return fail(errStopping)
 		case <-prime:
-			// No init without a first message: an opening turn, not a mandate.
-			p, err := c.send("", "ixmux : ouverture de la session. Réponds seulement : OK.", -1, "")
+			// No init without a first message: an opening turn, not a mandate. It is sent under
+			// a.mu, where Stop sets stopped: none leaves once the stop has begun.
+			a.mu.Lock()
+			var p *turn
+			if a.stopped {
+				err = errStopping
+			} else {
+				p, err = c.send("", "ixmux : ouverture de la session. Réponds seulement : OK.", -1, "")
+			}
+			a.mu.Unlock()
+			if errors.Is(err, errStopping) {
+				return fail(err)
+			}
 			if err != nil {
 				return fail(fmt.Errorf("opening message: %w", err))
 			}
@@ -310,6 +340,8 @@ func (a *Adapter) startChild() (*child, error) {
 			if primed.res.err != nil {
 				return fail(fmt.Errorf("opening turn: %w", primed.res.err))
 			}
+		case <-a.quit:
+			return fail(errStopping)
 		case <-deadline:
 			return fail(fmt.Errorf("no answer to the opening message within %s", cfg.InitWait))
 		}
@@ -740,7 +772,13 @@ func (a *Adapter) watch(c *child, p *turn) {
 	if stopped {
 		return
 	}
+	if testHookBeforeRelaunch != nil {
+		testHookBeforeRelaunch()
+	}
 	nc, err := a.startChild()
+	if errors.Is(err, errStopping) {
+		return
+	}
 	if err != nil {
 		a.note(map[string]any{"ixmux": "relaunch-failed", "error": err.Error(), "at": time.Now().UTC()})
 		return
@@ -855,10 +893,13 @@ func (a *Adapter) index(line []byte) {
 }
 
 // Stop stops the live child (see child.stop), waits for any reserved turn to end (a relaunch
-// under way included), then closes the stream journal.
+// under way gives up, its child killed), then closes the stream journal.
 func (a *Adapter) Stop() error {
 	a.mu.Lock()
-	a.stopped = true
+	if !a.stopped {
+		a.stopped = true
+		close(a.quit)
+	}
 	c := a.cur
 	a.mu.Unlock()
 	err := c.stop()
