@@ -1,0 +1,1 @@
+trial_id,block_id,case_id,strategy,repeat,order_index,manifest_ref,start_utc,stop_utc,outcome,accepted,candidate_validated,parent_required,parent_unblocked,wall_s,preparation_s,execution_s,wait_s,verification_s,human_attention_s,attention_method,intervention_count,clipboard_handoff_count,retry_count,agent_count,peak_concurrency,cache_condition,usage_complete,evidence_ref,reason
