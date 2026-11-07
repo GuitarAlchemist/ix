@@ -1,0 +1,12 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {runAgent} from '../agent.mjs';
+import {RelayLedger} from '../ledger.mjs';
+const request=()=>({schema:'gaia-native-ack-request/1',id:randomUUID(),targetName:'IX',nonce:randomUUID(),issuedAt:Date.now()-100,expiresAt:Date.now()+60000,budgetUsd:0.05,authorizationRef:'local-hermetic-test'});
+test('idle supervisor never calls worker and stop persists visible state',async()=>{const root=mkdtempSync(join(tmpdir(),'gaia-agent-'));let calls=0,ticks=0;try{await runAgent({root,wait:async()=>{if(++ticks===2)writeFileSync(join(root,'disabled.flag'),'stop');},launch:async()=>{calls++;}});assert.equal(calls,0);assert.equal(JSON.parse(readFileSync(join(root,'status.json'))).state,'STOPPED');}finally{rmSync(root,{recursive:true,force:true});}});
+test('successful request records last roundtrip and duplicate enqueue cannot run it again',async()=>{const root=mkdtempSync(join(tmpdir(),'gaia-agent-'));const ledger=new RelayLedger(root),r=request();ledger.enqueue(r);ledger.close();let calls=0;try{await runAgent({root,wait:async()=>writeFileSync(join(root,'disabled.flag'),'stop'),launch:async()=>{calls++;return {state:'DONE',proof:{verified:true,at:'2026-10-28T00:00:00Z'}};}});const again=new RelayLedger(root);again.enqueue(r);assert.equal(again.get(r.id).state,'DONE');again.close();assert.equal(calls,1);assert.ok(JSON.parse(readFileSync(join(root,'status.json'))).lastRoundTrip);}finally{rmSync(root,{recursive:true,force:true});}});
+test('crashed worker becomes UNKNOWN without automatic retry or another queued effect',async()=>{const root=mkdtempSync(join(tmpdir(),'gaia-agent-'));const ledger=new RelayLedger(root),r=request();ledger.enqueue(r);ledger.enqueue(request());ledger.close();let calls=0,attempted;try{await runAgent({root,wait:async()=>writeFileSync(join(root,'disabled.flag'),'stop'),launch:async claim=>{calls++;attempted=claim.request.id;throw Error('FIXTURE_CRASH');}});const after=new RelayLedger(root);assert.equal(after.get(attempted).state,'UNKNOWN');assert.equal(after.claim(Date.now()),null);after.close();assert.equal(calls,1);}finally{rmSync(root,{recursive:true,force:true});}});
