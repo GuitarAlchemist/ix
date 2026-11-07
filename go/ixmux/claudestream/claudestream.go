@@ -82,6 +82,8 @@ var (
 	testHookStatusFrom func(int64)
 	// testHookBeforeRelaunch runs in watch between its read of stopped and the relaunch.
 	testHookBeforeRelaunch func()
+	// killJob kills a child's job; a test replaces it to make the kill fail.
+	killJob = func(j *job) error { return j.kill() }
 )
 
 // childEnv builds the child's environment: the variables of BaseEnv and pass that the parent
@@ -248,6 +250,10 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return w.f.Write(p)
 }
 
+// ReasonKillFailed: a child's job could not be killed, or the child did not exit within StopWait
+// after the kill; its incarnation is lost.
+const ReasonKillFailed = "kill-failed"
+
 // errStopping: a start that began, or would begin, once Stop was called.
 var errStopping = errors.New("the claude target is stopping")
 
@@ -290,7 +296,7 @@ func (a *Adapter) startChild() (*child, error) {
 
 	fail := func(err error) (*child, error) {
 		if errors.Is(err, errStopping) {
-			c.job.kill() // the same Stop ends it: no wait for a child that is not needed
+			c.kill() // the same Stop ends it: no wait for a child that is not needed
 		}
 		c.stop()
 		return nil, err
@@ -378,7 +384,7 @@ func (c *child) journal(line []byte) bool {
 // @ai:invariant one incarnation adds at most MaxStream bytes of stdout to stream.jsonl and MaxStderr to stderr.log; past it the child is killed and its turn is uncertain [T:test conf:0.85 src:go/ixmux/claudestream/s4b5_test.go:TestFloodIsCapped]
 func (c *child) overflow(reason string) {
 	c.overOne.Do(func() {
-		c.job.kill()
+		killJob(c.job)
 		err := fmt.Errorf("%s: the claude child's output passed its bound; it was killed", reason)
 		c.mu.Lock()
 		p := c.pending
@@ -609,6 +615,35 @@ func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	return p, nil
 }
 
+// kill kills the child's job and waits StopWait at most for it to exit. Past it, whether the kill
+// failed or the child did not die, the incarnation is lost: the child is dead with kill-failed,
+// its pending turn resolves with that error, and the line is noted. Nothing waits on it longer.
+// @ai:invariant every wait after a kill is bounded by StopWait; past it the incarnation is lost (kill-failed) and its turn resolves in error [T:test conf:0.85 src:go/ixmux/claudestream/s6c_kill_test.go:TestKillThatFailsAtTurnMax]
+func (c *child) kill() error {
+	kerr := killJob(c.job)
+	select {
+	case <-c.exited:
+		return nil
+	case <-time.After(c.a.cfg.StopWait):
+	}
+	if kerr == nil {
+		kerr = fmt.Errorf("the child did not exit within %s of the kill", c.a.cfg.StopWait)
+	}
+	lost := fmt.Errorf("%s: the claude child could not be killed (%v); its incarnation is lost", ReasonKillFailed, kerr)
+	c.mu.Lock()
+	p := c.pending
+	c.pending = nil
+	if c.dead == nil {
+		c.dead = lost
+	}
+	c.mu.Unlock()
+	c.a.note(map[string]any{"ixmux": ReasonKillFailed, "incarnation": c.session, "error": kerr.Error(), "at": time.Now().UTC()})
+	if p != nil {
+		p.resolve(turnResult{err: lost})
+	}
+	return lost
+}
+
 // stop closes the child's stdin, waits up to StopWait for it to exit, then kills its job. Each
 // step is noted in stream.jsonl with its time ({"ixmux":"stop","step":...}): stdin-closed, then
 // exited or killed with the milliseconds since stdin was closed.
@@ -624,8 +659,9 @@ func (c *child) stop() error {
 		case <-c.exited:
 		case <-time.After(c.a.cfg.StopWait):
 			step = "killed"
-			err = c.job.kill()
-			<-c.exited
+			if err = c.kill(); err != nil {
+				step = ReasonKillFailed
+			}
 		}
 		c.a.note(map[string]any{"ixmux": "stop", "step": step, "incarnation": c.session, "at": time.Now().UTC(), "after_ms": time.Since(begun).Milliseconds()})
 		c.job.Close()
@@ -763,8 +799,9 @@ func (a *Adapter) watch(c *child, p *turn) {
 	case <-t.C:
 	}
 	a.note(map[string]any{"ixmux": "turn-max", "mandate_id": p.id, "incarnation": c.session, "turn_max": a.cfg.TurnMax.String(), "at": time.Now().UTC()})
-	c.job.kill()
-	<-c.exited
+	if c.kill() != nil {
+		return // lost: its turn resolved in error; no new child beside one that may still run
+	}
 	c.stop()
 	a.mu.Lock()
 	stopped := a.stopped
