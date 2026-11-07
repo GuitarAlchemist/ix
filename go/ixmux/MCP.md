@@ -14,8 +14,8 @@ ixmux mcp --state <dir>
 
 - `<dir>` is the `--state` directory of the `ixmux serve` to talk to. At each tool call, the
   adapter reads the address in `ixmux.json` and the token in `ixmux.token` there. It never takes
-  the token as an argument or a variable, and never writes it: not to stdout, not to stderr, not in
-  a tool answer.
+  the token as an argument or a variable, and never writes it itself: not to stdout, not to stderr,
+  not in a tool answer. What ixmux answers passes as data (see Tools).
 - JSON-RPC 2.0 over stdin and stdout, one message per line (`\n`, a `\r` before it is accepted).
   stdout carries JSON-RPC only; stderr gets the usage message of a bad command line, and nothing
   else.
@@ -63,8 +63,9 @@ A tool that fails answers `isError: true` with `structuredContent` `{error, deta
 typed reason: one of the adapter's (below) or a known refusal code of ixmux (`mandate-id-reuse`,
 `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`, `in-flight`, `target-busy`,
 `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, ...). A code the adapter does not
-know is `ixmux-error`. `detail` is the adapter's own text, for a person; never parse it. The
-`detail` of an ixmux refusal is not passed on.
+know is `ixmux-error`. `detail` is the adapter's own text, for a person; never parse it: for an
+ixmux refusal, the adapter writes one message per code. No free text of ixmux (a refusal's detail,
+a mandate's reason, a target's error) reaches a tool answer.
 
 | Reason of the adapter | When |
 |---|---|
@@ -73,12 +74,11 @@ know is `ixmux-error`. `detail` is the adapter's own text, for a person; never p
 | `bad-mandate-id` | a `mandate_id` that is empty, over 128 bytes, not made of letters, digits, `.`, `_` and `-`, or starting with `.` |
 | `submits-in-flight` | 4 submissions still wait for ixmux's answer (their POSTs run past the receipt); try again once one ends |
 | `ixmux-answer-too-large` | an HTTP answer of ixmux over 4 MiB |
-| `ixmux-error` | an answer of ixmux the adapter cannot read, a refusal without a known code, or an answer that holds a piece of the token |
+| `ixmux-error` | an answer of ixmux the adapter cannot read, or a refusal without a known code |
 
-A tool answer that holds any 8 bytes of a token the adapter read, raw, in hex or in base64, is
-withheld whole and becomes `ixmux-error`, in case a local service that took ixmux's port echoes the
-`Authorization` header. Another encoding of the token, or a piece shorter than 8 bytes, is not
-detected.
+What passes from ixmux is data only: identifiers (names, kinds, incarnations, mandate ids,
+states, receipts) and a target's answer (`text`), as ixmux gives them. Nothing is scanned: a local
+service that took ixmux's port could put anything in those fields.
 
 ### `ixmux_status`
 
@@ -90,8 +90,10 @@ Input: `{}`. Output:
               "in_flight": [{"mandate_id": "m1", "state": "delivering", "still_running": true}]}]}
 ```
 
-Metadata only: no text, no answer, no path, no token. `in_flight` lists the target's deliveries
-that are `accepted` or `delivering`, or whose adapter call has not returned.
+Metadata only: no text, no answer, no path, no token, no error text. `lost: true` says the
+target's kill failed: its process may still run (ixmux's `/v1/status` keeps its `pid`), and it is
+not relaunched. `in_flight` lists the target's deliveries that are `accepted` or `delivering`, or
+whose adapter call has not returned.
 
 ### `ixmux_submit`
 
@@ -132,18 +134,21 @@ Input: `{mandate_id}`. Output:
 
 ```
 {"mandate_id": "m1", "target": "c", "state": "delivered", "last": "delivering->delivered",
- "still_running": false, "reason": "...",
+ "still_running": false,
  "receipt": "<session>:m1", "text": "ACK m1\n...", "ack_seen": true, "truncated": false}
 ```
 
-- `state`: `accepted`, `delivering`, `delivered`, `refused` or `uncertain`. An `uncertain` mandate
-  is never replayed: a new submission is refused `uncertain-needs-reconcile`.
+- `state`: `accepted`, `delivering`, `delivered`, `refused` or `uncertain`, and `last` the
+  transition that led there. ixmux's reason is not passed on (free text). An `uncertain` mandate is
+  never replayed: a new submission is refused `uncertain-needs-reconcile`.
 - `receipt`, `text`, `ack_seen` and `truncated` appear once delivered with an answer. `text` is at
   most 4 KiB; `truncated: true` says the answer was longer and its end is missing. A mandate made
   `delivered` by a reconcile (the target said it received it) has none of them: no answer was read.
 - A turn longer than ixmux's delivery deadline is `uncertain` with `still_running: true` while it
   runs. Its answer, if it comes before TurnMax, makes it `delivered` with its result, unless the
-  result is an error (`is_error`) or acknowledges another mandate: then it stays `uncertain`.
+  result is an error (`is_error`) or acknowledges another mandate: then it stays `uncertain`. Past
+  TurnMax the child is killed; if the kill fails, the turn is `uncertain`, unless its result had
+  already come.
 - It is read from the command log of ixmux (`GET /v1/mandates/{id}`): it survives a restart of the
   adapter and a restart of ixmux.
 - An unknown id is `unknown-mandate`.
@@ -162,8 +167,8 @@ running in every case.
   tunnel, no service, no network beyond the loopback address of `ixmux.json`.
 - It keeps no durable state of its own: what it says of a mandate comes from ixmux. Its own
   answers are `initialize`, the tool schemas, the protocol and validation errors, the
-  `submitted` receipt of a submission ixmux did not confirm in time, and the pieces of the tokens
-  it read, held in memory to withhold an answer that holds one.
+  `submitted` receipt of a submission ixmux did not confirm in time, and the message of each
+  refusal code.
 - No resources, prompts, sampling or notifications of its own.
 
 ## Limits

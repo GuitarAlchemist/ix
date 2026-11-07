@@ -14,8 +14,8 @@ ixmux mcp --state <dossier>
 
 - `<dossier>` est le dossier `--state` de l'`ixmux serve` à joindre. À chaque appel d'outil,
   l'adaptateur y lit l'adresse dans `ixmux.json` et le jeton dans `ixmux.token`. Il ne prend le
-  jeton ni en argument ni en variable, et ne l'écrit nulle part : ni sur stdout, ni sur stderr, ni
-  dans une réponse d'outil.
+  jeton ni en argument ni en variable, et ne l'écrit jamais lui-même : ni sur stdout, ni sur
+  stderr, ni dans une réponse d'outil. Ce qu'ixmux répond passe comme donnée (voir Outils).
 - JSON-RPC 2.0 sur stdin et stdout, un message par ligne (`\n` ; un `\r` avant est accepté).
   stdout ne porte que du JSON-RPC ; stderr ne reçoit que le message d'usage d'une ligne de commande
   fausse.
@@ -64,8 +64,9 @@ est une raison typée : une de celles de l'adaptateur (ci-dessous), ou un code d
 d'ixmux (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`,
 `in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`…). Un code
 que l'adaptateur ne connaît pas devient `ixmux-error`. `detail` est le texte propre de
-l'adaptateur et s'adresse à une personne : ne jamais l'analyser. Le `detail` d'un refus d'ixmux
-n'est pas transmis.
+l'adaptateur et s'adresse à une personne : ne jamais l'analyser. Pour un refus d'ixmux,
+l'adaptateur écrit un message par code. Aucun texte libre d'ixmux (le `detail` d'un refus, la
+raison d'un mandat, l'erreur d'une cible) n'atteint une réponse d'outil.
 
 | Raison de l'adaptateur | Quand |
 |---|---|
@@ -74,12 +75,12 @@ n'est pas transmis.
 | `bad-mandate-id` | un `mandate_id` vide, de plus de 128 octets, fait d'autre chose que des lettres, chiffres, `.`, `_` et `-`, ou qui commence par `.` |
 | `submits-in-flight` | 4 dépôts attendent encore la réponse d'ixmux (leurs POST courent au-delà du reçu) ; réessayer une fois l'un d'eux fini |
 | `ixmux-answer-too-large` | une réponse HTTP d'ixmux de plus de 4 Mio |
-| `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire, un refus sans code connu, ou une réponse qui contient un morceau du jeton |
+| `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire, ou un refus sans code connu |
 
-Une réponse d'outil qui contient 8 octets quelconques d'un jeton lu par l'adaptateur, brut, en
-hexadécimal ou en base64, est retenue en entier et devient `ixmux-error`, au cas où un service local
-qui aurait pris le port d'ixmux renverrait l'en-tête `Authorization`. Un autre encodage du jeton, ou
-un morceau de moins de 8 octets, n'est pas détecté.
+Ce qui passe d'ixmux n'est que de la donnée : des identifiants (noms, types, incarnations, ids de
+mandat, états, reçus) et la réponse d'une cible (`text`), tels qu'ixmux les donne. Rien n'est
+analysé : un service local qui aurait pris le port d'ixmux pourrait mettre n'importe quoi dans ces
+champs.
 
 ### `ixmux_status`
 
@@ -91,7 +92,9 @@ Entrée : `{}`. Sortie :
               "in_flight": [{"mandate_id": "m1", "state": "delivering", "still_running": true}]}]}
 ```
 
-Métadonnées seulement : ni texte, ni réponse, ni chemin, ni jeton. `in_flight` liste les livraisons
+Métadonnées seulement : ni texte, ni réponse, ni chemin, ni jeton, ni texte d'erreur.
+`lost: true` dit que le kill de la cible a échoué : son processus tourne peut-être encore (le
+`/v1/status` d'ixmux garde son `pid`), et elle n'est pas relancée. `in_flight` liste les livraisons
 de la cible qui sont `accepted` ou `delivering`, ou dont l'appel à l'adaptateur n'est pas revenu.
 
 ### `ixmux_submit`
@@ -136,11 +139,12 @@ Entrée : `{mandate_id}`. Sortie :
 
 ```
 {"mandate_id": "m1", "target": "c", "state": "delivered", "last": "delivering->delivered",
- "still_running": false, "reason": "...",
+ "still_running": false,
  "receipt": "<session>:m1", "text": "ACK m1\n...", "ack_seen": true, "truncated": false}
 ```
 
-- `state` : `accepted`, `delivering`, `delivered`, `refused` ou `uncertain`. Un mandat
+- `state` : `accepted`, `delivering`, `delivered`, `refused` ou `uncertain`, et `last` la
+  transition qui y a mené. La raison d'ixmux n'est pas transmise (texte libre). Un mandat
   `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`.
 - `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré avec une réponse.
   `text` fait 4 Kio au plus ; `truncated: true` dit que la réponse était plus longue et que sa fin
@@ -149,7 +153,8 @@ Entrée : `{mandate_id}`. Sortie :
 - Un tour plus long que le délai de livraison d'ixmux est `uncertain` avec `still_running: true`
   tant qu'il court. Sa réponse, si elle vient avant TurnMax, le fait passer à `delivered` avec son
   résultat, sauf si ce résultat est une erreur (`is_error`) ou acquitte un autre mandat : il reste
-  alors `uncertain`.
+  alors `uncertain`. Passé TurnMax, l'enfant est tué ; si le kill échoue, le tour est `uncertain`,
+  sauf si son résultat était déjà arrivé.
 - Le résultat est lu dans le journal de commandes d'ixmux (`GET /v1/mandates/{id}`) : il survit à
   un redémarrage de l'adaptateur et à un redémarrage d'ixmux.
 - Un id inconnu donne `unknown-mandate`.
@@ -169,8 +174,8 @@ ixmux continue de tourner dans tous les cas.
   d'`ixmux.json`.
 - Il ne garde aucun état durable à lui : ce qu'il dit d'un mandat vient d'ixmux. Ses réponses
   propres sont `initialize`, les schémas des outils, les erreurs de protocole et de validation, le
-  reçu `submitted` d'un dépôt qu'ixmux n'a pas confirmé à temps, et les morceaux des jetons lus,
-  gardés en mémoire pour retenir une réponse qui en contient un.
+  reçu `submitted` d'un dépôt qu'ixmux n'a pas confirmé à temps, et le message de chaque code de
+  refus.
 - Ni ressources, ni prompts, ni sampling, ni notifications à lui.
 
 ## Limites
