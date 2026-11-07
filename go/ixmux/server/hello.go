@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 )
 
@@ -50,7 +51,8 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, helloMaxBody))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	// One JSON value, then the end of the body (white space allowed): a second value is refused.
+	if err := dec.Decode(&req); err != nil || dec.Decode(new(json.RawMessage)) != io.EOF {
 		refuse(w, http.StatusBadRequest, "bad-nonce", "the body is {\"nonce\": <64 hex digits>}")
 		return
 	}

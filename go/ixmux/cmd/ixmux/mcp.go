@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -70,8 +71,14 @@ const (
 	reasonUnverified = "ixmux-unverified"
 )
 
-// mcpHelloMax bounds the answer to the hello (a mac is 64 hex digits in a small JSON object).
-const mcpHelloMax = 1 << 10
+// mcpHelloMax bounds the body of the answer to the hello (a mac is 64 hex digits in a small JSON
+// object), mcpHelloRead the whole answer, headers included; mcpHeaderMax bounds the headers of the
+// answer after it. Past a bound, the connection is closed, never drained.
+const (
+	mcpHelloMax  = 1 << 10
+	mcpHelloRead = 4 << 10
+	mcpHeaderMax = 64 << 10
+)
 
 type rpcError struct {
 	Code    int            `json:"code"`
@@ -413,7 +420,11 @@ func exchange(ctx context.Context, c conn, method, path string, body io.Reader) 
 	}
 	stop := context.AfterFunc(ctx, func() { nc.Close() }) // a read past ctx's end returns
 	done := func() { stop(); nc.Close() }
-	br := bufio.NewReader(nc)
+	// Every byte read on the connection, headers included, counts against lim, under the
+	// bufio.Reader: the whole hello answer first, then the headers, then the body of the answer.
+	// @ai:invariant the adapter reads at most mcpHelloRead bytes of a hello answer, and at most mcpHeaderMax+MCPMaxAnswer of the answer after it [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6f_test.go:TestHelloAnswerIsBounded]
+	lim := &readBudget{r: nc, n: mcpHelloRead}
+	br := bufio.NewReader(lim)
 
 	nonce := make([]byte, server.HelloNonceBytes)
 	rand.Read(nonce)
@@ -432,8 +443,13 @@ func exchange(ctx context.Context, c conn, method, path string, body io.Reader) 
 		}
 		return nil, nil, fail(reasonUnverified, "the server at the address of ixmux.json did not answer the hello")
 	}
-	hbody, _ := io.ReadAll(io.LimitReader(hresp.Body, mcpHelloMax+1))
-	hresp.Body.Close()
+	hbody, rerr := io.ReadAll(io.LimitReader(hresp.Body, mcpHelloMax+1))
+	if rerr != nil || len(hbody) > mcpHelloMax {
+		// No Body.Close past the bound: it would read the rest. The connection goes instead.
+		done()
+		return nil, nil, fail(reasonUnverified, "the server at the address of ixmux.json did not prove it holds the token; the token was not sent")
+	}
+	hresp.Body.Close() // at its end: it reads nothing more
 	var h struct {
 		MAC string `json:"mac"`
 	}
@@ -441,7 +457,7 @@ func exchange(ctx context.Context, c conn, method, path string, body io.Reader) 
 	if json.Unmarshal(hbody, &h) == nil {
 		mac, merr = hex.DecodeString(h.MAC)
 	}
-	if hresp.StatusCode != http.StatusOK || len(hbody) > mcpHelloMax || mac == nil || merr != nil ||
+	if hresp.StatusCode != http.StatusOK || mac == nil || merr != nil ||
 		!hmac.Equal(mac, server.HelloMAC([]byte(c.token), nonce)) {
 		done()
 		return nil, nil, fail(reasonUnverified, "the server at the address of ixmux.json did not prove it holds the token; the token was not sent")
@@ -454,12 +470,57 @@ func exchange(ctx context.Context, c conn, method, path string, body io.Reader) 
 		done()
 		return nil, nil, unavailable(ctx, c)
 	}
+	lim.n = mcpHeaderMax
 	resp, err := http.ReadResponse(br, req)
 	if err != nil {
 		done()
+		if lim.hit {
+			return nil, nil, fail(reasonAnswerTooLarge, fmt.Sprintf("the headers of an answer of ixmux over %d bytes", mcpHeaderMax))
+		}
 		return nil, nil, unavailable(ctx, c)
 	}
+	// The body's own bound is do's; this one, wider by the headers' bound, holds the framing too.
+	lim.n = mcpHeaderMax + MCPMaxAnswer
+	resp.Body = overBody{resp.Body, lim}
 	return resp, done, nil
+}
+
+// errOverBound: the connection gave more than the adapter reads of it.
+var errOverBound = errors.New("over the read bound of the connection")
+
+// readBudget lets n more bytes through, then fails errOverBound (and says so in hit).
+type readBudget struct {
+	r   io.Reader
+	n   int64
+	hit bool
+}
+
+func (b *readBudget) Read(p []byte) (int, error) {
+	if b.n <= 0 {
+		b.hit = true
+		return 0, errOverBound
+	}
+	if int64(len(p)) > b.n {
+		p = p[:b.n]
+	}
+	k, err := b.r.Read(p)
+	b.n -= int64(k)
+	return k, err
+}
+
+// overBody makes any read error of a body cut by the budget errOverBound, whatever the framing
+// reader in between returned.
+type overBody struct {
+	io.ReadCloser
+	lim *readBudget
+}
+
+func (o overBody) Read(p []byte) (int, error) {
+	k, err := o.ReadCloser.Read(p)
+	if err != nil && o.lim.hit {
+		err = errOverBound
+	}
+	return k, err
 }
 
 // unavailable: no answer, or none in time. The error never names the token.
@@ -486,6 +547,9 @@ func (m *mcp) do(ctx context.Context, c conn, method, path string, body, out any
 	// The bound plus one byte: an answer over the bound is seen, and refused, never cut and misread.
 	// @ai:invariant an HTTP answer over MCPMaxAnswer bytes is refused ixmux-answer-too-large [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestAnswerOverTheBoundIsRefused]
 	b, err := io.ReadAll(io.LimitReader(resp.Body, MCPMaxAnswer+1))
+	if errors.Is(err, errOverBound) {
+		return fail(reasonAnswerTooLarge, fmt.Sprintf("an answer of ixmux over %d bytes", MCPMaxAnswer))
+	}
 	if err != nil {
 		return fail(reasonUnavailable, "the answer of ixmux was cut")
 	}

@@ -132,7 +132,9 @@ func TestHelloEndpoint(t *testing.T) {
 	}
 	good := strings.Repeat("ab", server.HelloNonceBytes)
 	for _, bad := range []string{`{"nonce":"xyz"}`, `{"nonce":"` + strings.ToUpper(good) + `"}`, `{"nonce":"` + good[2:] + `"}`,
-		`{"nonce":"` + good + `","extra":1}`, `{}`, `nonce`} {
+		`{"nonce":"` + good + `","extra":1}`, `{}`, `nonce`,
+		// S6F oracle 3 (Codex round 12, P2): one JSON value, then the end of the body.
+		`{"nonce":"` + good + `"}{"nonce":"` + good + `"}`, `{"nonce":"` + good + `"} 1`, `{"nonce":"` + good + `"}x`} {
 		if code, out := hello(bad, false); code != http.StatusBadRequest || out["error"] != "bad-nonce" {
 			t.Errorf("hello %s: %d %v, want 400 bad-nonce", bad, code, out)
 		}
@@ -151,6 +153,9 @@ func TestHelloEndpoint(t *testing.T) {
 	nonce, _ := hex.DecodeString(good)
 	if code, out := hello(`{"nonce":"`+good+`"}`, false); code != 200 || out["mac"] != hex.EncodeToString(macOf(nonce)) {
 		t.Errorf("hello: %d %v, want the mac of the derived key", code, out)
+	}
+	if code, out := hello(`{"nonce":"`+good+`"}`+"\r\n", false); code != 200 || out["mac"] != hex.EncodeToString(macOf(nonce)) {
+		t.Errorf("hello with a trailing newline: %d %v, want the mac", code, out)
 	}
 
 	// A nonce that is a cursor's payload: 24 bytes of JSON, 32 of base64url. Its mac is offered as
