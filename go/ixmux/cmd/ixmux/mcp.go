@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
@@ -70,10 +71,24 @@ type mcp struct {
 	out    *json.Encoder
 	client *http.Client
 	posts  chan struct{} // one per POST of ixmux_submit still running
+
+	tokMu  sync.Mutex
+	tokens map[string]bool // every token read from the state directory, cut out of each answer
+}
+
+// redact cuts the bytes of every token read out of b. A token is hex: JSON encodes it as it is,
+// so a string that holds it holds its bytes.
+func (m *mcp) redact(b []byte) []byte {
+	m.tokMu.Lock()
+	defer m.tokMu.Unlock()
+	for tok := range m.tokens {
+		b = bytes.ReplaceAll(b, []byte(tok), []byte("[token]"))
+	}
+	return b
 }
 
 func newMCP(state string, stdout io.Writer) *mcp {
-	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts),
+	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts), tokens: map[string]bool{},
 		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
 		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
 }
@@ -208,9 +223,16 @@ func (m *mcp) handle(line []byte) {
 		if terr != nil {
 			v = terr
 		}
+		// Everything a tool answers may hold text from the network (a refusal's detail, a target's
+		// name): a service that took ixmux's port could echo the Authorization header. The token's
+		// bytes are cut out of the whole answer, the text block and structuredContent alike.
+		// @ai:invariant no tool answer holds the bytes of a token the adapter read [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestEchoedTokenIsNeverShown]
 		text, _ := json.Marshal(v)
+		text = m.redact(text)
+		var sc any
+		json.Unmarshal(text, &sc)
 		m.reply(req.ID, map[string]any{"content": []any{map[string]any{"type": "text", "text": string(text)}},
-			"structuredContent": v, "isError": terr != nil}, nil)
+			"structuredContent": sc, "isError": terr != nil}, nil)
 	default:
 		m.reply(req.ID, nil, &rpcError{-32601, "method not found: " + req.Method, nil})
 	}
@@ -269,6 +291,9 @@ func (m *mcp) connect() (conn, *toolErr) {
 	if err != nil || len(tok) == 0 {
 		return conn{}, fail(reasonUnavailable, "no token in the state directory")
 	}
+	m.tokMu.Lock()
+	m.tokens[string(tok)] = true
+	m.tokMu.Unlock()
 	return conn{info.Addr, string(tok)}, nil
 }
 
