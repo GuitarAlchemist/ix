@@ -42,6 +42,7 @@ How the stream works:
   - `ring`: the events are no longer kept;
   - `ahead`: `since` is past the last event;
   - `slow`: your queue overflowed. The connection then closes with 1008; resume with `since=last_seq`.
+- A message that cannot be written within 10 s (the client stopped reading) closes the connection at once, with no `gap`: nothing more can reach that client. Resume with `since`, as after any cut.
 - After a `gap`, each `state-page` holds `deliveries` (the last transition of each, its reason cut at 1 KiB), and `state-end` gives `pages`, `deliveries`, `targets` and `journals`. Their `seq` is the last event they cover: the next event is `seq+1`, and no transition they hold comes again as an event.
 - Clients must raise their WebSocket read limit to `max_stream_message` (1 MiB). Every message fits in it, the state included.
 
@@ -156,9 +157,10 @@ The Claude session itself is kept by claude under your profile, as any `claude -
 - The fake session (a JSONL file) and one real Claude session in stream-json, with no tools, are the only adapters.
 - The real session was run by hand, within 20 model turns. The test suite never starts a real claude: it uses a fake one (`claudestream/internal/fakeclaude`).
 - Followed journals start at offset 0 at each start, under a new epoch, and the stream carries their pages with their lines.
+- A journal's incarnation names its file (device and inode on Unix, volume and file index on Windows) and its first record. A file system may give a new file the identity of a deleted one: Linux reuses inodes. Two files put one after the other at the same path are then told apart by their first record only, and a checkpoint of an incomplete first record may be read from 0 on the new file instead of being refused. An empty journal names no file: every empty journal has the same incarnation, and a checkpoint taken on one is read from 0 on whatever file is at the path, which loses and repeats nothing (`promoted_from` says so).
 - A connection counts as `slow` only once its queue overflows, which needs TCP back-pressure. A client that reads slowly but keeps up is never cut.
 - Not tested here:
-  - `-race`, because there is no gcc on the machine;
-  - the Unix code paths (token mode 0600, `flock`), which are compiled but not run;
+  - `-race`, because there is no gcc on the machine: it runs in CI only (`go-modules`, ubuntu);
+  - the Unix code paths (token mode 0600, `flock`), which run in CI only;
   - Ctrl+C and Ctrl+Break, which only the runbook covers, while the tests stop ixmux through `/v1/shutdown`.
 - The runbook was run step by step from PowerShell with these same absolute paths. `start` and `set /p` are cmd.exe built-ins and were not run here.

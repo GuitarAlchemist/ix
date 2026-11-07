@@ -39,6 +39,7 @@ Fonctionnement du flux :
   - `ring` : les événements ne sont plus gardés ;
   - `ahead` : `since` est au-delà du dernier événement ;
   - `slow` : ta file a débordé. La connexion se ferme alors avec le code 1008 ; reprends avec `since=last_seq`.
+- Un message qui ne peut pas être écrit en 10 s (le client ne lit plus) ferme aussitôt la connexion, sans `gap` : plus rien ne peut atteindre ce client. Reprends avec `since`, comme après toute coupure.
 - Après un `gap`, chaque `state-page` contient `deliveries` (la dernière transition de chacune, sa raison coupée à 1 Kio), et `state-end` donne `pages`, `deliveries`, `targets` et `journals`. Leur `seq` est le dernier événement qu'ils couvrent : l'événement suivant est `seq+1`, et aucune transition qu'ils contiennent ne revient comme événement.
 - Un client doit relever sa limite de lecture WebSocket à `max_stream_message` (1 Mio). Tout message y tient, l'état compris.
 
@@ -153,9 +154,10 @@ La session Claude elle-même est gardée par claude sous ton profil, comme toute
 - La session fictive (un fichier JSONL) et une vraie session Claude en stream-json, sans outils, sont les seuls adaptateurs.
 - La vraie session a été déroulée à la main, en 20 tours de modèle au plus. La suite de tests ne lance jamais de vrai claude : elle utilise un faux (`claudestream/internal/fakeclaude`).
 - Les journaux suivis repartent de l'offset 0 à chaque démarrage, sous une nouvelle époque, et le flux transporte leurs pages avec leurs lignes.
+- L'incarnation d'un journal nomme son fichier (périphérique et inode sous Unix, volume et index de fichier sous Windows) et son premier enregistrement. Un système de fichiers peut donner à un nouveau fichier l'identité d'un fichier supprimé : Linux réutilise les inodes. Deux fichiers posés l'un après l'autre au même chemin ne se distinguent alors que par leur premier enregistrement, et un point de reprise pris sur un premier enregistrement incomplet peut être lu depuis 0 sur le nouveau fichier au lieu d'être refusé. Un journal vide ne nomme aucun fichier : tous les journaux vides ont la même incarnation, et un point de reprise pris sur l'un d'eux est lu depuis 0 sur le fichier présent au chemin, ce qui ne perd ni ne répète rien (`promoted_from` le signale).
 - Une connexion n'est déclarée `slow` que lorsque sa file déborde, ce qui suppose une contre-pression TCP. Un client qui lit lentement mais suit le rythme n'est jamais coupé.
 - Non testé ici :
-  - `-race`, faute de gcc sur la machine ;
-  - les chemins Unix (mode 0600 du jeton, `flock`), compilés mais pas exécutés ;
+  - `-race`, faute de gcc sur la machine : il ne tourne qu'en CI (`go-modules`, ubuntu) ;
+  - les chemins Unix (mode 0600 du jeton, `flock`), qui ne tournent qu'en CI ;
   - Ctrl+C et Ctrl+Break, couverts seulement par le runbook ; les tests arrêtent ixmux par `/v1/shutdown`.
 - Le runbook a été déroulé étape par étape depuis PowerShell, avec les mêmes chemins absolus. `start` et `set /p` sont des commandes internes de cmd.exe ; elles n'ont pas été exécutées ici.
