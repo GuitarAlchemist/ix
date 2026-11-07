@@ -32,7 +32,12 @@ const (
 	MCPMaxResultText = 4 << 10                 // bytes of a result's text (claudestream keeps as many)
 	MCPCallTimeout   = 5 * time.Second         // one GET of ixmux_status or ixmux_result
 	MCPMaxIDBytes    = 128                     // bytes of a mandate id
+	MCPMaxPosts      = 4                       // POSTs of ixmux_submit still running at once
 )
+
+// mcpPostExtra is what a POST is given beyond ixmux's delivery deadline (its bounds): the time
+// ixmux itself gives the answer (server.WriteTimeout), plus a margin. A test lowers it.
+var mcpPostExtra = server.WriteTimeout + 5*time.Second
 
 // The protocol versions the adapter speaks, the latest first. initialize answers the version asked
 // if it is one of them, else the latest.
@@ -50,6 +55,8 @@ const (
 	reasonLineTooLong = "line-too-long"
 	reasonUnknownTool = "unknown-tool"
 	reasonIxmuxError  = "ixmux-error"
+	// reasonPostsInFlight: MCPMaxPosts submissions still wait for ixmux's answer.
+	reasonPostsInFlight = "submits-in-flight"
 )
 
 type rpcError struct {
@@ -62,10 +69,11 @@ type mcp struct {
 	state  string
 	out    *json.Encoder
 	client *http.Client
+	posts  chan struct{} // one per POST of ixmux_submit still running
 }
 
 func newMCP(state string, stdout io.Writer) *mcp {
-	return &mcp{state: state, out: json.NewEncoder(stdout),
+	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts),
 		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
 		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
 }
@@ -319,6 +327,9 @@ type ixStatus struct {
 		Error       string `json:"error"`
 	} `json:"targets"`
 	Deliveries []deliver.Entry `json:"deliveries"`
+	Bounds     struct {
+		DeliveryTimeout string `json:"delivery_timeout"`
+	} `json:"bounds"`
 }
 
 // --- tools -----------------------------------------------------------------------------------
@@ -395,11 +406,13 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 	}
 	budget, cancel := context.WithDeadline(context.Background(), began.Add(MCPReceiptWait))
 	defer cancel()
-	if a.Incarnation == "" { // the target's current incarnation
-		var st ixStatus
-		if e := m.do(budget, c, "GET", "/v1/status", nil, &st); e != nil {
-			return nil, e
-		}
+	// The status gives ixmux's delivery deadline, and the target's current incarnation when none
+	// is given.
+	var st ixStatus
+	if e := m.do(budget, c, "GET", "/v1/status", nil, &st); e != nil {
+		return nil, e
+	}
+	if a.Incarnation == "" {
 		found := false
 		for _, t := range st.Targets {
 			if t.Name == a.Target {
@@ -410,14 +423,27 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 			return nil, fail(deliver.UnknownTarget, "no target "+a.Target)
 		}
 	}
+	select {
+	case m.posts <- struct{}{}:
+	default:
+		return nil, fail(reasonPostsInFlight, fmt.Sprintf("%d submissions still wait for ixmux's answer; try again once one ends", MCPMaxPosts))
+	}
+	deliveryTimeout, err := time.ParseDuration(st.Bounds.DeliveryTimeout)
+	if err != nil || deliveryTimeout <= 0 {
+		deliveryTimeout = deliver.DefaultTimeout
+	}
 	type posted struct {
 		res deliver.Result
 		err *toolErr
 	}
 	done := make(chan posted, 1)
+	// @ai:invariant at most MCPMaxPosts POSTs run at once, each within ixmux's delivery deadline plus mcpPostExtra [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestDetachedPOSTsAreBounded]
 	go func() { // not bound to the receipt: ixmux delivers whether or not anyone still waits
+		defer func() { <-m.posts }()
+		ctx, cancel := context.WithTimeout(context.Background(), deliveryTimeout+mcpPostExtra)
+		defer cancel()
 		var res deliver.Result
-		e := m.do(context.Background(), c, "POST", "/v1/mandates",
+		e := m.do(ctx, c, "POST", "/v1/mandates",
 			map[string]string{"mandate_id": a.MandateID, "target": a.Target, "incarnation": a.Incarnation, "text": a.Text}, &res)
 		done <- posted{res, e}
 	}()

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/GuitarAlchemist/ix/go/ixmux/server"
 )
@@ -86,6 +88,49 @@ func (p *inproc) tool(name string, args map[string]any) toolResult {
 
 // statusJSON is a /v1/status of one claude target c.
 const statusJSON = `{"version":"fake","epoch":"e","targets":[{"name":"c","kind":"claude","incarnation":"inc-1"}],"deliveries":[],"bounds":{"delivery_timeout":"30s"}}`
+
+// S6B Codex 2: POSTs left running are bounded: at most MCPMaxPosts at once (beyond, a typed
+// refusal), and each within ixmux's delivery deadline plus a margin, after which its slot is free.
+func TestDetachedPOSTsAreBounded(t *testing.T) {
+	var hold chan struct{}
+	state := fakeIxmux(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/status":
+			w.Write([]byte(strings.Replace(statusJSON, `"30s"`, `"1ms"`, 1)))
+		case r.Method == "POST":
+			select { // accepted, never answered
+			case <-hold:
+			case <-r.Context().Done():
+			}
+		default:
+			w.Write([]byte(`{"target":"c","mandate_id":"x","state":"accepted"}`))
+		}
+	})
+	hold = release(t)
+	old := mcpPostExtra
+	mcpPostExtra = 300 * time.Millisecond // the POST's deadline: 1ms of ixmux, plus this
+	t.Cleanup(func() { mcpPostExtra = old })
+	p := newInproc(t, state)
+	for i := range MCPMaxPosts {
+		if rc := p.tool("ixmux_submit", map[string]any{"target": "c", "mandate_id": fmt.Sprintf("m%d", i), "text": "x"}); rc.IsError {
+			t.Fatalf("submit %d: %v", i, rc.Structured)
+		}
+	}
+	if rc := p.tool("ixmux_submit", map[string]any{"target": "c", "mandate_id": "over", "text": "x"}); !rc.IsError || rc.Structured["error"] != "submits-in-flight" {
+		t.Errorf("one POST over MCPMaxPosts: %v, want isError submits-in-flight", rc.Structured)
+	}
+	deadline := time.Now().Add(10 * time.Second) // a guard: the POSTs end at their 300 ms deadline
+	for {
+		rc := p.tool("ixmux_submit", map[string]any{"target": "c", "mandate_id": "after", "text": "x"})
+		if !rc.IsError {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no slot freed after the POSTs' deadline: %v", rc.Structured)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
 
 // S6B Codex 1: a POST cut at the transport is no proof of anything: the adapter goes on reading
 // the entry until the receipt's bound, and any durable state proves the mandate was accepted.
