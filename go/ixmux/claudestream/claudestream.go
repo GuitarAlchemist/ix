@@ -117,7 +117,7 @@ type Adapter struct {
 	marks    map[[2]string]*mark // by incarnation and mandate id
 }
 
-type mark struct{ sent, answered bool }
+type mark struct{ sent, answered, failed bool } // failed: its result had is_error
 
 // child is one claude process: one incarnation.
 type child struct {
@@ -775,6 +775,10 @@ func (a *Adapter) Status(ctx context.Context, mandateID, incarnation string) (de
 		return deliver.NotReceived, nil
 	case mk.answered:
 		return deliver.Received, nil
+	case mk.failed:
+		// The message reached the session and its turn ended in error: neither received (no
+		// answer) nor not received (it was sent). It stays uncertain, and the reason says why.
+		return deliver.Unknown, fmt.Errorf("the result of %s had is_error: the session took it, its answer is an error", mandateID)
 	}
 	return deliver.Unknown, nil
 }
@@ -824,6 +828,7 @@ func (a *Adapter) index(line []byte) {
 		Ixmux       string `json:"ixmux"`
 		MandateID   string `json:"mandate_id"`
 		Incarnation string `json:"incarnation"`
+		IsError     bool   `json:"is_error"`
 	}
 	if json.Unmarshal(line, &n) != nil || n.Type != "" || n.MandateID == "" {
 		return
@@ -836,8 +841,15 @@ func (a *Adapter) index(line []byte) {
 		}
 		a.marks[k].sent = true
 	case "result":
+		// A result with is_error is not an answer: Deliver treats it as an error, so Status must
+		// not call it received.
+		// @ai:invariant Status never answers received for a mandate whose result had is_error [T:test conf:0.85 src:go/ixmux/claudestream/s6b_test.go:TestErrorResultIsNotReceived]
 		if mk := a.marks[k]; mk != nil && mk.sent {
-			mk.answered = true
+			if n.IsError {
+				mk.failed = true
+			} else {
+				mk.answered = true
+			}
 		}
 	}
 }

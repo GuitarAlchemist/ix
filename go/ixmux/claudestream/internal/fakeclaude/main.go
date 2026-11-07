@@ -14,6 +14,7 @@
 //	              message whose text holds "mute" is consumed and never answered
 //	FAKE_FLOOD    a message whose text holds "flood" first gets this many bytes of assistant lines
 //	FAKE_REPLY    the answer is padded to this many bytes
+//	FAKE_ISERROR  a message whose text holds "fail" gets a result with is_error true
 //	FAKE_TOOLS_FIELD "null" or "absent": the init's tools field is null, or missing
 //	FAKE_M2       before or instead of the answer to a mandate named m2: "othersession" (a result
 //	              of another session first), "duplicate" (the previous result again first),
@@ -166,6 +167,9 @@ func main() {
 		}
 		emit(map[string]any{"type": "assistant", "session_id": session, "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": reply}}}})
 		last = map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": reply, "session_id": session, "num_turns": 1}
+		if os.Getenv("FAKE_ISERROR") != "" && strings.Contains(text, "fail") {
+			last["subtype"], last["is_error"] = "error_during_execution", true
+		}
 		emit(last)
 	}
 }

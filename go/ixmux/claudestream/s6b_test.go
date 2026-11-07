@@ -84,6 +84,30 @@ func TestStopWithATurnHeldIsBounded(t *testing.T) {
 	}
 }
 
+// S6B P1-2 (Argon): a result with is_error is not an answer. The delivery is uncertain, and
+// Reconcile does not make it delivered: it stays uncertain, with the reason written.
+func TestErrorResultIsNotReceived(t *testing.T) {
+	a, e, _ := setup(t, 5*time.Second, "FAKE_ISERROR=1")
+	res, _ := send(t, a, e, "f1", "fail")
+	if res.State != deliver.Uncertain {
+		t.Fatalf("an is_error result: %+v, want uncertain", res)
+	}
+	if o, err := a.Status(context.Background(), "f1", a.sessionID()); o == deliver.Received {
+		t.Errorf("Status of an is_error result: %s %v, want not received", o, err)
+	}
+	rec, err := e.Reconcile(context.Background(), "c", "f1")
+	if err != nil || rec.State != deliver.Uncertain || !strings.Contains(rec.Reason, "is_error") {
+		t.Errorf("Reconcile of an is_error result: %+v %v, want uncertain with an is_error reason", rec, err)
+	}
+	// The same flow without the error is received: the index still sees answers.
+	if res, err := send(t, a, e, "ok1", "x"); err != nil || res.State != deliver.Delivered {
+		t.Fatalf("a plain answer: %+v %v", res, err)
+	}
+	if o, _ := a.Status(context.Background(), "ok1", a.sessionID()); o != deliver.Received {
+		t.Errorf("Status of a plain answer: %s, want received", o)
+	}
+}
+
 func asRefusal(err error, r **deliver.Refusal) bool {
 	if err == nil {
 		return false
