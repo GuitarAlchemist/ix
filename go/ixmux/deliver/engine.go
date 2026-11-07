@@ -333,6 +333,10 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 // testHookCloseWaits once, when Close finds work it must wait for.
 var testHookAfterIncarnation, testHookBeforeFinish, testHookCloseWaits func()
 
+// testHookMandateRead runs in Mandate before it reads the delivery (a test writes a transition
+// there).
+var testHookMandateRead func()
+
 // outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
 // other error leaves the outcome unknown.
 func outcome(c callResult) (State, string, *Ack) {
@@ -537,12 +541,7 @@ func (e *Engine) Status() []Entry {
 	now := time.Now()
 	out := []Entry{}
 	for _, r := range e.sorted() {
-		prev := string(r.prev)
-		if prev == "" {
-			prev = "none"
-		}
-		out = append(out, Entry{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason,
-			Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state), StillRunning: e.calling[key{r.target, r.id}]})
+		out = append(out, e.entry(r, now))
 	}
 	return out
 }
@@ -550,20 +549,34 @@ func (e *Engine) Status() []Entry {
 // Mandate is the delivery of a mandate id (unique in the log) as in Status, with its Ack once
 // delivered: the Ack is in the command log, so it is read back after a restart too.
 // @ai:invariant the Ack of a delivered mandate is read back by its id after the engine reopens its log [T:test conf:0.85 src:go/ixmux/server/s6_test.go:TestMandateResultIsReadBackAfterARestart]
+// The entry and its Ack are read under one lock: a transition is seen whole or not at all.
+// @ai:invariant Mandate reads the state and the Ack of a delivery in one snapshot [T:test conf:0.85 src:go/ixmux/deliver/s6b_test.go:TestMandateReadsOneSnapshot]
 func (e *Engine) Mandate(id string) (Entry, *Ack, bool) {
-	for _, en := range e.Status() {
-		if en.MandateID == id {
-			e.mu.Lock()
-			defer e.mu.Unlock()
-			var ack *Ack
-			if r := e.recs[key{en.Target, id}]; r != nil && r.ack != nil {
-				a := *r.ack
-				ack = &a
-			}
-			return en, ack, true
-		}
+	if testHookMandateRead != nil {
+		testHookMandateRead()
 	}
-	return Entry{}, nil, false
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r := e.ids[id] // an id is unique in the whole log: its first record is its only one
+	if r == nil {
+		return Entry{}, nil, false
+	}
+	var ack *Ack
+	if r.ack != nil {
+		a := *r.ack
+		ack = &a
+	}
+	return e.entry(r, time.Now()), ack, true
+}
+
+// entry is r as Status lists it (under e.mu).
+func (e *Engine) entry(r *record, now time.Time) Entry {
+	prev := string(r.prev)
+	if prev == "" {
+		prev = "none"
+	}
+	return Entry{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason,
+		Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state), StillRunning: e.calling[key{r.target, r.id}]}
 }
 
 // Close refuses every new Deliver and Reconcile (engine-closed), then waits, up to the delivery
