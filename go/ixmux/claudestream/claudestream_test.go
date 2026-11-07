@@ -227,7 +227,7 @@ func TestStopIsTraced(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			a.Stop()
+			within(t, 30*time.Second, "Stop", func() { a.Stop() })
 			var steps []string
 			for _, m := range stopSteps(t, a.StreamPath()) {
 				if m["at"] == nil {

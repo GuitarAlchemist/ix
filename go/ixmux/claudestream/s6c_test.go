@@ -68,7 +68,11 @@ func TestReservationIsFreeWhenDeliverReturns(t *testing.T) {
 	t.Cleanup(func() { testHookBeforeRelease = nil })
 	inc, _ := a.Incarnation()
 	for _, id := range []string{"w1", "w2"} {
-		ack, err := a.Deliver(context.Background(), deliver.Mandate{MandateID: id, Target: "c", Incarnation: inc, Text: "x"})
+		var ack deliver.Ack
+		var err error
+		within(t, 10*time.Second, "Deliver "+id, func() {
+			ack, err = a.Deliver(context.Background(), deliver.Mandate{MandateID: id, Target: "c", Incarnation: inc, Text: "x"})
+		})
 		if err != nil || !ack.AckSeen {
 			t.Fatalf("%s, sent once the previous Deliver returned: %+v %v, want delivered", id, ack, err)
 		}
@@ -92,7 +96,7 @@ func TestStopKillsTheChildBeingStarted(t *testing.T) {
 		}
 	}
 	began := time.Now()
-	a.Stop()
+	within(t, 10*time.Second, "Stop with a child being started", func() { a.Stop() })
 	if d := time.Since(began); d > stopWait+time.Second {
 		t.Errorf("Stop took %s with a child being started, want StopWait (%s) plus a margin", d, stopWait)
 	}

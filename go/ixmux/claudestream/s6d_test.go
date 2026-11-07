@@ -8,6 +8,19 @@ import (
 	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
 )
 
+// within runs f, an operation that may block, under a watchdog: past guard, the test fails at once
+// instead of hanging the suite.
+func within(t *testing.T, guard time.Duration, what string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); f() }()
+	select {
+	case <-done:
+	case <-time.After(guard):
+		t.Fatalf("%s still blocks after %s", what, guard)
+	}
+}
+
 // S6D P1-4 (Codex 10): after kill-failed the target says lost (its process may still run, its PID
 // is known), and a mandate for the lost incarnation is refused typed (stale-incarnation), not an
 // untyped error that ixmux serve answers 500 internal.

@@ -653,6 +653,7 @@ func (c *child) kill() error {
 // step is noted in stream.jsonl with its time ({"ixmux":"stop","step":...}): stdin-closed, then
 // exited or killed with the milliseconds since stdin was closed.
 // @ai:invariant the stop of a claude child is traced: stdin closed, then exited or killed past StopWait [T:test conf:0.85 src:go/ixmux/claudestream/claudestream_test.go:TestStopIsTraced]
+// @ai:invariant a stop whose kill fails is traced kill-failed, StopWait after the kill [T:test conf:0.85 src:go/ixmux/claudestream/s6c_kill_test.go:TestKillThatFailsAtStop]
 func (c *child) stop() error {
 	var err error
 	c.stopper.Do(func() {

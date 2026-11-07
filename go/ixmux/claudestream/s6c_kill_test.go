@@ -70,11 +70,22 @@ func TestKillThatFailsAtStop(t *testing.T) {
 	a, _, _ := setupCfg(t, time.Second, func(c *Config) { c.StopWait = stopWait }, "FAKE_LINGER=5s")
 	failKills(t, a.live())
 	began := time.Now()
-	err := a.Stop()
+	var err error
+	within(t, 10*time.Second, "Stop with a failing kill", func() { err = a.Stop() })
 	if d := time.Since(began); d > 2*stopWait+time.Second {
 		t.Errorf("Stop took %s with a failing kill, want twice StopWait (%s) plus a margin", d, stopWait)
 	}
 	if err == nil || !strings.Contains(err.Error(), ReasonKillFailed) {
 		t.Errorf("Stop: %v, want a %s error", err, ReasonKillFailed)
+	}
+	// The stop trace names it: its last step is kill-failed.
+	var steps []string // the stop lines only: the child's exit may follow the job's close
+	for _, m := range stopSteps(t, a.StreamPath()) {
+		if s, ok := m["step"].(string); ok && m["ixmux"] == "stop" {
+			steps = append(steps, s)
+		}
+	}
+	if len(steps) == 0 || steps[len(steps)-1] != ReasonKillFailed {
+		t.Errorf("stop trace %v, want %s last", steps, ReasonKillFailed)
 	}
 }
