@@ -71,7 +71,8 @@ qui le fais, je peux l'oublier... toi, tu le lances automatiquement et ensuite t
 The rule: Claude runs the reflex at the trigger (correction → `/correct`; closing commit of a
 surprise → `/learnings`; closed review loop or PR about to be called ready → retro), then ends the
 reply with one teaching line naming what ran, why, and when the user could have typed it. The
-detector is bilingual and fires every time (fixture:
-`bash .claude/hooks/test-correction-detector.sh`, run by `karpathy-cherny-discipline.yml`); the
+detector is bilingual and fires every time (its cases: `TestCorrectionDetector` in
+`go/claudehooks`, run by `karpathy-cherny-discipline.yml`; the bash hooks were ported to Go on
+2026-11-05); the
 `learnings` skill exists. The retro stays a rule, not a hook: no machine event knows when a loop
 is "closed".

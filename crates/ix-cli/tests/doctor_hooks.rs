@@ -1,10 +1,10 @@
 //! The `hooks` check of `ix doctor`: the harness's command hooks in `.claude/settings.json`
-//! point at files that exist and parse as bash, and every behavioural fixture under
-//! `.claude/hooks/test-*.sh` passes.
+//! point at files that exist, none runs a shell or a script interpreter, and the hooks' Go tests
+//! (`go/claudehooks`) pass.
 //!
-//! The hooks run under bash on every platform, msys bash on Windows, and a hook that crashes
-//! or fails to parse is a silent no-op: the harness reports nothing, the hook simply does not
-//! fire. Three `*.stackdump` files in the working tree were the only trace. These tests seed a
+//! The hooks were bash scripts until 2026-11: a crash or a parse error was a silent no-op (three
+//! `*.stackdump` files in the working tree were the only trace), and each cost seconds per tool
+//! call. The user's rule since 2026-11-05 is "jamais de shell dans les hooks". These tests seed a
 //! throwaway repo with each defect and assert the check names it.
 
 use ix_cli::doctor::hooks;
@@ -19,14 +19,15 @@ fn repo_root() -> PathBuf {
         .expect("workspace root")
 }
 
-/// A throwaway repo with the given `.claude/settings.json` and hook files.
-fn seeded(settings: &str, hooks: &[(&str, &str)]) -> TempDir {
+/// A throwaway repo with the given `.claude/settings.json` and files (repo-relative paths).
+fn seeded(settings: &str, files: &[(&str, &str)]) -> TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    let hooks_dir = dir.path().join(".claude/hooks");
-    std::fs::create_dir_all(&hooks_dir).expect("mkdir");
+    std::fs::create_dir_all(dir.path().join(".claude/hooks")).expect("mkdir");
     std::fs::write(dir.path().join(".claude/settings.json"), settings).expect("settings");
-    for (name, body) in hooks {
-        std::fs::write(hooks_dir.join(name), body).expect("hook");
+    for (rel, body) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, body).expect("file");
     }
     dir
 }
@@ -34,7 +35,7 @@ fn seeded(settings: &str, hooks: &[(&str, &str)]) -> TempDir {
 fn settings_with(commands: &[&str]) -> String {
     let entries: Vec<String> = commands
         .iter()
-        .map(|c| format!(r#"{{"type":"command","command":"{c}"}}"#))
+        .map(|c| serde_json::json!({"type": "command", "command": c}).to_string())
         .collect();
     format!(
         r#"{{"hooks":{{"UserPromptSubmit":[{{"hooks":[{}]}}]}}}}"#,
@@ -42,92 +43,168 @@ fn settings_with(commands: &[&str]) -> String {
     )
 }
 
-/// bash as the check finds it; the fixture-running tests need a real one.
-fn bash() -> PathBuf {
-    hooks::find_bash().expect("bash is needed to run the hook fixtures (Git bash on Windows)")
+/// A one-package Go hooks module whose test passes or fails.
+fn module(pass: bool) -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "go/claudehooks/go.mod",
+            "module example.com/claudehooks\n\ngo 1.21\n",
+        ),
+        ("go/claudehooks/h.go", "package h\n"),
+        (
+            "go/claudehooks/h_test.go",
+            if pass {
+                "package h\n\nimport \"testing\"\n\nfunc TestOK(t *testing.T) {}\n"
+            } else {
+                "package h\n\nimport \"testing\"\n\nfunc TestRed(t *testing.T) { t.Fatal(\"HOOK-RED\") }\n"
+            },
+        ),
+    ]
+}
+
+const IX_HOOK: &str = "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" governance-check";
+
+/// Go as the check finds it; the test-running cases need a real one.
+fn go() -> PathBuf {
+    hooks::find_go().expect("Go is needed to run the hooks' tests")
 }
 
 #[test]
 fn a_wired_hook_whose_file_is_missing_fails_the_check_by_name() {
     let repo = seeded(
-        &settings_with(&["bash $CLAUDE_PROJECT_DIR/.claude/hooks/ghost.sh"]),
+        &settings_with(&["\"$CLAUDE_PROJECT_DIR/.claude/hooks/ghost\""]),
         &[],
     );
     let result = hooks::check(repo.path(), None);
     assert_eq!(result.status, Status::Fail, "{result:?}");
-    assert!(result.summary.contains("ghost.sh"), "{}", result.summary);
-    assert!(result.remedy.as_deref().is_some_and(|r| !r.is_empty()));
-}
-
-#[test]
-fn a_hook_that_does_not_parse_as_bash_fails_the_check_by_name() {
-    let repo = seeded(
-        &settings_with(&["bash $CLAUDE_PROJECT_DIR/.claude/hooks/broken.sh"]),
-        &[("broken.sh", "#!/usr/bin/env bash\nif [ ; then\n")],
-    );
-    let result = hooks::check(repo.path(), Some(&bash()));
-    assert_eq!(result.status, Status::Fail, "{result:?}");
-    assert!(result.summary.contains("broken.sh"), "{}", result.summary);
-}
-
-#[test]
-fn a_fixture_that_exits_non_zero_fails_the_check_with_its_exit_code() {
-    let repo = seeded(
-        &settings_with(&["bash $CLAUDE_PROJECT_DIR/.claude/hooks/fine.sh"]),
-        &[
-            ("fine.sh", "#!/usr/bin/env bash\nexit 0\n"),
-            (
-                "test-fine.sh",
-                "#!/bin/bash\necho 'FAIL  something'\nexit 3\n",
-            ),
-        ],
-    );
-    let result = hooks::check(repo.path(), Some(&bash()));
-    assert_eq!(result.status, Status::Fail, "{result:?}");
     assert!(
-        result.summary.contains("test-fine.sh"),
+        result.summary.contains(".claude/hooks/ghost"),
         "{}",
         result.summary
     );
-    assert!(result.summary.contains("exit 3"), "{}", result.summary);
-    let tail = result.details["fixtures"][0]["tail"]
-        .as_str()
-        .expect("the fixture's last lines ride in details");
-    assert!(tail.contains("FAIL  something"), "{tail}");
 }
 
 #[test]
-fn a_passing_fixture_and_present_hooks_are_ok_and_counted() {
-    let repo = seeded(
-        &settings_with(&[
-            "bash $CLAUDE_PROJECT_DIR/.claude/hooks/a.sh",
-            "bash $CLAUDE_PROJECT_DIR/.claude/hooks/b.sh",
-        ]),
-        &[
-            ("a.sh", "#!/usr/bin/env bash\nexit 0\n"),
-            ("b.sh", "#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n"),
-            (
-                "test-a.sh",
-                "#!/bin/bash\nbash \"$(dirname \"$0\")/a.sh\" </dev/null\n",
-            ),
-        ],
-    );
-    let result = hooks::check(repo.path(), Some(&bash()));
+fn the_built_bin_directory_is_never_missing() {
+    let repo = seeded(&settings_with(&[IX_HOOK]), &module(true));
+    let result = hooks::check(repo.path(), Some(&go()));
     assert_eq!(result.status, Status::Ok, "{result:?}");
-    assert_eq!(result.details["hooks_wired"], 2);
-    assert_eq!(result.details["fixtures_passed"], 1);
 }
 
 #[test]
-fn without_bash_the_check_warns_instead_of_claiming_green() {
-    let repo = seeded(
-        &settings_with(&["bash $CLAUDE_PROJECT_DIR/.claude/hooks/a.sh"]),
-        &[("a.sh", "#!/usr/bin/env bash\nexit 0\n")],
+fn a_hook_run_through_a_shell_fails_the_check_naming_its_command() {
+    for command in [
+        "bash $CLAUDE_PROJECT_DIR/.claude/hooks/a.sh",
+        "pwsh -File C:/x/h.ps1",
+        "powershell -NoProfile -File \"C:\\x\\h.ps1\" session",
+        "python3 hook.py",
+        "\"C:/Program Files/Git/bin/bash.exe\" -c true",
+        "~/.claude/hooks/guard.sh",
+    ] {
+        let repo = seeded(&settings_with(&[command]), &[]);
+        let result = hooks::check(repo.path(), None);
+        assert_eq!(result.status, Status::Fail, "{command}: {result:?}");
+        assert!(
+            result.summary.contains("through a shell") || result.summary.contains("absent"),
+            "{command}: {}",
+            result.summary
+        );
+    }
+    let repo = seeded(&settings_with(&["bash -c true"]), &[]);
+    let result = hooks::check(repo.path(), None);
+    assert!(
+        result.summary.contains("bash -c true"),
+        "{}",
+        result.summary
     );
+}
+
+#[test]
+fn a_single_quoted_program_or_an_env_launcher_is_a_shell() {
+    for command in [
+        "'C:/Program Files/Git/bin/bash.exe' -c true",
+        "'/bin/sh' -c true",
+        "env bash -c true",
+        "/usr/bin/env bash -c true",
+        "\"C:/Program Files/Git/usr/bin/env.exe\" sh -c true",
+        "env -i PATH=/usr/bin HOME=/tmp sh -c true",
+        "env -u HOME -C /tmp zsh -c true",
+        "env -- pwsh -NoProfile -Command 1",
+        "env -S \"bash -c true\"",
+        "env --split-string='python3 -c 1'",
+    ] {
+        assert!(hooks::runs_shell(command), "{command}");
+    }
+    let repo = seeded(&settings_with(&["env bash -c true"]), &[]);
+    let result = hooks::check(repo.path(), None);
+    assert_eq!(result.status, Status::Fail, "{result:?}");
+}
+
+#[test]
+fn a_shell_name_as_an_ordinary_argument_is_not_a_shell() {
+    for command in [
+        "node hook.js env bash",
+        "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" correction-detector bash",
+        "'C:/tools/ix-hooks.exe' sh",
+        "env FOO=1 node hook.js bash",
+        "env -u bash node hook.js",
+        "env",
+    ] {
+        assert!(!hooks::runs_shell(command), "{command}");
+    }
+}
+
+#[test]
+fn wmux_style_tool_name_arguments_are_not_shells() {
+    assert!(!hooks::runs_shell(
+        "node \"C:/Program Files/wmux/resources/cli/wmux-hook.js\" Bash"
+    ));
+    assert!(!hooks::runs_shell(
+        "node \"C:/Program Files/wmux/resources/cli/wmux-hook.js\" PowerShell"
+    ));
+    assert!(!hooks::runs_shell(IX_HOOK));
+    assert!(!hooks::runs_shell(
+        "go -C \"$CLAUDE_PROJECT_DIR/go/claudehooks\" run ./cmd/ix-hooks session-start"
+    ));
+}
+
+#[test]
+fn a_script_lying_in_the_hooks_directory_fails_the_check() {
+    let mut files = module(true);
+    files.push((".claude/hooks/old.sh", "echo hi\n"));
+    let repo = seeded(&settings_with(&[IX_HOOK]), &files);
+    let result = hooks::check(repo.path(), None);
+    assert_eq!(result.status, Status::Fail, "{result:?}");
+    assert!(result.summary.contains("old.sh"), "{}", result.summary);
+}
+
+#[test]
+fn red_hook_tests_fail_the_check_with_their_tail() {
+    let repo = seeded(&settings_with(&[IX_HOOK]), &module(false));
+    let result = hooks::check(repo.path(), Some(&go()));
+    assert_eq!(result.status, Status::Fail, "{result:?}");
+    assert!(result.summary.contains("go test"), "{}", result.summary);
+    let tail = result.details["go_tests"]["tail"].as_str().expect("tail");
+    assert!(tail.contains("HOOK-RED"), "{tail}");
+}
+
+#[test]
+fn ix_hooks_without_its_module_fails_the_check() {
+    let repo = seeded(&settings_with(&[IX_HOOK]), &[]);
+    let result = hooks::check(repo.path(), None);
+    assert_eq!(result.status, Status::Fail, "{result:?}");
+    assert!(
+        result.summary.contains("go/claudehooks"),
+        "{}",
+        result.summary
+    );
+}
+
+#[test]
+fn without_go_the_check_warns_instead_of_claiming_green() {
+    let repo = seeded(&settings_with(&[IX_HOOK]), &module(true));
     let result = hooks::check(repo.path(), None);
     assert_eq!(result.status, Status::Warn, "{result:?}");
-    assert!(result.summary.contains("bash"), "{}", result.summary);
-    assert!(result.remedy.as_deref().is_some_and(|r| !r.is_empty()));
 }
 
 #[test]
@@ -139,16 +216,13 @@ fn a_repo_without_settings_has_nothing_to_check() {
 }
 
 #[test]
-fn this_workspace_wires_its_hooks_and_runs_their_fixtures() {
-    let result = hooks::check(&repo_root(), Some(&bash()));
+fn this_workspace_wires_its_hooks_in_go_and_their_tests_pass() {
+    let result = hooks::check(&repo_root(), Some(&go()));
     assert_eq!(result.status, Status::Ok, "{result:?}");
     let wired = result.details["hooks_wired"].as_u64().expect("count");
-    let passed = result.details["fixtures_passed"].as_u64().expect("count");
     assert!(wired >= 10, "ix wires at least ten hooks, saw {wired}");
-    assert!(
-        passed >= 2,
-        "governance-check and correction-detector have fixtures, saw {passed}"
-    );
+    assert_eq!(result.details["shell_wired"], serde_json::json!([]));
+    assert_eq!(result.details["go_tests"]["exit"], 0);
     let report = doctor::run(&repo_root(), doctor::Options::default());
     assert!(
         report.checks.iter().any(|c| c.name == "hooks"),
