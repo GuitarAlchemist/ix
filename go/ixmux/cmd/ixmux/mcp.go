@@ -64,6 +64,12 @@ type mcp struct {
 	client *http.Client
 }
 
+func newMCP(state string, stdout io.Writer) *mcp {
+	return &mcp{state: state, out: json.NewEncoder(stdout),
+		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
+		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
+}
+
 func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -75,9 +81,7 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: ixmux mcp --state <dir>")
 		return server.ExitUsage
 	}
-	m := &mcp{state: *state, out: json.NewEncoder(stdout),
-		// Loopback only, no proxy, no connection kept: an ixmux restarted since is a new address.
-		client: &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}}
+	m := newMCP(*state, stdout)
 	br := bufio.NewReaderSize(stdin, 64<<10)
 	for {
 		line, tooLong, err := readRPCLine(br, MCPMaxLine)
@@ -362,8 +366,9 @@ func (m *mcp) status(raw json.RawMessage) (any, *toolErr) {
 
 // submit hands a mandate to ixmux and answers a receipt within MCPReceiptWait (plus one bounded
 // read). POST /v1/mandates waits for the whole turn, so it runs on; the receipt says accepted only
-// once ixmux answered, or GET /v1/mandates/{id} shows the mandate accepted or delivering: the
-// engine shows a transition only after its line is written and synced in the command log.
+// once ixmux answered, or GET /v1/mandates/{id} shows the mandate in a durable state: the engine
+// shows a transition only after its line is written and synced in the command log. A POST cut at
+// the transport proves nothing either way: the entry is read on until the bound.
 func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 	began := time.Now()
 	var a struct {
@@ -422,6 +427,12 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 	for {
 		select {
 		case p := <-done:
+			if p.err != nil && p.err.Error == reasonUnavailable {
+				// Cut at the transport: ixmux may have taken it all the same. Its entry tells,
+				// until the receipt's bound.
+				done = nil
+				continue
+			}
 			if p.err != nil {
 				return nil, p.err
 			}
@@ -431,9 +442,11 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 			}
 			return receipt, nil
 		case <-tick.C:
+			// Any durable state proves the mandate is in the command log: the engine shows an
+			// entry only once its accepted line is synced.
+			// @ai:invariant the receipt says accepted only on ixmux's answer or a durable state of the entry [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestReceiptAfterACutPOST]
 			var en deliver.Entry
-			if m.do(budget, c, "GET", "/v1/mandates/"+a.MandateID, nil, &en) == nil &&
-				(en.State == deliver.Accepted || en.State == deliver.Delivering) {
+			if m.do(budget, c, "GET", "/v1/mandates/"+a.MandateID, nil, &en) == nil && durable(en.State) {
 				receipt["accepted"], receipt["state"], receipt["replayed"] = true, en.State, false
 				return receipt, nil
 			}
@@ -443,6 +456,15 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 			return receipt, nil
 		}
 	}
+}
+
+// durable: a state the engine writes to the command log.
+func durable(s deliver.State) bool {
+	switch s {
+	case deliver.Accepted, deliver.Delivering, deliver.Delivered, deliver.Refused, deliver.Uncertain:
+		return true
+	}
+	return false
 }
 
 func (m *mcp) result(raw json.RawMessage) (any, *toolErr) {
