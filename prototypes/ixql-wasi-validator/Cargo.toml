@@ -1,0 +1,19 @@
+[package]
+name = "ixql-wasi-validator-prototype"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "PROTOTYPE, not a workspace member: an IXQL capability that runs a Go WASI (preview 1) validator in ix-wasm's sandbox and turns its report into a verdict."
+
+# Its own workspace root, so it is NOT one of ix's workspace members: `cargo build --workspace`,
+# `ix doctor`, the crate count and crate-maturity.toml do not see it. Delete the folder to remove it.
+[workspace]
+
+[dependencies]
+ix-ixql = { path = "../../crates/ix-ixql" }
+ix-wasm = { path = "../../crates/ix-wasm" }
+ix-types = { path = "../../crates/ix-types" }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,7 @@
+-- PROTOTYPE pipeline: a native IXQL capability (`go.validate`) runs a Go WASI validator in the
+-- ix-wasm sandbox. The validator's report becomes a verdict: T 1.0 when valid, F 1.0 when not.
+candidate <- ix.io.read("sandbox/candidate.json")
+
+report <- go.validate(candidate)
+  → when T >= 0.9: ix.io.write("sandbox/accepted.json", candidate)
+  → when F: alert("validation", "candidate rejected by the WASI validator")

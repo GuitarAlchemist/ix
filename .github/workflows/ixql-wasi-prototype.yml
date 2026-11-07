@@ -1,0 +1,64 @@
+### EXPERIMENTAL prototype check: prototypes/ixql-wasi-validator (PR #508). Not a required gate.
+#
+# The prototype has its own [workspace], so ci.yml's `cargo test --workspace` never compiles it
+# and nothing ran its assertions in CI. This job runs, on one Linux runner and only when the
+# prototype or this file changes:
+#   1. the prototype crate's tests (IXQL -> Go fixture validator built GOOS=wasip1 -> ix-wasm's
+#      wasmi sandbox -> verdict gate); they fail, not skip, without Go;
+#   2. p3-spike/run.sh with P3_SKIP_RUST_GUESTS=1: steps 1, 2 and 4 print evidence only, steps
+#      6-8 assert exact exit codes, stdout against p3-spike/expected/* and the adapter trap
+#      marker, with negative controls; the script exits 1 on any failed assertion. Steps 3 and 5
+#      (the WASI 0.3 Rust guests: wasm32-wasip2 + crates.io) are skipped, since they assert
+#      nothing.
+# Tools: Go 1.24.7 (the diagnostic runtime diff in step 7 is for that release, applied to a
+# scratch copy through `go build -overlay`), and Wasmtime 50.0.1, wasm-tools 1.263.0 and the
+# preview1 adapter from official GitHub releases, each checked against a sha256 in run.sh.
+# Fixtures are the synthetic ones under prototypes/ixql-wasi-validator/fixtures. No secrets.
+name: IXQL WASI prototype (experimental)
+
+on:
+  pull_request:
+    paths:
+      - 'prototypes/ixql-wasi-validator/**'
+      - '.github/workflows/ixql-wasi-prototype.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ixql-wasi-prototype-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prototype:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.7'
+          cache: false
+
+      - name: Go is exactly 1.24.7
+        run: test "$(go env GOVERSION)" = go1.24.7 || { go version; exit 1; }
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: prototypes/ixql-wasi-validator
+          key: ixql-wasi-prototype
+
+      - name: Prototype crate tests
+        run: cargo test --manifest-path prototypes/ixql-wasi-validator/Cargo.toml
+
+      - name: p3-spike/run.sh (asserted steps 6-8)
+        env:
+          P3_SKIP_RUST_GUESTS: '1'
+        run: prototypes/ixql-wasi-validator/p3-spike/run.sh "$RUNNER_TEMP/p3-tools"

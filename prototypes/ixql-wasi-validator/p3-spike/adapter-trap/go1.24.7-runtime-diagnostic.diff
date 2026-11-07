@@ -1,0 +1,57 @@
+DIAGNOSTIC ONLY — NOT FOR PRODUCTION. Never apply this to a GOROOT or a release toolchain.
+
+A two-hunk change to the Go 1.24.7 runtime (src/runtime/os_wasm.go, src/runtime/mem_wasm.go),
+used solely to confirm the cause of the wasi_snapshot_preview1 adapter trap (see ../../README.md,
+"Follow-up 2"). ../run.sh step 7 applies it to copies of those two files in a scratch directory and
+builds with `go build -overlay`, so the installed toolchain is never modified.
+
+Provenance: the context lines are from the Go project's source, Copyright The Go Authors,
+BSD-3-Clause (https://go.dev/LICENSE); the added lines are this prototype's. Upstream sources:
+https://github.com/golang/go/blob/go1.24.7/src/runtime/os_wasm.go
+https://github.com/golang/go/blob/go1.24.7/src/runtime/mem_wasm.go
+
+--- a/runtime/os_wasm.go
++++ b/runtime/os_wasm.go
+@@ -13,7 +13,8 @@
+ 	// https://webassembly.github.io/spec/core/exec/runtime.html#memory-instances
+ 	physPageSize = 64 * 1024
+ 	initBloc()
+-	blocMax = uintptr(currentMemory()) * physPageSize // record the initial linear memory size
++	// DIAGNOSTIC PATCH: do not claim pages grown before _start (the adapter stack page).
++	// 	blocMax = uintptr(currentMemory()) * physPageSize // record the initial linear memory size
+ 	ncpu = 1
+ 	getg().m.procid = 2
+ }
+--- a/runtime/mem_wasm.go
++++ b/runtime/mem_wasm.go
+@@ -2,6 +2,10 @@
+ // Use of this source code is governed by a BSD-style
+ // license that can be found in the LICENSE file.
+ 
++// DIAGNOSTIC PATCH (ix prototype, not upstream): sbrk respects memory.grow calls made by
++// someone else (the wasi_snapshot_preview1 component adapter) instead of assuming that
++// its own growth is contiguous with its last break.
++
+ package runtime
+ 
+ import "unsafe"
+@@ -10,6 +14,10 @@
+ 	bl := bloc
+ 	n = memRound(n)
+ 	if bl+n > blocMax {
++		if cur := uintptr(currentMemory()) * physPageSize; cur != blocMax {
++			bl = cur
++			blocMax = cur
++		}
+ 		grow := (bl + n - blocMax) / physPageSize
+ 		size := growMemory(int32(grow))
+ 		if size < 0 {
+@@ -18,7 +26,7 @@
+ 		resetMemoryDataView()
+ 		blocMax = bl + n
+ 	}
+-	bloc += n
++	bloc = bl + n
+ 	return unsafe.Pointer(bl)
+ }
+ 
