@@ -79,6 +79,8 @@ type Ack struct {
 	Receipt string `json:"receipt,omitempty"`
 	Text    string `json:"text,omitempty"`     // the target's answer, bounded by the adapter
 	AckSeen bool   `json:"ack_seen,omitempty"` // the answer began with the ACK the adapter asked for
+	// Truncated: the adapter cut Text at its bound; the end of the answer is missing.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // Adapter delivers a mandate to its target. An error wrapping ErrRefused says the target

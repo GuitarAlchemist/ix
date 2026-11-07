@@ -694,11 +694,11 @@ func (a *Adapter) Deliver(ctx context.Context, m deliver.Mandate) (deliver.Ack, 
 	if r.err != nil {
 		return deliver.Ack{}, r.err
 	}
-	text := r.text
+	text, cut := r.text, false
 	if len(text) > MaxReply {
-		text = text[:MaxReply]
+		text, cut = text[:MaxReply], true
 	}
-	ack := deliver.Ack{Receipt: c.session + ":" + m.MandateID, Text: text, AckSeen: r.ackSeen}
+	ack := deliver.Ack{Receipt: c.session + ":" + m.MandateID, Text: text, AckSeen: r.ackSeen, Truncated: cut}
 	if r.isErr {
 		return ack, fmt.Errorf("claude answered with an error result: %.200s", r.text)
 	}

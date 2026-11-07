@@ -30,4 +30,17 @@ func TestAckTextIsBounded(t *testing.T) {
 	if err != nil || res.Ack == nil || len(res.Ack.Text) != MaxReply {
 		t.Errorf("an answer of 10000 bytes: %+v %v, want an Ack text of exactly %d bytes", res, err, MaxReply)
 	}
+	// S6: the Ack says its text was cut, so a reader of the result knows its end is missing.
+	if res.Ack == nil || !res.Ack.Truncated {
+		t.Error("an answer of 10000 bytes: an Ack not marked Truncated")
+	}
+}
+
+// S6: an answer within the bound is not marked truncated.
+func TestShortAckIsNotTruncated(t *testing.T) {
+	a, e, _ := setup(t, 5*time.Second)
+	res, err := send(t, a, e, "m1", "x")
+	if err != nil || res.Ack == nil || res.Ack.Truncated {
+		t.Errorf("a short answer: %+v %v, want an Ack not truncated", res.Ack, err)
+	}
 }
