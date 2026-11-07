@@ -233,7 +233,10 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 
 	inc, err := t.Incarnation()
 	if err != nil {
-		return Result{}, fmt.Errorf("incarnation of %s: %w", m.Target, err)
+		// No live incarnation (a child ended, or lost): the mandate's is certainly not the
+		// current one, and nothing was written. A typed refusal, not an internal error.
+		// @ai:invariant a target without a live incarnation refuses a mandate stale-incarnation [T:test conf:0.85 src:go/ixmux/claudestream/s6d_test.go:TestLostTargetIsSaidAndRefusedTyped]
+		return Result{}, &Refusal{StaleIncarnation, fmt.Sprintf("%s has no live incarnation: %v", m.Target, err)}
 	}
 	if inc != m.Incarnation {
 		return Result{}, &Refusal{StaleIncarnation, fmt.Sprintf("mandate is for incarnation %q, %s is now %q", m.Incarnation, m.Target, inc)}

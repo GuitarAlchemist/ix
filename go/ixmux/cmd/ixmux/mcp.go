@@ -454,6 +454,7 @@ type ixStatus struct {
 		Incarnation string `json:"incarnation"`
 		Alive       bool   `json:"alive"`
 		Error       string `json:"error"`
+		State       string `json:"state"`
 	} `json:"targets"`
 	Deliveries []deliver.Entry `json:"deliveries"`
 	Bounds     struct {
@@ -488,11 +489,12 @@ func (m *mcp) status(raw json.RawMessage) (any, *toolErr) {
 		Kind        string     `json:"kind"`
 		Incarnation string     `json:"incarnation"`
 		Alive       bool       `json:"alive,omitempty"`
+		Lost        bool       `json:"lost,omitempty"` // its kill failed; its process may still run
 		InFlight    []inFlight `json:"in_flight"`
 	}
 	out := []target{} // a target's error is ixmux's free text: it does not pass
 	for _, t := range st.Targets {
-		tg := target{Name: t.Name, Kind: t.Kind, Incarnation: t.Incarnation, Alive: t.Alive, InFlight: []inFlight{}}
+		tg := target{Name: t.Name, Kind: t.Kind, Incarnation: t.Incarnation, Alive: t.Alive, Lost: t.State == "lost", InFlight: []inFlight{}}
 		for _, d := range st.Deliveries {
 			if d.Target == t.Name && (d.State == deliver.Accepted || d.State == deliver.Delivering || d.StillRunning) {
 				tg.InFlight = append(tg.InFlight, inFlight{d.MandateID, d.State, d.StillRunning})

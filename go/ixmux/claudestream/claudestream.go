@@ -256,6 +256,9 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 // after the kill; its incarnation is lost.
 const ReasonKillFailed = "kill-failed"
 
+// ErrKillFailed is the end of a lost incarnation (see Lost).
+var ErrKillFailed = errors.New(ReasonKillFailed)
+
 // errStopping: a start that began, or would begin, once Stop was called.
 var errStopping = errors.New("the claude target is stopping")
 
@@ -631,7 +634,7 @@ func (c *child) kill() error {
 	if kerr == nil {
 		kerr = fmt.Errorf("the child did not exit within %s of the kill", c.a.cfg.StopWait)
 	}
-	lost := fmt.Errorf("%s: the claude child could not be killed (%v); its incarnation is lost", ReasonKillFailed, kerr)
+	lost := fmt.Errorf("%w: the claude child could not be killed (%v); its incarnation is lost", ErrKillFailed, kerr)
 	c.mu.Lock()
 	p := c.pending
 	c.pending = nil
@@ -683,6 +686,8 @@ func (a *Adapter) Incarnation() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch {
+	case errors.Is(c.dead, ErrKillFailed):
+		return "", fmt.Errorf("claude child of %s is lost (%v); it is not relaunched", a.cfg.Name, c.dead)
 	case c.dead != nil:
 		return "", fmt.Errorf("claude child of %s ended (%v); ixmux relaunches it only past TurnMax", a.cfg.Name, c.dead)
 	case !c.inited:
@@ -695,6 +700,10 @@ func (a *Adapter) sessionID() string { return a.live().session }
 
 // PID of the live child.
 func (a *Adapter) PID() int { return a.live().cmd.Process.Pid }
+
+// Lost says whether the target's incarnation is lost: its kill failed, its process may still run
+// (PID tells which). It is not relaunched.
+func (a *Adapter) Lost() bool { return errors.Is(a.live().deadErr(), ErrKillFailed) }
 
 // Alive says whether the live child still runs.
 func (a *Adapter) Alive() bool { return a.live().deadErr() == nil }

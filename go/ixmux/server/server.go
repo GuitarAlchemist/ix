@@ -115,6 +115,8 @@ type targetInfo struct {
 	Alive       bool     `json:"alive,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
 	Error       string   `json:"error,omitempty"`
+	// State is "lost" for a claude target whose kill failed: its process may still run (PID).
+	State string `json:"state,omitempty"`
 }
 
 // Server is one running ixmux.
@@ -570,6 +572,9 @@ func (s *Server) status(epoch string, seq uint64) any {
 	}
 	for name, a := range s.claude {
 		ti := targetInfo{Name: name, Kind: "claude", PID: a.PID(), Alive: a.Alive(), Tools: a.Tools()}
+		if a.Lost() {
+			ti.State = "lost"
+		}
 		if inc, err := a.Incarnation(); err != nil {
 			ti.Error = err.Error()
 		} else {
