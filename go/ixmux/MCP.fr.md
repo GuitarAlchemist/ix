@@ -80,8 +80,8 @@ raison d'un mandat, l'erreur d'une cible) n'atteint une réponse d'outil.
 | `bad-arguments` | un argument inconnu, un mauvais type, `target` absent |
 | `bad-mandate-id` | un `mandate_id` vide, de plus de 128 octets, fait d'autre chose que des lettres, chiffres, `.`, `_` et `-`, ou qui commence par `.` |
 | `submits-in-flight` | 4 dépôts attendent encore la réponse d'ixmux (leurs POST courent au-delà du reçu) ; réessayer une fois l'un d'eux fini |
-| `ixmux-answer-too-large` | une réponse HTTP d'ixmux de plus de 4 Mio |
-| `ixmux-unverified` | le serveur à l'adresse d'`ixmux.json` n'a pas répondu au défi `/v1/hello` avec le mac du jeton : le jeton n'a pas été envoyé |
+| `ixmux-answer-too-large` | une réponse HTTP d'ixmux de plus de 4 Mio, ou des en-têtes de plus de 64 Kio : la connexion est fermée, le reste n'est pas lu |
+| `ixmux-unverified` | le serveur à l'adresse d'`ixmux.json` n'a pas répondu au défi `/v1/hello` avec le mac du jeton, ou y a répondu par plus de 4 Kio (en-têtes compris) ou un corps de plus de 1 Kio : le jeton n'a pas été envoyé, le reste n'est pas lu |
 | `ixmux-error` | une réponse d'ixmux que l'adaptateur ne sait pas lire, ou un refus sans code connu |
 
 Ce qui passe d'ixmux n'est que de la donnée : des identifiants (noms, types, incarnations, ids de

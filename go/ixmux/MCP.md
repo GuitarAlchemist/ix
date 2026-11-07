@@ -79,8 +79,8 @@ a mandate's reason, a target's error) reaches a tool answer.
 | `bad-arguments` | an unknown argument, a wrong type, a missing `target` |
 | `bad-mandate-id` | a `mandate_id` that is empty, over 128 bytes, not made of letters, digits, `.`, `_` and `-`, or starting with `.` |
 | `submits-in-flight` | 4 submissions still wait for ixmux's answer (their POSTs run past the receipt); try again once one ends |
-| `ixmux-answer-too-large` | an HTTP answer of ixmux over 4 MiB |
-| `ixmux-unverified` | the server at the address of `ixmux.json` did not answer the `/v1/hello` challenge with the mac of the token: the token was not sent |
+| `ixmux-answer-too-large` | an HTTP answer of ixmux over 4 MiB, or its headers over 64 KiB: the connection is closed, the rest is not read |
+| `ixmux-unverified` | the server at the address of `ixmux.json` did not answer the `/v1/hello` challenge with the mac of the token, or answered it with more than 4 KiB (headers included) or a body over 1 KiB: the token was not sent, the rest is not read |
 | `ixmux-error` | an answer of ixmux the adapter cannot read, or a refusal without a known code |
 
 What passes from ixmux is data only: identifiers (names, kinds, incarnations, mandate ids,
