@@ -456,6 +456,7 @@ frozen core of `ixctl.v1`.
 | `cpu@1` | `busy_pct`, `cores` | The host's processor busy share over the last interval (`GetSystemTimes`; `/proc/stat`). The first interval emits nothing. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | The host's physical memory (`GlobalMemoryStatusEx`; `/proc/meminfo`). |
 | `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, and the event's own (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | The JSONL journal of Delta, the voice robot, named by `ixctl up --delta-journal FILE`: one line per tick, every top-level field of the line as it is, plus `offset`, the line's byte position. Without the flag the kind is listed and refused at create. |
+| `claude-sessions@1` | `read_at_ms`, `read_ms`, `count`, `sessions`, `gone` | Claude Code's live sessions of the plane's user, read with `claude agents --json` (the CLI named by `ixctl up --claude-bin`). Without the flag the kind is listed and refused at create; `every_ms` is at least 5000. |
 | `mux@1` | (its children's) | No sampler: it carries what its children pass it. |
 
 `delta@1` is the plane *reading* a file another program writes (brickyard's `brain.exe`, which
@@ -468,6 +469,48 @@ same name, said once and read again from offset 0. `node`, `kind` and `seq` are 
 stamps and win over a line field of the same name. A consumer dedups on the writer's pair
 (`pid`, `journal_seq`), which restarts with each brain, and resumes on `offset`, which belongs
 to the file.
+
+`claude-sessions@1` tells which Claude Code sessions could take work, without ever saying so on
+a guess. One record per tick is a snapshot of `claude agents --json` (no model call). A read
+takes seconds; it runs as a process tree of its own (a job object on Windows, a process group on
+Linux) that is killed with everything it started at 20 s, on a probe stop or at the plane's
+shutdown, and once the CLI has ended; an output a descendant keeps open more than 1 s after the
+CLI's end is refused. Each entry of `sessions` keeps apart what Claude Code
+declares and what the plane verified: `session_id` (the stable identity), `name`, `kind`,
+`declared` (the listed status, else state), `pid`, `started_at_ms`, and, only when the process
+at that pid was created at most 60 s before the session's start, `identity: "verified"`,
+`proc_start_ms` and `incarnation` (`pid:creation_ms`, which changes on a resume:
+`incarnation_changed: true`). That match is a correlation, not an authentication: it shows that a
+live process (not a zombie) at the listed pid was created within 60 s before the listed start,
+which a pid reused by a later process fails; it does not prove that process is Claude Code, and
+it trusts the list as Claude Code wrote it. `availability` is `idle` or `busy` for a verified incarnation
+only, `blocked` for a declared wait, and otherwise `unknown` with a `reason`: `no-pid`,
+`no-started-at`, `process-unreadable`, `pid-reused` (a process created after the session
+started holds the pid), `start-mismatch`, or `declared "…"`. A `null` answer or a list naming one session twice is an error record,
+never an empty list. A session missing from a later
+read is said once in `gone` (`unknown`, `absent`, its `last_incarnation`). A failed or slow
+read is an error record with no availability, and no earlier one is repeated: silence, an error
+or an old `read_at_ms` never means idle. The plane must run in that user's session (a desk peer);
+a service in session 0 sees no session. Availability is an observation, not an authority to
+dispatch.
+
+A consumer (Gaia, for one) reads a `claude-sessions@1` node `c` as one SSE request, plain HTTP on
+the plane's loopback `addr`: `GET http://<addr>/v1/events?ch=probe/c&since=0` with
+`Authorization: Bearer <token>`, the token being the
+`token` field of the plane's state file (the `state_file` of `ixctl up`'s ready line; the ready
+line itself never carries it). `since=0` replays what the ring still holds, then the stream
+follows; each `data:` line is an envelope (`ch`, `seq`, `epoch`, `origin`, `t`) whose `ev` is
+`{"kind": "sample", "data": {...}}` with the fields above. Key on the envelope's (`origin`, `epoch`,
+`seq`), not on `data`'s `seq`, which is the node's own counter, and resume with `Last-Event-ID`,
+the `id:` line (`epoch:seq`). A `since=0` read replays the whole ring, each record with the full
+list. The envelope's `t` is the plane's clock when it published the sample, in Unix milliseconds,
+at or after `data`'s `read_at_ms` (the same clock when the read ended); it is not the `t` a service
+may put in its own event (`ev.t`, on the emitter's clock, see `svc/<name>`). To tell a sample
+published during your read from a replayed one, note your own clock in Unix milliseconds just
+before the request: a sample whose `t` is later was published after that moment, the others are
+replay. ixctl synchronises no clock: the comparison holds because the reader runs on the plane's
+machine (`addr` is loopback) and reads the same system clock. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
+bound); past that, the node says nothing, which is never idle.
 
 A **node** is one instance of a kind in the tree:
 
