@@ -547,6 +547,25 @@ func (e *Engine) Status() []Entry {
 	return out
 }
 
+// Mandate is the delivery of a mandate id (unique in the log) as in Status, with its Ack once
+// delivered: the Ack is in the command log, so it is read back after a restart too.
+// @ai:invariant the Ack of a delivered mandate is read back by its id after the engine reopens its log [T:test conf:0.85 src:go/ixmux/server/s6_test.go:TestMandateResultIsReadBackAfterARestart]
+func (e *Engine) Mandate(id string) (Entry, *Ack, bool) {
+	for _, en := range e.Status() {
+		if en.MandateID == id {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			var ack *Ack
+			if r := e.recs[key{en.Target, id}]; r != nil && r.ack != nil {
+				a := *r.ack
+				ack = &a
+			}
+			return en, ack, true
+		}
+	}
+	return Entry{}, nil, false
+}
+
 // Close refuses every new Deliver and Reconcile (engine-closed), then waits, up to the delivery
 // deadline, for the deliveries and reconciles under way and the adapter and Status calls that
 // have not returned, each until its final state is written (a late answer is still recorded).

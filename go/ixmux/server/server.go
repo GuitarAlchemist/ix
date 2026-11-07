@@ -512,13 +512,20 @@ func (s *Server) entry(id string) (deliver.Entry, bool) {
 	return deliver.Entry{}, false
 }
 
+// mandateView is GET /v1/mandates/{id}: the delivery as in /v1/status, and its result once
+// delivered (the Ack the POST answered, bounded by the adapter), read from the command log.
+type mandateView struct {
+	deliver.Entry
+	Ack *deliver.Ack `json:"ack,omitempty"`
+}
+
 func (s *Server) getMandate(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.entry(r.PathValue("id"))
+	e, ack, ok := s.eng.Mandate(r.PathValue("id"))
 	if !ok {
 		refuse(w, http.StatusNotFound, deliver.UnknownMandate, "")
 		return
 	}
-	writeJSON(w, http.StatusOK, e)
+	writeJSON(w, http.StatusOK, mandateView{e, ack})
 }
 
 func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
