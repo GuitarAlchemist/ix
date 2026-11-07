@@ -118,7 +118,11 @@ func (m *mcpProc) next() rpcResponse {
 func (m *mcpProc) call(method string, params any) rpcResponse {
 	m.t.Helper()
 	m.nextID++
-	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.nextID, "method": method, "params": params})
+	req := map[string]any{"jsonrpc": "2.0", "id": m.nextID, "method": method}
+	if params != nil { // JSON-RPC: params, when present, are an object or an array, never null
+		req["params"] = params
+	}
+	b, _ := json.Marshal(req)
 	m.send(string(b))
 	r := m.next()
 	if string(r.ID) != fmt.Sprint(m.nextID) {

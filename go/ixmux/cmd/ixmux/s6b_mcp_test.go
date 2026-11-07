@@ -89,6 +89,59 @@ func (p *inproc) tool(name string, args map[string]any) toolResult {
 // statusJSON is a /v1/status of one claude target c.
 const statusJSON = `{"version":"fake","epoch":"e","targets":[{"name":"c","kind":"claude","incarnation":"inc-1"}],"deliveries":[],"bounds":{"delivery_timeout":"30s"}}`
 
+// S6B Codex 5: JSON-RPC 2.0 as written: an id is a string or a number; id null is no
+// notification; an invalid request is answered -32600 even without an id; params are structured;
+// initialize has its required fields (-32602).
+func TestJSONRPCValidation(t *testing.T) {
+	p := newInproc(t, t.TempDir())
+	init := `"params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}`
+	for _, c := range []struct {
+		line   string
+		code   int    // 0: a result
+		id     string // the id of the answer, "" for none at all
+		answer bool
+	}{
+		{`{"jsonrpc":"2.0","id":"a","method":"ping"}`, 0, `"a"`, true},
+		{`{"jsonrpc":"2.0","id":7,"method":"ping"}`, 0, `7`, true},
+		{`{"jsonrpc":"2.0","id":true,"method":"ping"}`, -32600, `null`, true},
+		{`{"jsonrpc":"2.0","id":{},"method":"ping"}`, -32600, `null`, true},
+		{`{"jsonrpc":"2.0","id":[1],"method":"ping"}`, -32600, `null`, true},
+		{`{"jsonrpc":"2.0","id":null,"method":"ping"}`, -32600, `null`, true},
+		{`{"jsonrpc":"2.0","method":5}`, -32600, `null`, true},
+		{`{"id":1,"method":"ping"}`, -32600, `1`, true},
+		{`"a string"`, -32600, `null`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"ping","params":null}`, -32600, `1`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"ping","params":3}`, -32600, `1`, true},
+		{`{"jsonrpc":"2.0","method":"notifications/initialized"}`, 0, "", false},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":[]}`, -32602, `1`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`, -32602, `1`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":5,"capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`, -32602, `1`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize",` + init + `}`, 0, `1`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ixmux_status","arguments":[]}}`, -32602, `1`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{}}}`, -32602, `1`, true},
+	} {
+		rs := p.raw(c.line)
+		switch {
+		case !c.answer:
+			if len(rs) != 0 {
+				t.Errorf("%s: %d answers, want none", c.line, len(rs))
+			}
+			continue
+		case len(rs) != 1:
+			t.Errorf("%s: %d answers, want one", c.line, len(rs))
+			continue
+		}
+		r := rs[0]
+		got := 0
+		if r.Error != nil {
+			got = r.Error.Code
+		}
+		if got != c.code || string(r.ID) != c.id {
+			t.Errorf("%s: code %d id %s, want code %d id %s", c.line, got, r.ID, c.code, c.id)
+		}
+	}
+}
+
 // S6B Codex 3: a local service that took the port and echoes the Authorization header: no text
 // from the network reaches stdout with the token's bytes in it.
 func TestEchoedTokenIsNeverShown(t *testing.T) {

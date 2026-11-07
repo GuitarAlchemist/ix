@@ -151,65 +151,141 @@ func (m *mcp) reply(id json.RawMessage, result any, rerr *rpcError) {
 	m.out.Encode(msg) // one line: Encode ends it with '\n'
 }
 
-func (m *mcp) handle(line []byte) {
-	if line[0] == '[' {
-		m.reply(nil, nil, &rpcError{-32600, "batches are not supported", nil})
-		return
+// jsonKind is the kind of a JSON value by its first byte: '{', '[', '"', 'n' (null), 't'/'f'
+// (a boolean), or '0' for a number.
+func jsonKind(raw json.RawMessage) byte {
+	b := bytes.TrimSpace(raw)
+	if len(b) == 0 {
+		return 0
 	}
-	var req struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Method  string          `json:"method"`
-		Params  json.RawMessage `json:"params"`
+	if c := b[0]; c == '-' || (c >= '0' && c <= '9') {
+		return '0'
 	}
-	if err := json.Unmarshal(line, &req); err != nil {
-		m.reply(nil, nil, &rpcError{-32700, "parse error", nil})
-		return
+	return b[0]
+}
+
+// request is one JSON-RPC 2.0 request, checked: the id is a string or a number (MCP forbids
+// null), the method a string, params structured when present. invalid says why not; id is then
+// the request's own id if it was a valid one, else null.
+type request struct {
+	id      json.RawMessage // nil for a notification (no id member)
+	method  string
+	params  json.RawMessage
+	invalid string
+}
+
+func parseRequest(line []byte) (request, *rpcError) {
+	if !json.Valid(line) {
+		return request{}, &rpcError{-32700, "parse error", nil}
 	}
-	notification := req.ID == nil || string(req.ID) == "null"
-	if req.JSONRPC != "2.0" || req.Method == "" {
-		if !notification {
-			m.reply(req.ID, nil, &rpcError{-32600, "invalid request", nil})
+	var r request
+	switch jsonKind(line) {
+	case '[':
+		r.invalid = "batches are not supported"
+		return r, nil
+	case '{':
+	default:
+		r.invalid = "a request is a JSON object"
+		return r, nil
+	}
+	var f map[string]json.RawMessage
+	json.Unmarshal(line, &f)
+	if id, ok := f["id"]; ok {
+		if k := jsonKind(id); k != '"' && k != '0' {
+			r.invalid = "an id is a string or a number"
+			return r, nil
 		}
+		r.id = id
+	}
+	var v string
+	if json.Unmarshal(f["jsonrpc"], &v) != nil || v != "2.0" {
+		r.invalid = `jsonrpc must be "2.0"`
+		return r, nil
+	}
+	if json.Unmarshal(f["method"], &r.method) != nil || r.method == "" {
+		r.invalid = "method must be a string"
+		return r, nil
+	}
+	if p, ok := f["params"]; ok {
+		if k := jsonKind(p); k != '{' && k != '[' {
+			r.invalid = "params must be an object or an array"
+			return r, nil
+		}
+		r.params = p
+	}
+	return r, nil
+}
+
+// objectParams decodes params, which must be an object when present, into v; it returns false
+// when they are not one.
+func objectParams(raw json.RawMessage, v any) bool {
+	if raw == nil {
+		return true
+	}
+	return jsonKind(raw) == '{' && json.Unmarshal(raw, v) == nil
+}
+
+// @ai:invariant a request is answered per JSON-RPC 2.0: -32700 for no JSON, -32600 for an invalid request with or without an id, -32602 for bad params [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestJSONRPCValidation]
+func (m *mcp) handle(line []byte) {
+	req, perr := parseRequest(line)
+	if perr != nil {
+		m.reply(nil, nil, perr)
 		return
 	}
-	if notification { // notifications/initialized and the others: nothing to answer
+	if req.invalid != "" { // answered even without an id
+		m.reply(req.id, nil, &rpcError{-32600, "invalid request: " + req.invalid, nil})
 		return
 	}
-	switch req.Method {
+	if req.id == nil { // a notification (notifications/initialized and the others): no answer
+		return
+	}
+	badParams := func(why string) {
+		m.reply(req.id, nil, &rpcError{-32602, "invalid params: " + why, map[string]any{"reason": reasonBadArgs}})
+	}
+	switch req.method {
 	case "initialize":
 		var p struct {
-			ProtocolVersion string `json:"protocolVersion"`
+			ProtocolVersion *string         `json:"protocolVersion"`
+			Capabilities    json.RawMessage `json:"capabilities"`
+			ClientInfo      *struct {
+				Name    *string `json:"name"`
+				Version *string `json:"version"`
+			} `json:"clientInfo"`
 		}
-		json.Unmarshal(req.Params, &p)
+		if req.params == nil || !objectParams(req.params, &p) || p.ProtocolVersion == nil || jsonKind(p.Capabilities) != '{' ||
+			p.ClientInfo == nil || p.ClientInfo.Name == nil || p.ClientInfo.Version == nil {
+			badParams("initialize needs protocolVersion (a string), capabilities (an object) and clientInfo {name, version}")
+			return
+		}
 		v := mcpProtocols[0]
 		for _, s := range mcpProtocols {
-			if s == p.ProtocolVersion {
+			if s == *p.ProtocolVersion {
 				v = s
 			}
 		}
-		m.reply(req.ID, map[string]any{
+		m.reply(req.id, map[string]any{
 			"protocolVersion": v,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "ixmux", "version": version},
 			"instructions":    "ixmux_submit hands a mandate to a session ixmux manages and answers a receipt; ixmux_result reads its outcome by mandate_id.",
 		}, nil)
 	case "ping":
-		m.reply(req.ID, map[string]any{}, nil)
+		m.reply(req.id, map[string]any{}, nil)
 	case "tools/list":
-		m.reply(req.ID, map[string]any{"tools": mcpTools}, nil)
+		m.reply(req.id, map[string]any{"tools": mcpTools}, nil)
 	case "tools/call":
 		var p struct {
-			Name      string          `json:"name"`
+			Name      *string         `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			m.reply(req.ID, nil, &rpcError{-32602, "invalid params", map[string]any{"reason": reasonBadArgs}})
+		if req.params == nil || !objectParams(req.params, &p) || p.Name == nil ||
+			(p.Arguments != nil && jsonKind(p.Arguments) != '{' && jsonKind(p.Arguments) != 'n') {
+			badParams("tools/call needs name (a string) and arguments (an object)")
 			return
 		}
 		var v any
 		var terr *toolErr
-		switch p.Name {
+		switch *p.Name {
 		case "ixmux_status":
 			v, terr = m.status(p.Arguments)
 		case "ixmux_submit":
@@ -217,7 +293,7 @@ func (m *mcp) handle(line []byte) {
 		case "ixmux_result":
 			v, terr = m.result(p.Arguments)
 		default:
-			m.reply(req.ID, nil, &rpcError{-32602, "unknown tool " + p.Name, map[string]any{"reason": reasonUnknownTool}})
+			m.reply(req.id, nil, &rpcError{-32602, "unknown tool " + *p.Name, map[string]any{"reason": reasonUnknownTool}})
 			return
 		}
 		if terr != nil {
@@ -231,10 +307,10 @@ func (m *mcp) handle(line []byte) {
 		text = m.redact(text)
 		var sc any
 		json.Unmarshal(text, &sc)
-		m.reply(req.ID, map[string]any{"content": []any{map[string]any{"type": "text", "text": string(text)}},
+		m.reply(req.id, map[string]any{"content": []any{map[string]any{"type": "text", "text": string(text)}},
 			"structuredContent": sc, "isError": terr != nil}, nil)
 	default:
-		m.reply(req.ID, nil, &rpcError{-32601, "method not found: " + req.Method, nil})
+		m.reply(req.id, nil, &rpcError{-32601, "method not found: " + req.method, nil})
 	}
 }
 
