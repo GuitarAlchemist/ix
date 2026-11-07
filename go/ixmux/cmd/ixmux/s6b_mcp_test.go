@@ -89,6 +89,26 @@ func (p *inproc) tool(name string, args map[string]any) toolResult {
 // statusJSON is a /v1/status of one claude target c.
 const statusJSON = `{"version":"fake","epoch":"e","targets":[{"name":"c","kind":"claude","incarnation":"inc-1"}],"deliveries":[],"bounds":{"delivery_timeout":"30s"}}`
 
+// S6B Codex 6: only the versions whose behaviour is held are negotiated, from 2025-06-18: an
+// older one asked gets the latest (batches, refused here, belong to 2025-03-26 and before).
+func TestOnlyHeldVersionsAreNegotiated(t *testing.T) {
+	p := newInproc(t, t.TempDir())
+	for asked, want := range map[string]string{"2025-11-25": "2025-11-25", "2025-06-18": "2025-06-18",
+		"2025-03-26": "2025-11-25", "2024-11-05": "2025-11-25", "1999-01-01": "2025-11-25"} {
+		rs := p.raw(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + asked +
+			`","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`)
+		var v struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if len(rs) == 1 {
+			json.Unmarshal(rs[0].Result, &v)
+		}
+		if v.ProtocolVersion != want {
+			t.Errorf("asked %s: answered %q, want %s", asked, v.ProtocolVersion, want)
+		}
+	}
+}
+
 // S6B Codex 5: JSON-RPC 2.0 as written: an id is a string or a number; id null is no
 // notification; an invalid request is answered -32600 even without an id; params are structured;
 // initialize has its required fields (-32602).

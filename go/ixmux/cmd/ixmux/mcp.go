@@ -40,9 +40,11 @@ const (
 // ixmux itself gives the answer (server.WriteTimeout), plus a margin. A test lowers it.
 var mcpPostExtra = server.WriteTimeout + 5*time.Second
 
-// The protocol versions the adapter speaks, the latest first. initialize answers the version asked
-// if it is one of them, else the latest.
-var mcpProtocols = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+// The protocol versions whose behaviour the adapter holds, the latest first. initialize answers the
+// version asked if it is one of them, else the latest. 2025-03-26 and 2024-11-05 are not offered:
+// their batches are refused here.
+// @ai:invariant initialize negotiates only 2025-06-18 and later [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestOnlyHeldVersionsAreNegotiated]
+var mcpProtocols = []string{"2025-11-25", "2025-06-18"}
 
 // A mandate id is a path segment of GET /v1/mandates/{id}: letters, digits, '.', '_' and '-', not
 // starting with '.' (no "." or ".." segment).
