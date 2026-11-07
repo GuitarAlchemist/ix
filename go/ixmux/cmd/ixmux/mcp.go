@@ -34,6 +34,7 @@ const (
 	MCPCallTimeout   = 5 * time.Second         // one GET of ixmux_status or ixmux_result
 	MCPMaxIDBytes    = 128                     // bytes of a mandate id
 	MCPMaxPosts      = 4                       // POSTs of ixmux_submit still running at once
+	MCPMaxAnswer     = 4 << 20                 // bytes of one HTTP answer of ixmux
 )
 
 // mcpPostExtra is what a POST is given beyond ixmux's delivery deadline (its bounds): the time
@@ -60,6 +61,8 @@ const (
 	reasonIxmuxError  = "ixmux-error"
 	// reasonPostsInFlight: MCPMaxPosts submissions still wait for ixmux's answer.
 	reasonPostsInFlight = "submits-in-flight"
+	// reasonAnswerTooLarge: an HTTP answer of ixmux over MCPMaxAnswer bytes.
+	reasonAnswerTooLarge = "ixmux-answer-too-large"
 )
 
 type rpcError struct {
@@ -396,9 +399,14 @@ func (m *mcp) do(ctx context.Context, c conn, method, path string, body, out any
 		return fail(reasonUnavailable, "ixmux does not answer at "+c.addr)
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	// The bound plus one byte: an answer over the bound is seen, and refused, never cut and misread.
+	// @ai:invariant an HTTP answer over MCPMaxAnswer bytes is refused ixmux-answer-too-large [T:test conf:0.9 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestAnswerOverTheBoundIsRefused]
+	b, err := io.ReadAll(io.LimitReader(resp.Body, MCPMaxAnswer+1))
 	if err != nil {
 		return fail(reasonUnavailable, "the answer of ixmux was cut")
+	}
+	if len(b) > MCPMaxAnswer {
+		return fail(reasonAnswerTooLarge, fmt.Sprintf("an answer of ixmux over %d bytes", MCPMaxAnswer))
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fail(reasonUnavailable, "ixmux refused the token of the state directory")

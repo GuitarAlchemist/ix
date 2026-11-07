@@ -89,6 +89,26 @@ func (p *inproc) tool(name string, args map[string]any) toolResult {
 // statusJSON is a /v1/status of one claude target c.
 const statusJSON = `{"version":"fake","epoch":"e","targets":[{"name":"c","kind":"claude","incarnation":"inc-1"}],"deliveries":[],"bounds":{"delivery_timeout":"30s"}}`
 
+// S6B Codex 7: an answer of ixmux over the bound is refused, typed, not cut and then misread; an
+// answer at the bound is read.
+func TestAnswerOverTheBoundIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		pad  int
+		want string
+	}{{MCPMaxAnswer + 1, "ixmux-answer-too-large"}, {MCPMaxAnswer, ""}} {
+		body := []byte(statusJSON)
+		body = append(body[:len(body)-1], []byte(`,"pad":"`)...)
+		body = append(body, bytes.Repeat([]byte("x"), tc.pad-len(body)-2)...)
+		body = append(body, '"', '}')
+		state := fakeIxmux(t, func(w http.ResponseWriter, r *http.Request) { w.Write(body) })
+		p := newInproc(t, state)
+		r := p.tool("ixmux_status", map[string]any{})
+		if got, _ := r.Structured["error"].(string); got != tc.want {
+			t.Errorf("an answer of %d bytes: %v, want error %q", len(body), r.Structured["error"], tc.want)
+		}
+	}
+}
+
 // S6B Codex 6: only the versions whose behaviour is held are negotiated, from 2025-06-18: an
 // older one asked gets the latest (batches, refused here, belong to 2025-03-26 and before).
 func TestOnlyHeldVersionsAreNegotiated(t *testing.T) {
