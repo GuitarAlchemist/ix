@@ -72,11 +72,17 @@ func TestStopWithATurnHeldIsBounded(t *testing.T) {
 	if res, _ := send(t, a, e, "s1", "slow"); res.State != deliver.Uncertain {
 		t.Fatalf("held past the deadline: %+v, want uncertain", res)
 	}
+	// The held child is killed past StopWait (500 ms): the bound is StopWait plus a margin.
+	const bound = 500*time.Millisecond + 2*time.Second
+	began := time.Now()
 	done := make(chan struct{})
 	go func() { a.Stop(); e.Close(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second): // TurnMax is 10 minutes: a guard against waiting for it
+		if d := time.Since(began); d > bound {
+			t.Errorf("Stop and Close with a held turn took %s, want %s at most", d, bound)
+		}
+	case <-time.After(2 * bound):
 		t.Fatal("Stop and Close still wait for a held turn")
 	}
 	if en, _ := entryOf(e, "s1"); en.StillRunning {

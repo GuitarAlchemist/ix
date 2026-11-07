@@ -76,10 +76,17 @@ func TestStopWithATurnHeld(t *testing.T) {
 		t.Fatalf("submit held: %v", rc.Structured)
 	}
 	m.resultOf("held", "uncertain")
+	// The held child ignores its closed stdin: it is killed past StopWait (10 s); the engine's
+	// deadline (--timeout 1s) is already past. The bound is StopWait plus a margin, far from TurnMax.
+	const bound = 10*time.Second + 5*time.Second
+	began := time.Now()
 	p.do("POST", "/v1/shutdown", nil, nil)
 	select {
 	case <-p.exited:
-	case <-time.After(60 * time.Second): // TurnMax is 10 minutes: a guard against waiting for it
+		if d := time.Since(began); d > bound {
+			t.Errorf("the stop with a held turn took %s, want %s at most", d, bound)
+		}
+	case <-time.After(2 * bound):
 		t.Fatal("ixmux still waits for the held turn")
 	}
 	if code := p.cmd.ProcessState.ExitCode(); code != 0 {
