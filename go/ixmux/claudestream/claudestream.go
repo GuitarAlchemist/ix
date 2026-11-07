@@ -645,8 +645,9 @@ func prompt(m deliver.Mandate) string {
 	return "ixmux mandate_id: " + m.MandateID + "\nCommence ta réponse exactement par « ACK " + m.MandateID + " ».\n\n" + m.Text
 }
 
-// Deliver sends m as one user message and returns with its result, or at ctx's end. A turn left
-// without result stays reserved: no other mandate is sent while it may still answer. Past
+// Deliver sends m as one user message and returns with its result. ctx is not consulted once the
+// message is written: past the engine's deadline the call goes on, and its answer comes late. A
+// turn stays reserved until its result: no other mandate is sent while it may still answer. Past
 // TurnMax, its child is killed and replaced (a new incarnation), and the target is free again.
 // An answer that acknowledges another mandate is an error (the delivery is uncertain); an answer
 // with no ACK is delivered with AckSeen false.
@@ -676,6 +677,10 @@ func (a *Adapter) Deliver(ctx context.Context, m deliver.Mandate) (deliver.Ack, 
 	if testHookAfterCheck != nil {
 		testHookAfterCheck(func(b []byte) { c.route(lineMsg{line: b}) })
 	}
+	if err := ctx.Err(); err != nil { // before the send, the deadline still refuses: nothing was written
+		a.release()
+		return deliver.Ack{}, fmt.Errorf("%w: the delivery deadline passed before the send (%v)", deliver.ErrRefused, err)
+	}
 	p, err := c.send(m.MandateID, prompt(m), gen, m.Incarnation)
 	if err != nil {
 		a.release()
@@ -685,11 +690,12 @@ func (a *Adapter) Deliver(ctx context.Context, m deliver.Mandate) (deliver.Ack, 
 		return deliver.Ack{}, fmt.Errorf("send to claude: %w", err)
 	}
 	go a.watch(c, p)
-	select {
-	case <-p.done:
-	case <-ctx.Done():
-		return deliver.Ack{}, fmt.Errorf("no result from claude by the delivery deadline (%w); the turn stays reserved until its result, the child's end or TurnMax", ctx.Err())
-	}
+	// Once the message is written, the call waits for the turn's end, not for ctx: the engine
+	// records uncertain at its own deadline, keeps the call (still_running) and settles the
+	// delivery with this late answer. The wait is bounded all the same: watch kills the child at
+	// TurnMax, and Stop past StopWait; either resolves p with the child's death.
+	// @ai:invariant after the send, Deliver returns with the turn's result or the child's death, never at ctx's end [T:test conf:0.85 src:go/ixmux/claudestream/s6b_test.go:TestLateAnswerIsDelivered]
+	<-p.done
 	r := p.res
 	if r.err != nil {
 		return deliver.Ack{}, r.err
