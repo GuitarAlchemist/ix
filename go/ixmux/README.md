@@ -11,6 +11,7 @@ picks up its state from the command log.
 ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
             [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...]
             [--timeout 30s] [--max-conns 16] [--max-http-conns 64] [--read-timeout 10s] [--queue 256] [--poll 200ms]
+ixmux mcp --state <dir>
 ixmux version
 ```
 
@@ -27,7 +28,7 @@ go -C %USERPROFILE%\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<gi
 | Route | What it does |
 |---|---|
 | `POST /v1/mandates` `{mandate_id, target, incarnation, text}` | Delivers at most once. The answer gives `state` and `replayed`. A refusal comes back as `{error, detail}`, with 400, 404, 409, 413 or 503. |
-| `GET /v1/mandates/{id}` | The state of one delivery. |
+| `GET /v1/mandates/{id}` | The state of one delivery and, once delivered, its result: `ack` (`receipt`, `text`, `ack_seen`, `truncated`), read from the command log, so also after a restart. |
 | `POST /v1/mandates/{id}/reconcile` | Asks the target whether an uncertain delivery arrived. |
 | `GET /v1/status` | Targets and their incarnations, deliveries (age, `still_running`), connections, bounds. |
 | `GET /v1/journal/{name}?from=&incarnation=&max_bytes=&cursor=` | One page of `journal.ReadCursor`. Pass back the `cursor` it returns; ixmux signs it with HMAC. A cursor that is unsigned or badly signed is ignored (`cursor_ignored`), and the read starts again from `from`. |
@@ -119,7 +120,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose --too
 - Never `--bare`, `--dangerously-skip-permissions` or `--permission-mode bypassPermissions`. `--setting-sources` is left alone, so your hooks apply as they are. ixmux sets no permission mode: the child runs in the mode of your configuration (`auto` here). What protects is that it has no tool.
 - The incarnation of the target is the `session_id` of the child's `system/init`. The real claude sends `init` only after a first user message, so ixmux sends a priming message ("ixmux : ouverture de la session. Réponds seulement : OK.") at each start. That costs one model turn per start, and the target is ready about 28 s after the start.
 - If `init` lists any tool, has no `tools` array (absent or `null`), or names another session, ixmux refuses to deliver to that target. The check and the write on the child's stdin happen under one lock: an `init` that arrives in between refuses the mandate, and nothing is written.
-- Each mandate is one user message: `ixmux mandate_id: <id>`, then the instruction to begin with `ACK <id>`, then the text. The answer carries `ack.receipt` (`<session>:<id>`), `ack.text` (at most 4 KiB) and `ack.ack_seen`.
+- Each mandate is one user message: `ixmux mandate_id: <id>`, then the instruction to begin with `ACK <id>`, then the text. The answer carries `ack.receipt` (`<session>:<id>`), `ack.text` (at most 4 KiB; `ack.truncated` is true when the answer was longer and cut) and `ack.ack_seen`.
 - A `result` counts only if its `session_id` is the target's incarnation and a turn is pending. Any other `result` is journaled (`{"ixmux":"ignored-result"}`) and ignored.
 - The ACK is exact: the answer begins with `ACK <id>`, then a space or the end. `ACK m2-extra` does not acknowledge `m2`.
   - `ack_seen: true`: the answer acknowledges this mandate.
@@ -151,6 +152,14 @@ rmdir /s /q %USERPROFILE%\.cache\ixmux-claude
 ```
 
 The Claude session itself is kept by claude under your profile, as any `claude -p` session is. ixmux writes nothing else.
+
+## MCP adapter (`ixmux mcp`)
+
+`ixmux mcp --state <dir>` is a local MCP server on stdio over the ixmux serve of that state
+directory. It reads the address and the token there at each call, so it follows an ixmux restarted
+since, and has three tools: `ixmux_status`, `ixmux_submit` (a receipt within 2 s, even when the
+turn lasts longer) and `ixmux_result` (read from the command log). It has no tool that stops ixmux.
+The contract, with the exact command, the schemas and the errors: [MCP.md](MCP.md).
 
 ## Limits of this slice
 

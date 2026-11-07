@@ -8,6 +8,7 @@
 ixmux serve --addr 127.0.0.1:0 --state <dossier> [--journal nom=chemin ...] [--target nom=chemin ...]
             [--claude-target nom ...] [--claude-bin chemin] [--claude-env NOM ...]
             [--timeout 30s] [--max-conns 16] [--max-http-conns 64] [--read-timeout 10s] [--queue 256] [--poll 200ms]
+ixmux mcp --state <dossier>
 ixmux version
 ```
 
@@ -24,7 +25,7 @@ go -C %USERPROFILE%\.cache\ix-ixmux\go\ixmux build -ldflags "-X main.version=<gi
 | Route | Rôle |
 |---|---|
 | `POST /v1/mandates` `{mandate_id, target, incarnation, text}` | Livre au plus une fois. La réponse donne `state` et `replayed`. Un refus revient sous la forme `{error, detail}`, avec 400, 404, 409, 413 ou 503. |
-| `GET /v1/mandates/{id}` | L'état d'une livraison. |
+| `GET /v1/mandates/{id}` | L'état d'une livraison et, une fois livrée, son résultat : `ack` (`receipt`, `text`, `ack_seen`, `truncated`), lu dans le journal de commandes, donc aussi après un redémarrage. |
 | `POST /v1/mandates/{id}/reconcile` | Demande à la cible si une livraison incertaine est arrivée. |
 | `GET /v1/status` | Les cibles et leurs incarnations, les livraisons (âge, `still_running`), les connexions et les bornes. |
 | `GET /v1/journal/{nom}?from=&incarnation=&max_bytes=&cursor=` | Une page de `journal.ReadCursor`. Renvoie le `cursor` qu'elle rend : ixmux le signe en HMAC. Un curseur non signé ou mal signé est ignoré (`cursor_ignored`), et la lecture repart de `from`. |
@@ -116,7 +117,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose --too
 - Jamais `--bare`, `--dangerously-skip-permissions` ni `--permission-mode bypassPermissions`. `--setting-sources` n'est pas touché : tes hooks s'appliquent tels quels. ixmux ne fixe aucun mode de permission : l'enfant tourne dans le mode de ta configuration (`auto` ici). Ce qui protège, c'est qu'il n'a aucun outil.
 - L'incarnation de la cible est le `session_id` du `system/init` de l'enfant. Le vrai claude n'envoie `init` qu'après un premier message utilisateur : ixmux envoie donc un message d'amorce (« ixmux : ouverture de la session. Réponds seulement : OK. ») à chaque démarrage. Cela coûte un tour de modèle par démarrage, et la cible est prête environ 28 s après le démarrage.
 - Si `init` liste un outil, n'a pas de tableau `tools` (absent ou `null`), ou nomme une autre session, ixmux refuse de livrer à cette cible. Le contrôle et l'écriture sur l'entrée standard de l'enfant se font sous une même prise : un `init` qui arrive entre les deux fait refuser le mandat, et rien n'est écrit.
-- Chaque mandat est un message utilisateur : `ixmux mandate_id: <id>`, puis la consigne de commencer par `ACK <id>`, puis le texte. La réponse porte `ack.receipt` (`<session>:<id>`), `ack.text` (4 Kio au plus) et `ack.ack_seen`.
+- Chaque mandat est un message utilisateur : `ixmux mandate_id: <id>`, puis la consigne de commencer par `ACK <id>`, puis le texte. La réponse porte `ack.receipt` (`<session>:<id>`), `ack.text` (4 Kio au plus ; `ack.truncated` vaut vrai quand la réponse était plus longue et a été coupée) et `ack.ack_seen`.
 - Un `result` ne compte que si son `session_id` est l'incarnation de la cible et qu'un tour est en attente. Tout autre `result` est journalisé (`{"ixmux":"ignored-result"}`) et ignoré.
 - L'ACK est exact : la réponse commence par `ACK <id>`, suivi d'un espace ou de la fin. `ACK m2-extra` n'acquitte pas `m2`.
   - `ack_seen: true` : la réponse acquitte ce mandat.
@@ -148,6 +149,14 @@ rmdir /s /q %USERPROFILE%\.cache\ixmux-claude
 ```
 
 La session Claude elle-même est gardée par claude sous ton profil, comme toute session `claude -p`. ixmux n'écrit rien d'autre.
+
+## Adaptateur MCP (`ixmux mcp`)
+
+`ixmux mcp --state <dossier>` est un serveur MCP local sur stdio, branché sur l'ixmux serve de ce
+dossier d'état. Il y lit l'adresse et le jeton à chaque appel, et suit donc un ixmux redémarré
+entre-temps. Il a trois outils : `ixmux_status`, `ixmux_submit` (un reçu en 2 s, même quand le tour
+dure plus longtemps) et `ixmux_result` (lu dans le journal de commandes). Aucun outil n'arrête
+ixmux. Le contrat, avec la commande exacte, les schémas et les erreurs : [MCP.fr.md](MCP.fr.md).
 
 ## Limites de cette tranche
 
