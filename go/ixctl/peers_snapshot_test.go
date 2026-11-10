@@ -469,3 +469,129 @@ func TestAListWithoutACursorOrAnIdentityIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// cursorList is a probe list read with its cursor, as the link reads it.
+type cursorList struct {
+	Cursor struct {
+		Seq   uint64 `json:"seq"`
+		Epoch string `json:"epoch"`
+	} `json:"cursor"`
+	Nodes []struct {
+		Name       string `json:"name"`
+		State      string `json:"state"`
+		Export     bool   `json:"export"`
+		CreatedSeq uint64 `json:"created_seq"`
+	} `json:"nodes"`
+}
+
+// listAt reads in's probe list with its cursor and returns it with the named node's created_seq
+// and state (zero and empty when the list does not have it).
+func listAt(t *testing.T, in *instance, name string) (list cursorList, created uint64, state string) {
+	t.Helper()
+	raw, err := probeOp(t, in.plane, Request{Op: "probe.list", WithCursor: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range list.Nodes {
+		if n.Name == name {
+			created, state = n.CreatedSeq, n.State
+		}
+	}
+	return list, created, state
+}
+
+// Criterion 3 of ix#408, the snapshot taken while a leaf is `stopping` (D4 ix#402 Q9: the one
+// documented inversion is a leaf's probe.stopped, published after its loop ends, outside the
+// lock, "with `stopping` exposed in the snapshot so the reader expects the event after `head`").
+// Here the exported, wanted leaf's stop is in progress on the peer when the link attaches: the
+// list the link reads says `stopping` and stands at a cursor before the probe.stopped; the link
+// mirrors the pipe under the incarnation the list names and is reconciled while the stop is
+// still in progress; once the read ends, the probe.stopped crosses on the mirrored ctl once,
+// with a source seq past the cursor, and the pipe keeps its identity.
+func TestALinkAttachedWhileALeafIsStoppingReadsItsStopAfterTheCursor(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	blk := blockKind(t)
+	p, epoch := b.plane, b.plane.Epoch()
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("cpu", "block@1", 10, map[string]any{"export": true})}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "cpu"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-blk.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the read never started")
+	}
+	stopped := make(chan error, 1)
+	go func() {
+		_, err := probeOp(t, p, Request{Op: "probe.stop", Node: "cpu"})
+		stopped <- err
+	}()
+	waitListed(t, p, "cpu", probeStopping)
+	list, created, state := listAt(t, b, "cpu")
+	if state != probeStopping || created == 0 || list.Cursor.Epoch != epoch || list.Cursor.Seq < created {
+		t.Fatalf("the list during the stop: cpu %s created at %d, cursor %+v, want stopping at a cursor of %s", state, created, list.Cursor, epoch)
+	}
+
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"cpu"}}, NewHub("a"))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go l.run(ctx)
+	st := waitLinkStatus(t, l, func(st PeerStatus) bool {
+		return st.State == "up" && st.Reconciled && st.Probes[0].State == pipeMirrored
+	})
+	if id := st.Probes[0]; id.CreatedSeq != created || id.SrcEpoch != epoch {
+		t.Fatalf("the pipe of a stopping leaf: %+v, want the incarnation created at %d of %s", id, created, epoch)
+	}
+	l.mu.Lock()
+	cursor := l.cursor
+	l.mu.Unlock()
+	select {
+	case err := <-stopped:
+		t.Fatalf("the stop ended (err %v) before the link had read its list: the snapshot was not taken while stopping", err)
+	default:
+	}
+	if _, _, now := listAt(t, b, "cpu"); now != probeStopping {
+		t.Fatalf("cpu is %s once the link is reconciled, want still stopping", now)
+	}
+	if cursor.epoch != epoch || cursor.seq < list.Cursor.Seq {
+		t.Fatalf("the link's snapshot stands at %+v, want %s at or past %d", cursor, epoch, list.Cursor.Seq)
+	}
+
+	close(blk.release)
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stop did not return once the read had ended")
+	}
+	var said *Envelope
+	for said == nil {
+		e := nextEnvWithin(t, cur, 5*time.Second)
+		if e.Ch != "peer/b/ctl" || dataOf(e)["node"] != "cpu" {
+			continue
+		}
+		if e.Ev.Kind != "probe.stopped" {
+			t.Fatalf("the mirrored ctl said %s of cpu: the list held it at its cursor, only the stop follows", e.Raw())
+		}
+		said = e
+	}
+	if said.SrcSeq <= cursor.seq || said.SrcEpoch != epoch || said.Origin != "b" {
+		t.Fatalf("the mirrored probe.stopped is %s, want b's envelope of %s past the snapshot's cursor %d", said.Raw(), epoch, cursor.seq)
+	}
+	st = waitLinkStatus(t, l, func(st PeerStatus) bool { return st.Reconciled && st.Live && !st.Degraded })
+	if id := st.Probes[0]; id.State != pipeMirrored || id.CreatedSeq != created || id.SrcEpoch != epoch {
+		t.Fatalf("the pipe after the stop: %+v, want the same incarnation still mirrored (a stopped node is still there)", id)
+	}
+	if _, _, now := listAt(t, b, "cpu"); now != probeStopped {
+		t.Fatalf("cpu is %s after its probe.stopped", now)
+	}
+}
