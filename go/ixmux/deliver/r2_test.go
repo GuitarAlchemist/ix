@@ -443,3 +443,57 @@ func TestALateAnswerThenAReconcileFitOnAFullLog(t *testing.T) {
 		t.Errorf("reconcile g1 on a full log: %+v %v; want delivered", res, err)
 	}
 }
+
+// Review R2 P3-1 (its test, from the independent review): an online compaction that breaks the log
+// (its directory sync fails after the rename) answers the mandate that triggered it log-broken,
+// not log-full (which invites a retry), and Close then says log-broken too.
+func TestAFatalOnlineCompactionSaysLogBroken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	e, _, err := Open(path, Options{MaxLogBytes: 64 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &fakeTarget{inc: "i"}
+	e.Register("a", a.target())
+	fillLog(t, e, a, "f", 10000)
+	timeNow = func() time.Time { return time.Now().Add(40 * 24 * time.Hour) }
+	t.Cleanup(func() { timeNow = time.Now })
+	dirSync = func(string) error { return errors.New("injected directory sync failure") }
+	t.Cleanup(func() { dirSync = syncDir })
+	calls := a.calls.Load()
+	if _, err := e.Deliver(context.Background(), Mandate{MandateID: "new", Target: "a", Incarnation: "i", Text: "t"}); refusalCode(err) != LogBroken || a.calls.Load() != calls {
+		t.Errorf("the mandate whose compaction broke the log: %v, %d calls; want %s and no call", err, a.calls.Load()-calls, LogBroken)
+	}
+	if err := e.Close(); refusalCode(err) != LogBroken {
+		t.Errorf("Close after a compaction broke the log: %v, want %s", err, LogBroken)
+	}
+}
+
+// Review R2 P3-4: a mandate with long keys delivered before the bound on keys existed is still
+// replayed; only a new delivery is refused bad-mandate.
+func TestAKnownMandateWithLongKeysIsReplayed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	e, _, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	a := &fakeTarget{inc: "i"}
+	e.Register("a", a.target())
+	m := Mandate{MandateID: strings.Repeat("L", 600), Target: "a", Incarnation: "i", Text: "t"}
+	k, fp := key{"a", m.MandateID}, fingerprint(m)
+	for _, s := range []State{Accepted, Delivering} {
+		if err := e.transitionFP(k, "i", s, "", nil, fp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.transition(k, "i", Delivered, "", "", &Ack{Receipt: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := e.Deliver(context.Background(), m); err != nil || !res.Replayed {
+		t.Errorf("a known mandate with long keys: %+v %v; want replayed", res, err)
+	}
+	if _, err := e.Deliver(context.Background(), Mandate{MandateID: strings.Repeat("N", 600), Target: "a", Incarnation: "i", Text: "t"}); refusalCode(err) != BadMandate || a.calls.Load() != 0 {
+		t.Errorf("a new mandate with long keys: %v, %d calls; want %s, no call", err, a.calls.Load(), BadMandate)
+	}
+}

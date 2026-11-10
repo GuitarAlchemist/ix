@@ -18,3 +18,11 @@ func TestRecoveryLineSaysTheWindowAndWhatWasForgotten(t *testing.T) {
 		}
 	}
 }
+
+// Review R2 P3-4: a negative --dedup-window is a bad command line, not the default.
+func TestANegativeDedupWindowIsRefused(t *testing.T) {
+	var out strings.Builder
+	if code := run([]string{"serve", "--state", t.TempDir(), "--dedup-window", "-1h"}, &out); code != 2 || !strings.Contains(out.String(), "negative") {
+		t.Errorf("serve --dedup-window -1h: exit %d, %q; want exit 2 saying it is negative", code, out.String())
+	}
+}

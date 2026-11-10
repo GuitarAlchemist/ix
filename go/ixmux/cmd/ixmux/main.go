@@ -112,6 +112,10 @@ func run(args []string, stderr io.Writer) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return server.ExitUsage
 	}
+	if cfg.DedupWindow < 0 {
+		fmt.Fprintf(stderr, "ixmux: --dedup-window %s is negative\n", cfg.DedupWindow)
+		return server.ExitUsage
+	}
 	for i, name := range claude {
 		if slices.Contains(claude[:i], name) {
 			fmt.Fprintf(stderr, "ixmux: --claude-target %q is given twice; each claude target needs its own name\n", name)

@@ -107,7 +107,8 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	if opt.DedupWindow <= 0 {
 		opt.DedupWindow = DefaultDedupWindow
 	}
-	big := max(min(int64(MaxRecordBytes), opt.MaxLogBytes/8), SmallRecordBytes)
+	// big holds at least two small records: an uncertain late answer and the reconcile after it.
+	big := max(min(int64(MaxRecordBytes), opt.MaxLogBytes/8), 2*SmallRecordBytes)
 	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
 		path: path, window: opt.DedupWindow, small: SmallRecordBytes, big: big,
 		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, idClaim: map[string]idHold{}, claims: map[key]bool{}, running: map[string]bool{},
@@ -125,7 +126,8 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	// state, finished mandates past the deduplication window left out, and only if that makes the
 	// log smaller.
 	// @ai:invariant a compaction keeps every mandate's state, fingerprint, incarnation, Ack and reason, so a restart neither forgets an id nor sends a delivered mandate again [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestARestartCompactsAFullLogAndForgetsNothing]
-	if from := l.size; from > opt.MaxLogBytes/4*3 || from+l.reserved+2*e.small+e.big > opt.MaxLogBytes {
+	// A new mandate needs its accepted record (a small one) and the room it then holds.
+	if from := l.size; from > opt.MaxLogBytes/4*3 || from+l.reserved+e.small+(2*e.small+e.big) > opt.MaxLogBytes {
 		forgotten, fatal, err := e.compactLocked()
 		switch {
 		case fatal:
@@ -358,11 +360,10 @@ func (e *Engine) write(lr logRecord, callDone bool) error {
 	e.mu.Unlock()
 	err = l.appendLocked(b, k, next, accept)
 	if rf := (*Refusal)(nil); accept && errors.As(err, &rf) && rf.Code == LogFull && !timeNow().Before(e.nextCompact) {
-		if _, _, cerr := e.compactLocked(); cerr == nil {
-			err = l.appendLocked(b, k, next, accept)
-		}
-		if err != nil {
-			e.nextCompact = timeNow().Add(time.Minute)
+		// At most one compaction a minute: each rewrites the whole log under its lock.
+		e.nextCompact = timeNow().Add(time.Minute)
+		if _, fatal, cerr := e.compactLocked(); cerr == nil || fatal {
+			err = l.appendLocked(b, k, next, accept) // a broken log refuses log-broken: nothing was sent
 		}
 	}
 	if err == nil {
@@ -434,11 +435,6 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		return Result{}, &Refusal{TextTooLong, fmt.Sprintf("text of %d bytes, bound %d", len(m.Text), MaxText)}
 	}
 	k, fp := key{m.Target, m.MandateID}, fingerprint(m)
-	// Every record of the mandate must fit in a small record, with room left for a reason.
-	if probe, _ := json.Marshal(logRecord{At: time.Now().UTC(), Target: m.Target, MandateID: m.MandateID, Incarnation: m.Incarnation,
-		State: Uncertain, Cause: CauseLogWrite, Fingerprint: fp}); int64(len(probe)) > e.small/2 {
-		return Result{}, &Refusal{BadMandate, fmt.Sprintf("its mandate id, target and incarnation take %d bytes of a log record, bound %d", len(probe), e.small/2)}
-	}
 	e.mu.Lock()
 	t, ok := e.targets[m.Target]
 	if !ok {
@@ -450,6 +446,12 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		return res, err
 	}
 	e.mu.Unlock()
+	// Every record of a new delivery must fit in a small record, with room left for a reason (a
+	// mandate already known was answered above: replayed, or refused).
+	if probe, _ := json.Marshal(logRecord{At: time.Now().UTC(), Target: m.Target, MandateID: m.MandateID, Incarnation: m.Incarnation,
+		State: Uncertain, Cause: CauseLogWrite, Fingerprint: fp}); int64(len(probe)) > e.small/2 {
+		return Result{}, &Refusal{BadMandate, fmt.Sprintf("its mandate id, target and incarnation take %d bytes of a log record, bound %d", len(probe), e.small/2)}
+	}
 
 	inc, err := t.Incarnation()
 	if err != nil {

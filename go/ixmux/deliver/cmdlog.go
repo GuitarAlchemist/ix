@@ -287,6 +287,9 @@ func (l *cmdLog) close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	err := l.f.Close()
+	if errors.Is(err, os.ErrClosed) { // a compaction that broke the log closed it already
+		err = nil
+	}
 	if l.lock != nil {
 		if lerr := l.lock.Close(); lerr != nil && err == nil {
 			err = fmt.Errorf("release the lock of the command log: %w", lerr)
