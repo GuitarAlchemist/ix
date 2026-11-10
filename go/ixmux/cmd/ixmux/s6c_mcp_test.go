@@ -26,7 +26,7 @@ func TestNullArgumentsAreRefused(t *testing.T) {
 // S6C P1-3: only ixmux's known refusal codes pass, without their detail; an unknown code is
 // ixmux-error.
 func TestOnlyKnownCodesPass(t *testing.T) {
-	for code, want := range map[string]string{"target-busy": "target-busy", "made-up-code": reasonIxmuxError} {
+	for code, want := range map[string]string{"target-busy": "target-busy", "log-full": "log-full", "made-up-code": reasonIxmuxError} {
 		t.Run(code, func(t *testing.T) {
 			state := fakeIxmux(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusConflict)

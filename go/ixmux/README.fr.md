@@ -49,7 +49,7 @@ Bornes HTTP : les en-têtes et le corps d'une requête sont lus en `--read-timeo
 
 ## Fichiers de `<state>`
 
-- `commands.jsonl` : le journal de commandes des livraisons. Tant qu'ixmux tourne, il tient `commands.jsonl.lock`.
+- `commands.jsonl` : le journal de commandes des livraisons. Tant qu'ixmux tourne, il tient `commands.jsonl.lock`. Il est borné à 64 Mio, la taille qu'un démarrage relit : aucun ajout ne le fait dépasser cette borne, et un nouveau mandat est refusé `log-full` dès qu'il laisserait moins que le dernier huitième, réservé aux livraisons déjà acceptées. Un démarrage compacte un journal qui dépasse la moitié de sa borne et contient plus d'enregistrements que de mandats : un enregistrement par mandat, dans son état courant, avec son empreinte, son incarnation, son reçu et sa cause ; aucun id de mandat n'est oublié et aucun n'est renvoyé. Le journal compacté est écrit dans `commands.jsonl.compact`, synchronisé, puis renommé par-dessus le journal. Ne jamais supprimer le journal pour le libérer : un redémarrage le fait.
 - `ixmux.json` : adresse, PID, heure de démarrage, version, SHA-256 de l'exécutable, époque, et `state` (`running` ou `stopped`, puis `exit_code`).
 - `ixmux.token` : le jeton Bearer. Il est réécrit à chaque démarrage et supprimé à l'arrêt propre. Sous Windows, sa DACL est protégée et n'accorde l'accès qu'à l'utilisateur courant ; ailleurs, son mode est 0600. Si ixmux ne peut pas le créer ainsi, il refuse de démarrer.
 

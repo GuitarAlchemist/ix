@@ -107,6 +107,7 @@ var ixmuxCodes = map[string]string{
 	deliver.NotUncertain:            "the mandate is not uncertain",
 	deliver.ReconcileUnsupported:    "the target cannot be asked whether it received a mandate",
 	deliver.LogTooLarge:             "ixmux's command log is over its bound",
+	deliver.LogFull:                 "ixmux's command log is full; a restart of ixmux compacts it",
 	deliver.LogCorrupt:              "ixmux's command log is corrupt",
 	deliver.MandateIDReuse:          "this mandate id was first accepted for another target, incarnation or text",
 	deliver.JournalLocked:           "ixmux's command log is held by another process",

@@ -68,7 +68,7 @@ Une requête sans membre `id` est une notification et n'a pas de réponse, sauf 
 Un outil qui échoue répond `isError: true`, avec un `structuredContent` `{error, detail}`. `error`
 est une raison typée : une de celles de l'adaptateur (ci-dessous), ou un code de refus connu
 d'ixmux (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`,
-`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`…). Un code
+`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, `log-full`…). Un code
 que l'adaptateur ne connaît pas devient `ixmux-error`. `detail` est le texte propre de
 l'adaptateur et s'adresse à une personne : ne jamais l'analyser. Pour un refus d'ixmux,
 l'adaptateur écrit un message par code. Aucun texte libre d'ixmux (le `detail` d'un refus, la
@@ -152,6 +152,11 @@ Entrée : `{mandate_id}`. Sortie :
 - `state` : `accepted`, `delivering`, `delivered`, `refused` ou `uncertain`, et `last` la
   transition qui y a mené. La raison d'ixmux n'est pas transmise (texte libre). Un mandat
   `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`.
+- `cause`, sur un mandat `uncertain`, dit pourquoi, dans un ensemble fermé : `deadline` (pas de
+  réponse dans le délai de livraison d'ixmux), `adapter-error` (la cible a répondu une erreur,
+  `is_error` compris), `restart` (ixmux a redémarré pendant la livraison), `log-write-failed` (son
+  état final n'a pas pu être écrit). Toute autre valeur venue d'ixmux est écartée. La saturation
+  n'est pas un état : c'est un dépôt refusé, `target-busy` ou `busy`.
 - `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré avec une réponse.
   `text` fait 4 Kio au plus ; `truncated: true` dit que la réponse était plus longue et que sa fin
   manque. Un mandat passé à `delivered` par une réconciliation (la cible a dit l'avoir reçu) n'en a

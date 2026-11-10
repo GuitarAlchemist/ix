@@ -68,7 +68,7 @@ A request without an `id` member is a notification and gets no answer, unless it
 A tool that fails answers `isError: true` with `structuredContent` `{error, detail}`. `error` is a
 typed reason: one of the adapter's (below) or a known refusal code of ixmux (`mandate-id-reuse`,
 `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`, `in-flight`, `target-busy`,
-`busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, ...). A code the adapter does not
+`busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, `log-full`, ...). A code the adapter does not
 know is `ixmux-error`. `detail` is the adapter's own text, for a person; never parse it: for an
 ixmux refusal, the adapter writes one message per code. No free text of ixmux (a refusal's detail,
 a mandate's reason, a target's error) reaches a tool answer.
@@ -148,6 +148,11 @@ Input: `{mandate_id}`. Output:
 - `state`: `accepted`, `delivering`, `delivered`, `refused` or `uncertain`, and `last` the
   transition that led there. ixmux's reason is not passed on (free text). An `uncertain` mandate is
   never replayed: a new submission is refused `uncertain-needs-reconcile`.
+- `cause`, on an `uncertain` mandate, says why, from a closed set: `deadline` (no answer within
+  ixmux's delivery deadline), `adapter-error` (the target answered an error, `is_error` included),
+  `restart` (ixmux restarted with the delivery under way), `log-write-failed` (its final state
+  could not be written). Any other value from ixmux is left out. Saturation is no state: it is a
+  refused submission, `target-busy` or `busy`.
 - `receipt`, `text`, `ack_seen` and `truncated` appear once delivered with an answer. `text` is at
   most 4 KiB; `truncated: true` says the answer was longer and its end is missing. A mandate made
   `delivered` by a reconcile (the target said it received it) has none of them: no answer was read.
