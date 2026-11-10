@@ -34,6 +34,9 @@ func recoveryLine(r deliver.Recovery) string {
 		fmt.Fprintf(b, ", a torn last record of %d bytes cut", r.Torn.Bytes)
 	}
 	fmt.Fprintf(b, ", %d made uncertain, %d made refused", r.MadeUncertain, r.MadeRefused)
+	if r.InMemoryOnly > 0 {
+		fmt.Fprintf(b, " (%d of them in memory only: the log is full)", r.InMemoryOnly)
+	}
 	if r.Compacted != nil {
 		fmt.Fprintf(b, ", compacted from %d to %d bytes", r.Compacted.From, r.Compacted.To)
 	}

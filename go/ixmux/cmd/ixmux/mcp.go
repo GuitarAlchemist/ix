@@ -107,7 +107,7 @@ var ixmuxCodes = map[string]string{
 	deliver.NotUncertain:            "the mandate is not uncertain",
 	deliver.ReconcileUnsupported:    "the target cannot be asked whether it received a mandate",
 	deliver.LogTooLarge:             "ixmux's command log is over its bound",
-	deliver.LogFull:                 "ixmux's command log is full; a restart of ixmux compacts it",
+	deliver.LogFull:                 "ixmux's command log has no room for a new mandate; nothing was sent (see ixmux's README: log bound)",
 	deliver.LogCorrupt:              "ixmux's command log is corrupt",
 	deliver.MandateIDReuse:          "this mandate id was first accepted for another target, incarnation or text",
 	deliver.JournalLocked:           "ixmux's command log is held by another process",
@@ -720,9 +720,11 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 	for {
 		select {
 		case p := <-done:
-			if p.err != nil && p.err.Error == reasonUnavailable {
-				// Cut at the transport: ixmux may have taken it all the same. Its entry tells,
-				// until the receipt's bound.
+			if p.err != nil && (p.err.Error == reasonUnavailable || p.err.Error == "internal") {
+				// Cut at the transport, or failed inside ixmux (a final record its log could not
+				// hold, the target having taken the mandate): ixmux may have taken it all the same.
+				// No refusal, so no proof that nothing was sent: its entry tells, until the bound.
+				// @ai:invariant an internal error of the POST is no refusal: the receipt reads the entry [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestReceiptAfterACutPOST]
 				done = nil
 				continue
 			}

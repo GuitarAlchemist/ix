@@ -28,14 +28,19 @@ func (f *failingTarget) target() Target {
 }
 
 // fillLog delivers mandates to a until the engine refuses one log-full (at most n), and returns
-// those delivered. It fails the test on any other refusal, and reports a log that never fills.
-func fillLog(t *testing.T, e *Engine, prefix string, n int) []Mandate {
+// those delivered. It fails the test on any other refusal, on a log-full given after a's adapter
+// was called (a refusal says nothing was sent), and reports a log that never fills.
+func fillLog(t *testing.T, e *Engine, a *fakeTarget, prefix string, n int) []Mandate {
 	t.Helper()
 	var delivered []Mandate
 	for i := 0; i < n; i++ {
 		m := Mandate{MandateID: fmt.Sprintf("%s%03d", prefix, i), Target: "a", Incarnation: "i", Text: "t"}
+		calls := a.calls.Load()
 		res, err := e.Deliver(context.Background(), m)
 		if refusalCode(err) == LogFull {
+			if a.calls.Load() != calls {
+				t.Errorf("%s refused %s after its adapter was called", m.MandateID, LogFull)
+			}
 			return delivered
 		}
 		if err != nil || res.State != Delivered {
@@ -63,7 +68,7 @@ func TestALogFilledByItsOwnAppendsStillOpens(t *testing.T) {
 	if res, err := e.Deliver(context.Background(), Mandate{MandateID: "u1", Target: "u", Incarnation: "i", Text: "t"}); err != nil || res.State != Uncertain {
 		t.Fatalf("a delivery whose adapter fails: %+v %v, want uncertain", res, err)
 	}
-	delivered := fillLog(t, e, "m", 200)
+	delivered := fillLog(t, e, a, "m", 200)
 	if err := e.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +173,7 @@ func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	delivered := fillLog(t, e, "m", 200)
+	delivered := fillLog(t, e, a, "m", 200)
 	before, beforeU1 := entryOf(e, "a", delivered[0].MandateID), entryOf(e, "u", "u1")
 	if err := e.Close(); err != nil {
 		t.Fatal(err)
@@ -241,16 +246,19 @@ func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 		t.Errorf("%s in Status: %+v before the compaction, %+v after; want the same last transition, since and creation", delivered[0].MandateID, before, after)
 	}
 
-	more := fillLog(t, e2, "n", 200)
+	more := fillLog(t, e2, a, "n", 200)
 	if len(more) == 0 {
 		t.Fatal("no new mandate fits after the compaction")
 	}
 	if err := e2.Close(); err != nil {
 		t.Fatal(err)
 	}
-	e3, _, err := Open(path, opt) // a second compaction keeps what the first kept
+	e3, rec3, err := Open(path, opt) // a second compaction keeps what the first kept
 	if err != nil {
 		t.Fatal(err)
+	}
+	if rec3.Compacted == nil {
+		t.Errorf("the second restart, on a log filled again: %+v, want it compacted", rec3)
 	}
 	defer e3.Close()
 	e3.Register("a", a.target())

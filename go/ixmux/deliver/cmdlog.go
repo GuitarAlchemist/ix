@@ -51,6 +51,10 @@ type logFile interface {
 var (
 	errLocked          = errors.New("locked")
 	errLockUnsupported = errors.New("no file lock on this system")
+	// errLogFull: a record after accepted does not fit; the outcome of its delivery is unknown.
+	errLogFull = errors.New("the command log is full")
+	// errNoGain: a compaction would not make the log smaller; it is not done.
+	errNoGain = errors.New("compaction would not shrink the log")
 )
 
 // logFormat names the command log format; logHeader is its first line. A log without it, or
@@ -62,6 +66,9 @@ const (
 )
 
 // dirSync syncs the log's directory (syncDir); a test replaces it, on every system.
+
+// renameLog replaces the log by its compacted copy (renameDurable); a test replaces it.
+var renameLog = renameDurable
 var dirSync = syncDir
 
 // openLog reads the log at path back, at most maxBytes of it. A last record without its '\n'
@@ -158,8 +165,10 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 // append is then refused (log-broken) until the engine is reopened, which cuts the fragment as a
 // torn tail.
 //
-// A line that would leave less than room bytes before max is refused log-full, and nothing is
-// written: the log stays whole and readable at the next Open.
+// A line that would leave less than room bytes before max is not written: the log stays whole and
+// readable at the next Open. For an accepted record (room > 0) that is a refusal, log-full:
+// nothing was sent. For any later record the adapter may already have acted: errLogFull, which is
+// no refusal.
 // @ai:invariant a transition counts only once its whole line is written, and nothing is appended after a partial write [T:test conf:0.85 src:go/ixmux/deliver/s2d_test.go:TestPartialWriteBreaksTheLog]
 // @ai:invariant a transition counts only once its line is synced, and nothing is appended after a failed sync [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestFailedSyncBreaksTheLog]
 // @ai:invariant no append takes the log past the bound Open reads back, so an engine can always reopen the log it wrote [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestALogFilledByItsOwnAppendsStillOpens]
@@ -175,7 +184,10 @@ func (l *cmdLog) append(r logRecord, room int64) error {
 		return &Refusal{LogBroken, "the command log stopped after a failed write (" + l.broken.Error() + "); reopen the engine"}
 	}
 	if l.size+int64(len(b))+room > l.max {
-		return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d; a %d-byte record leaving %d bytes free does not fit (a restart compacts the log)", l.size, l.max, len(b), room)}
+		if room > 0 {
+			return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d, no room for a new mandate: nothing was sent (a restart compacts the log's history, never its mandates)", l.size, l.max)}
+		}
+		return fmt.Errorf("%w: it holds %d bytes of %d, a %d-byte record does not fit", errLogFull, l.size, l.max, len(b))
 	}
 	if n, err := l.f.Write(b); err != nil || n != len(b) {
 		l.broken = fmt.Errorf("wrote %d of %d bytes: %v", n, len(b), err)
@@ -208,8 +220,8 @@ func (l *cmdLog) rewrite(path string, recs []logRecord) (fatal bool, err error) 
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if int64(buf.Len()) > l.max {
-		return false, fmt.Errorf("the compacted log would hold %d bytes, bound %d", buf.Len(), l.max)
+	if int64(buf.Len()) >= l.size {
+		return false, errNoGain
 	}
 	tmp := path + ".compact"
 	if err := writeSynced(tmp, buf.Bytes()); err != nil {
@@ -222,7 +234,7 @@ func (l *cmdLog) rewrite(path string, recs []logRecord) (fatal bool, err error) 
 		l.broken = fmt.Errorf("close before the compaction: %w", err)
 		return true, l.broken
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := renameLog(tmp, path); err != nil {
 		os.Remove(tmp)
 		af, oerr := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 		if oerr != nil {

@@ -192,6 +192,9 @@ type Recovery struct {
 	Torn          *Torn // nil when the log ended on a complete record
 	MadeUncertain int   // deliveries found delivering, now uncertain
 	MadeRefused   int   // deliveries found accepted (adapter never called), now refused
+	// InMemoryOnly: restart transitions the full log could not hold, applied in memory only (the
+	// next Open makes them again from the log).
+	InMemoryOnly int
 	// Compacted: the log was rewritten with one record per mandate (nil when it was not).
 	Compacted *Compaction
 	// CompactFailed: why a compaction was tried and not done; the log is the one read, unchanged.

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -86,6 +87,8 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	if err != nil {
 		return nil, Recovery{}, err
 	}
+	// A compacted copy left by a crash during a compaction is not the log: removed under the lock.
+	os.Remove(path + ".compact")
 	l, recs, torn, err := openLog(path, opt.MaxLogBytes)
 	if err != nil {
 		lock.Close()
@@ -99,15 +102,17 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 		e.apply(r)
 	}
 	rec := Recovery{Records: len(recs), Torn: torn}
-	// Past half its bound, a log holding more records than mandates is compacted before the
-	// restart's own transitions are written: one record per mandate, in its current state.
+	// Past three quarters of its bound, a log holding more records than mandates is compacted
+	// before the restart's own transitions are written: one record per mandate, in its current
+	// state, and only if that makes the log smaller.
 	// @ai:invariant a compaction keeps every mandate's state, fingerprint, incarnation, Ack and reason, so a restart neither forgets an id nor sends a delivered mandate again [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestARestartCompactsAFullLogAndForgetsNothing]
-	if from := l.size; from > opt.MaxLogBytes/2 && len(recs) > len(e.recs) {
+	if from := l.size; from > opt.MaxLogBytes/4*3 && len(recs) > len(e.recs) {
 		fatal, err := l.rewrite(path, e.snapshot())
 		switch {
 		case fatal:
 			l.close()
-			return nil, Recovery{}, err
+			return nil, rec, err
+		case errors.Is(err, errNoGain):
 		case err != nil:
 			rec.CompactFailed = err.Error()
 		default:
@@ -116,17 +121,32 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	}
 	for _, r := range e.sorted() {
 		k := key{r.target, r.id}
+		var lr logRecord
 		switch r.state {
 		case Delivering:
-			err = e.transition(k, r.inc, Uncertain, "restart: delivering without a final state", CauseRestart, nil)
+			lr = logRecord{Target: r.target, MandateID: r.id, Incarnation: r.inc, State: Uncertain, Reason: "restart: delivering without a final state", Cause: CauseRestart}
 			rec.MadeUncertain++
 		case Accepted:
-			err = e.transition(k, r.inc, Refused, "restart: the adapter was never called", "", nil)
+			lr = logRecord{Target: r.target, MandateID: r.id, Incarnation: r.inc, State: Refused, Reason: "restart: the adapter was never called"}
 			rec.MadeRefused++
+		default:
+			continue
+		}
+		err = e.transition(k, lr.Incarnation, lr.State, lr.Reason, lr.Cause, nil)
+		if errors.Is(err, errLogFull) {
+			// The log is full: the transition is applied in memory only. The log already makes it:
+			// every Open finds this delivery delivering (or accepted) and does the same again.
+			// @ai:invariant a restart whose own transitions do not fit in the log still starts, with them in memory [T:test conf:0.85 src:go/ixmux/deliver/logbound_review_test.go:TestARestartWhoseTransitionsDoNotFitStillStarts]
+			lr.At = time.Now().UTC()
+			e.mu.Lock()
+			e.apply(lr)
+			e.mu.Unlock()
+			rec.InMemoryOnly++
+			err = nil
 		}
 		if err != nil {
 			l.close()
-			return nil, Recovery{}, err
+			return nil, rec, err
 		}
 	}
 	return e, rec, nil
