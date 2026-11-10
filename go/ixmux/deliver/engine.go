@@ -99,6 +99,21 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 		e.apply(r)
 	}
 	rec := Recovery{Records: len(recs), Torn: torn}
+	// Past half its bound, a log holding more records than mandates is compacted before the
+	// restart's own transitions are written: one record per mandate, in its current state.
+	// @ai:invariant a compaction keeps every mandate's state, fingerprint, incarnation, Ack and reason, so a restart neither forgets an id nor sends a delivered mandate again [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestARestartCompactsAFullLogAndForgetsNothing]
+	if from := l.size; from > opt.MaxLogBytes/2 && len(recs) > len(e.recs) {
+		fatal, err := l.rewrite(path, e.snapshot())
+		switch {
+		case fatal:
+			l.close()
+			return nil, Recovery{}, err
+		case err != nil:
+			rec.CompactFailed = err.Error()
+		default:
+			rec.Compacted = &Compaction{From: from, To: l.size}
+		}
+	}
 	for _, r := range e.sorted() {
 		k := key{r.target, r.id}
 		switch r.state {
@@ -129,12 +144,31 @@ func (e *Engine) apply(lr logRecord) {
 		}
 	}
 	r.prev, r.state, r.reason, r.since, r.ack = r.state, lr.State, lr.Reason, lr.At, lr.Ack
+	if lr.Prev != "" { // a compacted record
+		r.prev = lr.Prev
+	}
+	if lr.Created != nil {
+		r.created = *lr.Created
+	}
 	if lr.Incarnation != "" {
 		r.inc = lr.Incarnation
 	}
 	if r.fp == "" {
 		r.fp = lr.Fingerprint
 	}
+}
+
+// snapshot is every mandate as one log record in its current state, for a compaction.
+func (e *Engine) snapshot() []logRecord {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]logRecord, 0, len(e.recs))
+	for _, r := range e.sorted() {
+		created := r.created
+		out = append(out, logRecord{At: r.since, Target: r.target, MandateID: r.id, Incarnation: r.inc, State: r.state,
+			Reason: r.reason, Ack: r.ack, Fingerprint: r.fp, Prev: r.prev, Created: &created})
+	}
+	return out
 }
 
 // fingerprint names what a mandate asks: its target, incarnation and text, each prefixed by its

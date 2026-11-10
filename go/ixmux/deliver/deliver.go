@@ -181,4 +181,14 @@ type Recovery struct {
 	Torn          *Torn // nil when the log ended on a complete record
 	MadeUncertain int   // deliveries found delivering, now uncertain
 	MadeRefused   int   // deliveries found accepted (adapter never called), now refused
+	// Compacted: the log was rewritten with one record per mandate (nil when it was not).
+	Compacted *Compaction
+	// CompactFailed: why a compaction was tried and not done; the log is the one read, unchanged.
+	CompactFailed string
+}
+
+// Compaction is the log's size in bytes before and after it was compacted at Open.
+type Compaction struct {
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
 }

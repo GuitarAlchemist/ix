@@ -22,6 +22,10 @@ type logRecord struct {
 	Reason      string    `json:"reason,omitempty"`
 	Ack         *Ack      `json:"ack,omitempty"`
 	Fingerprint string    `json:"fp,omitempty"` // of the mandate, on its accepted records
+	// Written by a compaction only, which keeps one record per mandate: the state before its last
+	// transition, and when its first record was written.
+	Prev    State      `json:"prev,omitempty"`
+	Created *time.Time `json:"created,omitempty"`
 }
 
 // cmdLog is the append-only command log, written by one engine at a time: lock is held on
@@ -170,7 +174,7 @@ func (l *cmdLog) append(r logRecord, room int64) error {
 		return &Refusal{LogBroken, "the command log stopped after a failed write (" + l.broken.Error() + "); reopen the engine"}
 	}
 	if l.size+int64(len(b))+room > l.max {
-		return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d; a %d-byte record leaving %d bytes free does not fit", l.size, l.max, len(b), room)}
+		return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d; a %d-byte record leaving %d bytes free does not fit (a restart compacts the log)", l.size, l.max, len(b), room)}
 	}
 	if n, err := l.f.Write(b); err != nil || n != len(b) {
 		l.broken = fmt.Errorf("wrote %d of %d bytes: %v", n, len(b), err)
@@ -182,6 +186,79 @@ func (l *cmdLog) append(r logRecord, room int64) error {
 		return l.broken
 	}
 	return nil
+}
+
+// rewrite replaces the log at path with its header and recs. They are written whole and synced
+// to path+".compact" first, which then replaces the log by a rename: a crash leaves the old log or
+// the new one, never part of either. On a failure before the rename the old log is kept and
+// appends go on to it (fatal false). After the rename, a failure to sync the directory or to
+// reopen the log breaks it (fatal true): an append to the new log could otherwise be lost to a
+// crash that brings the old one back.
+func (l *cmdLog) rewrite(path string, recs []logRecord) (fatal bool, err error) {
+	var buf bytes.Buffer
+	buf.WriteString(logHeader)
+	for _, r := range recs {
+		b, err := json.Marshal(r)
+		if err != nil {
+			return false, err
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if int64(buf.Len()) > l.max {
+		return false, fmt.Errorf("the compacted log would hold %d bytes, bound %d", buf.Len(), l.max)
+	}
+	tmp := path + ".compact"
+	if err := writeSynced(tmp, buf.Bytes()); err != nil {
+		os.Remove(tmp)
+		return false, err
+	}
+	// Windows renames over no open file: the append handle is closed first, and reopened on the
+	// old log if the rename fails.
+	if err := l.f.Close(); err != nil {
+		l.broken = fmt.Errorf("close before the compaction: %w", err)
+		return true, l.broken
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		af, oerr := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if oerr != nil {
+			l.broken = fmt.Errorf("reopen the log after a failed compaction: %w", oerr)
+			return true, l.broken
+		}
+		l.f = af
+		return false, err
+	}
+	if err := dirSync(filepath.Dir(path)); err != nil {
+		l.broken = fmt.Errorf("sync the directory after the compaction: %w", err)
+		return true, l.broken
+	}
+	af, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		l.broken = fmt.Errorf("reopen the compacted log: %w", err)
+		return true, l.broken
+	}
+	l.f, l.size = af, int64(buf.Len())
+	return false, nil
+}
+
+// writeSynced creates (or empties) path, writes b to it and syncs it.
+func writeSynced(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func (l *cmdLog) close() error {
