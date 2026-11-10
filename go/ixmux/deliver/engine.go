@@ -658,7 +658,10 @@ func (e *Engine) entry(r *record, now time.Time) Entry {
 // log would not know it (it could reconcile not-received and send again). Close may be called
 // again later. It returns log-broken, after closing, if a transition could not be written.
 // @ai:invariant the log's lock is released only once no adapter call of this engine can still take effect [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestCloseKeepsTheGuardOfARunningCall]
-// @ai:invariant Close returns nil only once every transition of this engine is written [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForAReconcile]
+// @ai:invariant Close returns nil only once no transition of this engine is still being written [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForAReconcile]
+// A transition the full log could not hold (errLogFull) is not written and does not break the log:
+// Close still returns nil; its delivery is uncertain in memory and is found uncertain at the next Open.
+// @ai:invariant a final record refused for lack of room leaves Close nil and its delivery uncertain after a restart [T:test conf:0.85 src:go/ixmux/deliver/logbound_review_test.go:TestAFinalRecordThatDoesNotFitIsNoRefusal]
 func (e *Engine) Close() error {
 	deadline := time.Now().Add(e.timeout)
 	e.mu.Lock()
