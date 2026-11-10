@@ -122,6 +122,7 @@ type targetInfo struct {
 // Server is one running ixmux.
 type Server struct {
 	cfg      Config
+	recovery deliver.Recovery // what Open found in the command log
 	eng      *deliver.Engine
 	hub      *hub
 	token    []byte
@@ -184,14 +185,14 @@ func Start(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, journals: map[string]string{}, claude: map[string]*claudestream.Adapter{}, stopping: make(chan struct{}), stopReq: make(chan struct{}), served: make(chan error, 1)}
 	epoch := hex.EncodeToString(random(6))
 	s.hub = newHub(epoch, RingSize)
-	eng, _, err := deliver.Open(filepath.Join(cfg.State, CommandFile), deliver.Options{Timeout: cfg.Timeout, Notify: s.onTransition})
+	eng, rec, err := deliver.Open(filepath.Join(cfg.State, CommandFile), deliver.Options{Timeout: cfg.Timeout, Notify: s.onTransition})
 	if r := (*deliver.Refusal)(nil); errors.As(err, &r) && (r.Code == deliver.JournalLocked || r.Code == deliver.LockUnsupported) {
 		return nil, &StartError{r.Error()}
 	}
 	if err != nil {
 		return nil, err
 	}
-	s.eng = eng
+	s.eng, s.recovery = eng, rec
 	s.hub.seed(eng.Status()) // the deliveries replayed from the log, before any event
 	tokenPath := filepath.Join(cfg.State, TokenFile)
 	tokenWritten := false
@@ -282,6 +283,9 @@ func Start(cfg Config) (*Server, error) {
 
 // Addr is the address actually listened on.
 func (s *Server) Addr() string { return s.info.Addr }
+
+// Recovery is what the start found in the command log, and did with it.
+func (s *Server) Recovery() deliver.Recovery { return s.recovery }
 
 func (s *Server) writeInfo() error {
 	b, err := json.MarshalIndent(s.info, "", "  ")

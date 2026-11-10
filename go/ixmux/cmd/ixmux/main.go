@@ -22,8 +22,26 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
 	"github.com/GuitarAlchemist/ix/go/ixmux/server"
 )
+
+// recoveryLine says what a start found in the command log and did with it, for the operator.
+func recoveryLine(r deliver.Recovery) string {
+	b := &strings.Builder{}
+	fmt.Fprintf(b, "ixmux: command log: %d records replayed", r.Records)
+	if r.Torn != nil {
+		fmt.Fprintf(b, ", a torn last record of %d bytes cut", r.Torn.Bytes)
+	}
+	fmt.Fprintf(b, ", %d made uncertain, %d made refused", r.MadeUncertain, r.MadeRefused)
+	if r.Compacted != nil {
+		fmt.Fprintf(b, ", compacted from %d to %d bytes", r.Compacted.From, r.Compacted.To)
+	}
+	if r.CompactFailed != "" {
+		fmt.Fprintf(b, ", compaction not done (the log is kept as read): %s", r.CompactFailed)
+	}
+	return b.String()
+}
 
 // version is set at build time: go build -ldflags "-X main.version=$(git describe --always --dirty)".
 var version = "dev"
@@ -102,6 +120,7 @@ func run(args []string, stderr io.Writer) int {
 		return server.ExitError
 	}
 	fmt.Fprintf(stderr, "ixmux %s listening on %s (pid %d)\n", version, s.Addr(), os.Getpid())
+	fmt.Fprintln(stderr, recoveryLine(s.Recovery()))
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM) // on Windows, Ctrl+C and Ctrl+Break are os.Interrupt
 	go func() {
