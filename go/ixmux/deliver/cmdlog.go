@@ -39,6 +39,11 @@ type cmdLog struct {
 	// size is the log's length in bytes; max the bound Open reads back (MaxLogBytes). No append
 	// takes size past max, so the next Open can read whatever this one wrote.
 	size, max int64
+	// held is the room each mandate keeps for the records it may still write (its delivering,
+	// final and settling records); reserved is their sum. An append leaves room for every other
+	// mandate's: size + reserved stays within max, so a record a mandate was promised always fits.
+	held     map[key]int64
+	reserved int64
 }
 
 // logFile is the append handle of the log (an *os.File; a test may wrap it).
@@ -157,37 +162,42 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	case torn != nil:
 		size = torn.At
 	}
-	return &cmdLog{f: af, size: size, max: maxBytes}, recs, torn, nil
+	return &cmdLog{f: af, size: size, max: maxBytes, held: map[key]int64{}}, recs, torn, nil
 }
 
-// append writes r as one line and syncs it. A failed write or sync breaks the log: a fragment
-// may be on disk, and any later line would be glued to it into one corrupt record. Every later
-// append is then refused (log-broken) until the engine is reopened, which cuts the fragment as a
-// torn tail.
+// setHeld sets the room k keeps for its next records (under l.mu).
+func (l *cmdLog) setHeld(k key, n int64) {
+	l.reserved += n - l.held[k]
+	if n == 0 {
+		delete(l.held, k)
+	} else {
+		l.held[k] = n
+	}
+}
+
+// appendLocked writes line b of mandate k and syncs it, under l.mu; k then holds next bytes for
+// its later records. A failed write or sync breaks the log: a fragment may be on disk, and any
+// later line would be glued to it into one corrupt record. Every later append is then refused
+// (log-broken) until the engine is reopened, which cuts the fragment as a torn tail.
 //
-// A line that would leave less than room bytes before max is not written: the log stays whole and
-// readable at the next Open. For an accepted record (room > 0) that is a refusal, log-full:
-// nothing was sent. For any later record the adapter may already have acted: errLogFull, which is
-// no refusal.
+// A line is written only if, with k holding next, the room every other mandate holds is still
+// free: the log stays within max, readable at the next Open, and no mandate loses the room it was
+// promised. A new mandate (accept) that does not fit is refused log-full: nothing was sent. Any
+// other record that does not fit (a log written by an older engine, or a bound lowered since) is
+// errLogFull, which is no refusal: the adapter may already have acted.
 // @ai:invariant a transition counts only once its whole line is written, and nothing is appended after a partial write [T:test conf:0.85 src:go/ixmux/deliver/s2d_test.go:TestPartialWriteBreaksTheLog]
 // @ai:invariant a transition counts only once its line is synced, and nothing is appended after a failed sync [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestFailedSyncBreaksTheLog]
 // @ai:invariant no append takes the log past the bound Open reads back, so an engine can always reopen the log it wrote [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestALogFilledByItsOwnAppendsStillOpens]
-func (l *cmdLog) append(r logRecord, room int64) error {
-	b, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
-	b = append(b, '\n')
-	l.mu.Lock()
-	defer l.mu.Unlock()
+// @ai:invariant no append takes the room another mandate holds, so an accepted delivery's records always fit [T:test conf:0.85 src:go/ixmux/deliver/r2_test.go:TestConcurrentDeliveriesKeepTheirAcks]
+func (l *cmdLog) appendLocked(b []byte, k key, next int64, accept bool) error {
 	if l.broken != nil {
 		return &Refusal{LogBroken, "the command log stopped after a failed write (" + l.broken.Error() + "); reopen the engine"}
 	}
-	if l.size+int64(len(b))+room > l.max {
-		if room > 0 {
-			return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d, no room for a new mandate: nothing was sent (a restart compacts the log's history, never its mandates)", l.size, l.max)}
+	if l.size+int64(len(b))+l.reserved-l.held[k]+next > l.max {
+		if accept {
+			return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d, %d of them kept for deliveries under way: no room for a new mandate, nothing was sent (finished mandates past the deduplication window are forgotten when the log is compacted)", l.size, l.max, l.reserved)}
 		}
-		return fmt.Errorf("%w: it holds %d bytes of %d, a %d-byte record does not fit", errLogFull, l.size, l.max, len(b))
+		return fmt.Errorf("%w: it holds %d bytes of %d, %d kept for other deliveries, a %d-byte record does not fit", errLogFull, l.size, l.max, l.reserved-l.held[k], len(b))
 	}
 	if n, err := l.f.Write(b); err != nil || n != len(b) {
 		l.broken = fmt.Errorf("wrote %d of %d bytes: %v", n, len(b), err)
@@ -198,6 +208,7 @@ func (l *cmdLog) append(r logRecord, room int64) error {
 		l.broken = fmt.Errorf("sync: %w", err)
 		return l.broken
 	}
+	l.setHeld(k, next)
 	return nil
 }
 
@@ -206,8 +217,8 @@ func (l *cmdLog) append(r logRecord, room int64) error {
 // the new one, never part of either. On a failure before the rename the old log is kept and
 // appends go on to it (fatal false). After the rename, a failure to sync the directory or to
 // reopen the log breaks it (fatal true): an append to the new log could otherwise be lost to a
-// crash that brings the old one back.
-func (l *cmdLog) rewrite(path string, recs []logRecord) (fatal bool, err error) {
+// crash that brings the old one back. The caller holds l.mu.
+func (l *cmdLog) rewriteLocked(path string, recs []logRecord) (fatal bool, err error) {
 	var buf bytes.Buffer
 	buf.WriteString(logHeader)
 	for _, r := range recs {
@@ -218,8 +229,6 @@ func (l *cmdLog) rewrite(path string, recs []logRecord) (fatal bool, err error) 
 		buf.Write(b)
 		buf.WriteByte('\n')
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if int64(buf.Len()) >= l.size {
 		return false, errNoGain
 	}

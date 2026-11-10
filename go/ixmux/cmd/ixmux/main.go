@@ -1,7 +1,7 @@
 // Command ixmux is the durable ixmux process.
 //
 //	ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
-//	            [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...]
+//	            [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...] [--dedup-window 720h]
 //	ixmux mcp --state <dir>        a local MCP server on stdio over that ixmux (MCP.md)
 //	ixmux version
 //
@@ -39,10 +39,14 @@ func recoveryLine(r deliver.Recovery) string {
 	}
 	if r.Compacted != nil {
 		fmt.Fprintf(b, ", compacted from %d to %d bytes", r.Compacted.From, r.Compacted.To)
+		if r.Compacted.Forgotten > 0 {
+			fmt.Fprintf(b, " (%d finished mandates past the deduplication window forgotten)", r.Compacted.Forgotten)
+		}
 	}
 	if r.CompactFailed != "" {
 		fmt.Fprintf(b, ", compaction not done (the log is kept as read): %s", r.CompactFailed)
 	}
+	fmt.Fprintf(b, "; a finished mandate is remembered at least %s", r.DedupWindow)
 	return b.String()
 }
 
@@ -99,6 +103,7 @@ func run(args []string, stderr io.Writer) int {
 	fs.StringVar(&cfg.ClaudeBin, "claude-bin", "", "the claude executable (default: claude on PATH)")
 	fs.Var(&claudeEnv, "claude-env", "a variable of ixmux's environment the claude children also get, by name (repeatable)")
 	fs.DurationVar(&cfg.Timeout, "timeout", 0, "deadline of one adapter call (default 30s)")
+	fs.DurationVar(&cfg.DedupWindow, "dedup-window", 0, "a finished mandate is remembered, and deduplicated, at least this long (default 720h)")
 	fs.IntVar(&cfg.MaxConns, "max-conns", server.MaxConns, "simultaneous stream connections")
 	fs.IntVar(&cfg.MaxHTTP, "max-http-conns", server.MaxHTTPConns, "simultaneous TCP connections, stream connections included")
 	fs.DurationVar(&cfg.ReadLimit, "read-timeout", server.ReadTimeout, "to read one request's headers and body")

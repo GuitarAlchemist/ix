@@ -72,20 +72,21 @@ type Named struct{ Name, Path string }
 
 // Config of one ixmux serve.
 type Config struct {
-	Addr      string
-	State     string
-	Journals  []Named
-	Targets   []Named
-	Claude    []string      // claude targets: one stream-json child each, in <state>\claude-<name>
-	ClaudeBin string        // the claude executable (default: claude on PATH)
-	ClaudeEnv []string      // names of ixmux's variables the claude children also get
-	Timeout   time.Duration // of one adapter call (deliver.Options.Timeout)
-	MaxConns  int
-	MaxHTTP   int           // simultaneous TCP connections (MaxHTTPConns)
-	ReadLimit time.Duration // to read one request's headers and body (ReadTimeout)
-	Queue     int
-	Poll      time.Duration
-	Version   string
+	Addr        string
+	State       string
+	Journals    []Named
+	Targets     []Named
+	Claude      []string      // claude targets: one stream-json child each, in <state>\claude-<name>
+	ClaudeBin   string        // the claude executable (default: claude on PATH)
+	ClaudeEnv   []string      // names of ixmux's variables the claude children also get
+	Timeout     time.Duration // of one adapter call (deliver.Options.Timeout)
+	DedupWindow time.Duration // a finished mandate is remembered at least this long (deliver.Options.DedupWindow)
+	MaxConns    int
+	MaxHTTP     int           // simultaneous TCP connections (MaxHTTPConns)
+	ReadLimit   time.Duration // to read one request's headers and body (ReadTimeout)
+	Queue       int
+	Poll        time.Duration
+	Version     string
 }
 
 // StartError refuses a start (ExitRefused).
@@ -185,7 +186,7 @@ func Start(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, journals: map[string]string{}, claude: map[string]*claudestream.Adapter{}, stopping: make(chan struct{}), stopReq: make(chan struct{}), served: make(chan error, 1)}
 	epoch := hex.EncodeToString(random(6))
 	s.hub = newHub(epoch, RingSize)
-	eng, rec, err := deliver.Open(filepath.Join(cfg.State, CommandFile), deliver.Options{Timeout: cfg.Timeout, Notify: s.onTransition})
+	eng, rec, err := deliver.Open(filepath.Join(cfg.State, CommandFile), deliver.Options{Timeout: cfg.Timeout, DedupWindow: cfg.DedupWindow, Notify: s.onTransition})
 	if r := (*deliver.Refusal)(nil); errors.As(err, &r) && (r.Code == deliver.JournalLocked || r.Code == deliver.LockUnsupported) {
 		return nil, &StartError{r.Error()}
 	}

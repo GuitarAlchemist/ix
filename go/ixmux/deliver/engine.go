@@ -4,13 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
+
+// timeNow is the clock of transitions and of the deduplication window; a test replaces it.
+var timeNow = time.Now
 
 type key struct{ target, id string }
 
@@ -36,9 +41,13 @@ type Engine struct {
 	notify  func(Transition)
 	timeout time.Duration
 	slots   chan struct{} // one per adapter call not yet returned
-	// reserve is the room (bytes) an accepted record must leave in the log: the last eighth of
-	// MaxLogBytes is kept for the delivering and final records of deliveries already accepted.
-	reserve int64
+	path    string        // of the log, for a compaction
+	window  time.Duration // DedupWindow
+	// small and big bound a record without and with an Ack: they size the room a mandate holds.
+	small, big int64
+	// nextCompact: no compaction is tried for a new mandate before it, once one failed or freed
+	// too little (under log.mu).
+	nextCompact time.Time
 
 	mu      sync.Mutex
 	targets map[string]*Target // one allocation per Register: a pointer names a registration
@@ -95,30 +104,42 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 		return nil, Recovery{}, err
 	}
 	l.lock = lock
-	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight), reserve: opt.MaxLogBytes / 8,
+	if opt.DedupWindow <= 0 {
+		opt.DedupWindow = DefaultDedupWindow
+	}
+	big := max(min(int64(MaxRecordBytes), opt.MaxLogBytes/8), SmallRecordBytes)
+	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
+		path: path, window: opt.DedupWindow, small: SmallRecordBytes, big: big,
 		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, idClaim: map[string]idHold{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
 	}
-	rec := Recovery{Records: len(recs), Torn: torn}
-	// Past three quarters of its bound, a log holding more records than mandates is compacted
+	rec := Recovery{Records: len(recs), Torn: torn, DedupWindow: e.window}
+	l.mu.Lock()
+	for k := range e.recs {
+		e.rehold(k)
+	}
+	// Past three quarters of its bound, or with no room for a new mandate, the log is compacted
 	// before the restart's own transitions are written: one record per mandate, in its current
-	// state, and only if that makes the log smaller.
+	// state, finished mandates past the deduplication window left out, and only if that makes the
+	// log smaller.
 	// @ai:invariant a compaction keeps every mandate's state, fingerprint, incarnation, Ack and reason, so a restart neither forgets an id nor sends a delivered mandate again [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestARestartCompactsAFullLogAndForgetsNothing]
-	if from := l.size; from > opt.MaxLogBytes/4*3 && len(recs) > len(e.recs) {
-		fatal, err := l.rewrite(path, e.snapshot())
+	if from := l.size; from > opt.MaxLogBytes/4*3 || from+l.reserved+2*e.small+e.big > opt.MaxLogBytes {
+		forgotten, fatal, err := e.compactLocked()
 		switch {
 		case fatal:
+			l.mu.Unlock()
 			l.close()
 			return nil, rec, err
 		case errors.Is(err, errNoGain):
 		case err != nil:
 			rec.CompactFailed = err.Error()
 		default:
-			rec.Compacted = &Compaction{From: from, To: l.size}
+			rec.Compacted = &Compaction{From: from, To: l.size, Forgotten: forgotten}
 		}
 	}
+	l.mu.Unlock()
 	for _, r := range e.sorted() {
 		k := key{r.target, r.id}
 		var lr logRecord
@@ -137,10 +158,13 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 			// The log is full: the transition is applied in memory only. The log already makes it:
 			// every Open finds this delivery delivering (or accepted) and does the same again.
 			// @ai:invariant a restart whose own transitions do not fit in the log still starts, with them in memory [T:test conf:0.85 src:go/ixmux/deliver/logbound_review_test.go:TestARestartWhoseTransitionsDoNotFitStillStarts]
-			lr.At = time.Now().UTC()
+			lr.At = timeNow().UTC()
 			e.mu.Lock()
 			e.apply(lr)
 			e.mu.Unlock()
+			l.mu.Lock()
+			e.rehold(k)
+			l.mu.Unlock()
 			rec.InMemoryOnly++
 			err = nil
 		}
@@ -178,17 +202,118 @@ func (e *Engine) apply(lr logRecord) {
 	}
 }
 
-// snapshot is every mandate as one log record in its current state, for a compaction.
-func (e *Engine) snapshot() []logRecord {
+// snapshot is every mandate as one log record in its current state, for a compaction, but for
+// the finished mandates (delivered or refused, not claimed) whose last transition is older than
+// the deduplication window: those it returns as gone. Under e.log.mu.
+// @ai:invariant a compaction forgets only finished mandates past the window, never an uncertain, accepted or delivering one [T:test conf:0.85 src:go/ixmux/deliver/r2_test.go:TestOldFinishedMandatesAreForgottenAtRestart]
+func (e *Engine) snapshot() (out []logRecord, gone []key) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := make([]logRecord, 0, len(e.recs))
+	cutoff := timeNow().Add(-e.window)
+	out = make([]logRecord, 0, len(e.recs))
 	for _, r := range e.sorted() {
+		k := key{r.target, r.id}
+		if (r.state == Delivered || r.state == Refused) && r.since.Before(cutoff) && !e.claims[k] && e.log.held[k] == 0 {
+			gone = append(gone, k)
+			continue
+		}
 		created := r.created
 		out = append(out, logRecord{At: r.since, Target: r.target, MandateID: r.id, Incarnation: r.inc, State: r.state,
 			Reason: r.reason, Cause: r.cause, Ack: r.ack, Fingerprint: r.fp, Prev: r.prev, Created: &created})
 	}
-	return out
+	return out, gone
+}
+
+// compactLocked rewrites the log from a snapshot, under e.log.mu, then forgets in memory the
+// mandates the snapshot left out: the same id is a new mandate from then on.
+func (e *Engine) compactLocked() (forgotten int, fatal bool, err error) {
+	recs, gone := e.snapshot()
+	if fatal, err := e.log.rewriteLocked(e.path, recs); err != nil {
+		return 0, fatal, err
+	}
+	e.mu.Lock()
+	for _, k := range gone {
+		r := e.recs[k]
+		delete(e.recs, k)
+		if e.ids[k.id] == r {
+			delete(e.ids, k.id)
+		}
+	}
+	e.mu.Unlock()
+	return len(gone), false, nil
+}
+
+// need is the room k must hold, once in state s, for the records it may still write (under
+// e.mu). Accepted under its claim, it may write delivering, an uncertain final record and a late
+// answer with an Ack; delivering, a final record with an Ack, or an uncertain one and its late
+// answer; uncertain with its call still running, a late answer; uncertain otherwise, the record of
+// a reconcile (no Ack). Found accepted or delivering at an Open, it writes its restart transition,
+// then a reconcile's once uncertain. callDone: the call has answered, no late answer comes.
+func (e *Engine) need(k key, s State, callDone bool) int64 {
+	calling := e.calling[k] && !callDone
+	switch s {
+	case Accepted:
+		if e.claims[k] {
+			return 2*e.small + e.big
+		}
+		return e.small
+	case Delivering:
+		if calling {
+			return e.small + e.big
+		}
+		return 2 * e.small
+	case Uncertain:
+		if calling {
+			return e.big
+		}
+		return e.small
+	}
+	return 0
+}
+
+// rehold sets the room k holds from its state in memory (under e.log.mu).
+func (e *Engine) rehold(k key) {
+	e.mu.Lock()
+	n := int64(0)
+	if r := e.recs[k]; r != nil {
+		n = e.need(k, r.state, false)
+	}
+	e.mu.Unlock()
+	e.log.setHeld(k, n)
+}
+
+// fit marshals lr as one line within limit bytes, cutting its Ack's text (marked Truncated), then
+// its reason, as needed. A record with nothing left to cut is returned whole: the append decides.
+func fit(lr *logRecord, limit int64) ([]byte, error) {
+	for {
+		b, err := json.Marshal(lr)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, '\n')
+		over := int64(len(b)) - limit
+		switch {
+		case over <= 0:
+			return b, nil
+		case lr.Ack != nil && lr.Ack.Text != "":
+			a := *lr.Ack
+			a.Text, a.Truncated = cut(a.Text, over), true
+			lr.Ack = &a
+		case lr.Reason != "":
+			lr.Reason = cut(lr.Reason, over)
+		default:
+			return b, nil
+		}
+	}
+}
+
+// cut drops at least over bytes from the end of s, on a rune boundary.
+func cut(s string, over int64) string {
+	n := max(len(s)-int(over), 0)
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // fingerprint names what a mandate asks: its target, incarnation and text, each prefixed by its
@@ -205,27 +330,50 @@ func fingerprint(m Mandate) string {
 // transition writes one state change to the log, then applies it; nothing changes if the write
 // fails.
 func (e *Engine) transition(k key, inc string, to State, reason, cause string, ack *Ack) error {
-	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Cause: cause, Ack: ack})
+	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Cause: cause, Ack: ack}, false)
 }
 
 func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *Ack, fp string) error {
-	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp})
+	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp}, false)
 }
 
-func (e *Engine) write(lr logRecord) error {
-	// A new delivery is accepted only while the log keeps room for the records still to come of
-	// those accepted before it; any later record may use that room, up to the bound itself.
-	room := int64(0)
-	if lr.State == Accepted {
-		room = e.reserve
+// write appends lr and applies it, both under e.log.mu: a compaction's snapshot always holds every
+// record written. A new mandate the log has no room for first tries a compaction (at most once a
+// minute once one did not help), which forgets the finished mandates past the window.
+func (e *Engine) write(lr logRecord, callDone bool) error {
+	lr.At = timeNow().UTC()
+	limit := e.small
+	if lr.Ack != nil {
+		limit = e.big
 	}
-	lr.At = time.Now().UTC()
-	if err := e.log.append(lr, room); err != nil {
+	b, err := fit(&lr, limit)
+	if err != nil {
 		return err
 	}
+	k, accept := key{lr.Target, lr.MandateID}, lr.State == Accepted
+	l := e.log
+	l.mu.Lock()
 	e.mu.Lock()
-	e.apply(lr)
+	next := e.need(k, lr.State, callDone)
 	e.mu.Unlock()
+	err = l.appendLocked(b, k, next, accept)
+	if rf := (*Refusal)(nil); accept && errors.As(err, &rf) && rf.Code == LogFull && !timeNow().Before(e.nextCompact) {
+		if _, _, cerr := e.compactLocked(); cerr == nil {
+			err = l.appendLocked(b, k, next, accept)
+		}
+		if err != nil {
+			e.nextCompact = timeNow().Add(time.Minute)
+		}
+	}
+	if err == nil {
+		e.mu.Lock()
+		e.apply(lr)
+		e.mu.Unlock()
+	}
+	l.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if e.notify != nil {
 		e.notify(Transition{At: lr.At, Target: lr.Target, MandateID: lr.MandateID, State: lr.State, Reason: lr.Reason})
 	}
@@ -286,6 +434,11 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		return Result{}, &Refusal{TextTooLong, fmt.Sprintf("text of %d bytes, bound %d", len(m.Text), MaxText)}
 	}
 	k, fp := key{m.Target, m.MandateID}, fingerprint(m)
+	// Every record of the mandate must fit in a small record, with room left for a reason.
+	if probe, _ := json.Marshal(logRecord{At: time.Now().UTC(), Target: m.Target, MandateID: m.MandateID, Incarnation: m.Incarnation,
+		State: Uncertain, Cause: CauseLogWrite, Fingerprint: fp}); int64(len(probe)) > e.small/2 {
+		return Result{}, &Refusal{BadMandate, fmt.Sprintf("its mandate id, target and incarnation take %d bytes of a log record, bound %d", len(probe), e.small/2)}
+	}
 	e.mu.Lock()
 	t, ok := e.targets[m.Target]
 	if !ok {
@@ -341,16 +494,22 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	e.idClaim[k.id] = idHold{k, fp}
 	e.mu.Unlock()
 	release := func() {
+		e.log.mu.Lock()
 		e.mu.Lock()
 		delete(e.running, m.Target)
 		delete(e.calling, k)
 		e.mu.Unlock()
+		e.rehold(k) // no late answer can come now
+		e.log.mu.Unlock()
 		<-e.slots
 	}
 	for _, s := range []State{Accepted, Delivering} {
 		if err := e.transitionFP(k, inc, s, "", nil, fp); err != nil {
 			e.unclaim(k)
 			release()
+			if errors.Is(err, errLogFull) { // the adapter was not called: nothing was sent
+				err = &Refusal{LogFull, err.Error()}
+			}
 			return Result{}, err
 		}
 	}
@@ -432,20 +591,25 @@ func (e *Engine) observeLate(k key, inc string, c callResult) {
 	r := e.recs[k]
 	still := r != nil && r.state == Uncertain && !e.claims[k]
 	e.mu.Unlock()
-	if still {
-		e.transition(k, inc, to, reason, cause, ack) // a failed write leaves it uncertain, as a restart would
+	if still { // a failed write leaves it uncertain, as a restart would
+		e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Cause: cause, Ack: ack}, true)
 	}
 }
 
 // finish records the final state of a delivery or reconcile and releases its claim. If the log
-// cannot be written, the delivery is uncertain in memory, as it will be after a restart.
+// cannot be written, the delivery is uncertain in memory, as it will be after a restart. Its error
+// is then never a refusal: the adapter (or Status) was called, and a refusal says nothing was sent.
+// @ai:invariant a delivery whose adapter was called never answers a refusal, even when another delivery broke the log [T:test conf:0.85 src:go/ixmux/deliver/r2_test.go:TestALogBrokenUnderAnotherDeliveryIsNoRefusalAfterTheCall]
 func (e *Engine) finish(k key, inc string, to State, reason, cause string, ack *Ack) (Result, error) {
 	err := e.transition(k, inc, to, reason, cause, ack)
+	if rf := (*Refusal)(nil); errors.As(err, &rf) {
+		err = fmt.Errorf("the final state was not written: %s", rf.Error())
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	r := e.recs[k]
 	if err != nil {
-		r.prev, r.state, r.reason, r.cause, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), CauseLogWrite, time.Now().UTC(), nil
+		r.prev, r.state, r.reason, r.cause, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), CauseLogWrite, timeNow().UTC(), nil
 	}
 	delete(e.claims, k)
 	e.dropIDClaim(k)

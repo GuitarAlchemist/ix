@@ -16,6 +16,15 @@ const (
 	MaxText        = 64 << 10         // bytes of a mandate's text
 	MaxLogBytes    = 64 << 20         // bytes of command log read back at Open
 	DefaultTimeout = 30 * time.Second // one Deliver or Status call to an adapter
+	// DefaultDedupWindow: a finished mandate (delivered or refused) is remembered, and so
+	// deduplicated, at least this long after its last transition.
+	DefaultDedupWindow = 30 * 24 * time.Hour
+	// SmallRecordBytes bounds a log record without an Ack: its reason is cut to fit. A mandate whose
+	// id, target and incarnation leave less than half of it is refused bad-mandate.
+	SmallRecordBytes = 1 << 10
+	// MaxRecordBytes bounds a record with an Ack (in a log of at least 8 times as much; an eighth of
+	// a smaller one): the Ack's text is cut to fit, and the Ack says Truncated.
+	MaxRecordBytes = 32 << 10
 )
 
 // State of one (target, mandate id).
@@ -166,6 +175,9 @@ type Options struct {
 	Timeout     time.Duration
 	MaxInFlight int
 	MaxLogBytes int64
+	// DedupWindow (DefaultDedupWindow when zero or less): a finished mandate is forgotten by the
+	// first compaction past it, and the same id is then a new mandate. An uncertain one never is.
+	DedupWindow time.Duration
 	// Notify, when set, is called once per transition written to the log, after it is applied
 	// and outside the engine's lock. It must not block: it runs on the delivery's path.
 	Notify func(Transition)
@@ -199,10 +211,14 @@ type Recovery struct {
 	Compacted *Compaction
 	// CompactFailed: why a compaction was tried and not done; the log is the one read, unchanged.
 	CompactFailed string
+	// DedupWindow: how long a finished mandate is remembered at least.
+	DedupWindow time.Duration
 }
 
-// Compaction is the log's size in bytes before and after it was compacted at Open.
+// Compaction is the log's size in bytes before and after it was compacted at Open, and the
+// finished mandates it forgot (past the deduplication window).
 type Compaction struct {
-	From int64 `json:"from"`
-	To   int64 `json:"to"`
+	From      int64 `json:"from"`
+	To        int64 `json:"to"`
+	Forgotten int   `json:"forgotten"`
 }

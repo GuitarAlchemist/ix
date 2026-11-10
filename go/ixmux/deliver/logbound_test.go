@@ -57,7 +57,7 @@ func fillLog(t *testing.T, e *Engine, a *fakeTarget, prefix string, n int) []Man
 // without the log being deleted, which would lose every mandate id it remembers.
 func TestALogFilledByItsOwnAppendsStillOpens(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cmd.jsonl")
-	opt := Options{MaxLogBytes: 4 << 10}
+	opt := Options{MaxLogBytes: 16 << 10}
 	e, _, err := Open(path, opt)
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func entryOf(e *Engine, target, id string) Entry {
 // never sent again.
 func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cmd.jsonl")
-	opt := Options{MaxLogBytes: 4 << 10}
+	opt := Options{MaxLogBytes: 16 << 10}
 	e, _, err := Open(path, opt)
 	if err != nil {
 		t.Fatal(err)
@@ -163,6 +163,7 @@ func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 	a, u := &fakeTarget{inc: "i"}, &failingTarget{inc: "i"}
 	e.Register("a", a.target())
 	e.Register("u", u.target())
+	e.nextCompact = timeNow().Add(24 * 365 * 3600e9) // this test fills the log for the compaction of a restart; a running one is tested in r2_test.go
 	if res, err := e.Deliver(context.Background(), Mandate{MandateID: "u1", Target: "u", Incarnation: "i", Text: "t"}); err != nil || res.State != Uncertain {
 		t.Fatalf("a delivery whose adapter fails: %+v %v, want uncertain", res, err)
 	}
@@ -246,6 +247,7 @@ func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 		t.Errorf("%s in Status: %+v before the compaction, %+v after; want the same last transition, since and creation", delivered[0].MandateID, before, after)
 	}
 
+	e2.nextCompact = timeNow().Add(24 * 365 * 3600e9) // the second compaction is a restart's too
 	more := fillLog(t, e2, a, "n", 200)
 	if len(more) == 0 {
 		t.Fatal("no new mandate fits after the compaction")

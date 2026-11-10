@@ -27,24 +27,37 @@ func (b *bigAckTarget) target() Target {
 // Review P1-a: once the adapter was called, the target may have taken the mandate. A final record
 // the log cannot hold is then no refusal (a refusal says nothing was sent, and a client would send
 // the work again under another id): the delivery is uncertain, cause log-write-failed, and stays
-// so after a restart, never sent again.
+// so after a restart, never sent again. The room an accepted delivery holds makes this impossible
+// in a log this engine wrote; it stays possible when the bound is lowered under the log, which the
+// test does during the call.
 func TestAFinalRecordThatDoesNotFitIsNoRefusal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cmd.jsonl")
-	opt := Options{MaxLogBytes: 4 << 10}
+	opt := Options{MaxLogBytes: 16 << 10}
 	e, _, err := Open(path, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &bigAckTarget{n: 4 << 10} // its delivered record cannot fit in the whole log
-	e.Register("b", b.target())
+	g := newGated(100)
+	e.Register("b", g.target())
 	m := Mandate{MandateID: "m1", Target: "b", Incarnation: "i", Text: "t"}
-	res, err := e.Deliver(context.Background(), m)
-	if err == nil || refusalCode(err) != "" || res.State != Uncertain || res.Cause != CauseLogWrite || b.calls != 1 {
-		t.Errorf("a delivery whose final record does not fit: %+v, %v (refusal code %q), %d calls; want an error that is no refusal, uncertain, cause %s, 1 call",
-			res, err, refusalCode(err), b.calls, CauseLogWrite)
+	type out struct {
+		res Result
+		err error
 	}
-	if _, err := e.Deliver(context.Background(), m); refusalCode(err) != UncertainNeedsReconcile || b.calls != 1 {
-		t.Errorf("m1 sent again: %v, %d calls; want %s and 1 call", err, b.calls, UncertainNeedsReconcile)
+	o := make(chan out, 1)
+	go func() { res, err := e.Deliver(context.Background(), m); o <- out{res, err} }()
+	<-g.entered
+	e.log.mu.Lock()
+	e.log.max = e.log.size // not one byte left
+	e.log.mu.Unlock()
+	close(g.release)
+	got := <-o
+	if res, err := got.res, got.err; err == nil || refusalCode(err) != "" || res.State != Uncertain || res.Cause != CauseLogWrite || g.callCount() != 1 {
+		t.Errorf("a delivery whose final record does not fit: %+v, %v (refusal code %q), %d calls; want an error that is no refusal, uncertain, cause %s, 1 call",
+			res, err, refusalCode(err), g.callCount(), CauseLogWrite)
+	}
+	if _, err := e.Deliver(context.Background(), m); refusalCode(err) != UncertainNeedsReconcile || g.callCount() != 1 {
+		t.Errorf("m1 sent again: %v, %d calls; want %s and 1 call", err, g.callCount(), UncertainNeedsReconcile)
 	}
 	if err := e.Close(); err != nil {
 		t.Fatal(err)
@@ -56,6 +69,33 @@ func TestAFinalRecordThatDoesNotFitIsNoRefusal(t *testing.T) {
 	defer e2.Close()
 	if en := entryOf(e2, "b", "m1"); en.State != Uncertain || en.Cause != CauseRestart {
 		t.Errorf("m1 after a restart: %+v, want uncertain, cause %s", en, CauseRestart)
+	}
+}
+
+// R2-1: the room a delivery holds is bounded, so its final record is too: an Ack whose text does
+// not fit in MaxRecordBytes is cut, said Truncated, and read back the same after a restart.
+func TestAnAckTooLargeForARecordIsCutAndSaidTruncated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	e, _, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &bigAckTarget{n: 2 * MaxRecordBytes}
+	e.Register("b", b.target())
+	res, err := e.Deliver(context.Background(), Mandate{MandateID: "m1", Target: "b", Incarnation: "i", Text: "t"})
+	if err != nil || res.State != Delivered || res.Ack == nil || !res.Ack.Truncated || len(res.Ack.Text) >= MaxRecordBytes || len(res.Ack.Text) < MaxRecordBytes/2 {
+		t.Fatalf("a %d-byte answer: %+v %v; want delivered, its text cut under %d bytes and said truncated", b.n, res, err, MaxRecordBytes)
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e2, _, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e2.Close()
+	if _, ack, ok := e2.Mandate("m1"); !ok || ack == nil || *ack != *res.Ack {
+		t.Errorf("m1's Ack after a restart differs from the one answered")
 	}
 }
 
