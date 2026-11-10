@@ -23,7 +23,7 @@ type record struct {
 	target, id, inc string
 	fp              string // fingerprint of the mandate first accepted under this id
 	state, prev     State
-	reason          string
+	reason, cause   string
 	ack             *Ack
 	created, since  time.Time
 }
@@ -118,10 +118,10 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 		k := key{r.target, r.id}
 		switch r.state {
 		case Delivering:
-			err = e.transition(k, r.inc, Uncertain, "restart: delivering without a final state", nil)
+			err = e.transition(k, r.inc, Uncertain, "restart: delivering without a final state", CauseRestart, nil)
 			rec.MadeUncertain++
 		case Accepted:
-			err = e.transition(k, r.inc, Refused, "restart: the adapter was never called", nil)
+			err = e.transition(k, r.inc, Refused, "restart: the adapter was never called", "", nil)
 			rec.MadeRefused++
 		}
 		if err != nil {
@@ -143,7 +143,7 @@ func (e *Engine) apply(lr logRecord) {
 			e.ids[lr.MandateID] = r
 		}
 	}
-	r.prev, r.state, r.reason, r.since, r.ack = r.state, lr.State, lr.Reason, lr.At, lr.Ack
+	r.prev, r.state, r.reason, r.cause, r.since, r.ack = r.state, lr.State, lr.Reason, lr.Cause, lr.At, lr.Ack
 	if lr.Prev != "" { // a compacted record
 		r.prev = lr.Prev
 	}
@@ -166,7 +166,7 @@ func (e *Engine) snapshot() []logRecord {
 	for _, r := range e.sorted() {
 		created := r.created
 		out = append(out, logRecord{At: r.since, Target: r.target, MandateID: r.id, Incarnation: r.inc, State: r.state,
-			Reason: r.reason, Ack: r.ack, Fingerprint: r.fp, Prev: r.prev, Created: &created})
+			Reason: r.reason, Cause: r.cause, Ack: r.ack, Fingerprint: r.fp, Prev: r.prev, Created: &created})
 	}
 	return out
 }
@@ -184,18 +184,22 @@ func fingerprint(m Mandate) string {
 
 // transition writes one state change to the log, then applies it; nothing changes if the write
 // fails.
-func (e *Engine) transition(k key, inc string, to State, reason string, ack *Ack) error {
-	return e.transitionFP(k, inc, to, reason, ack, "")
+func (e *Engine) transition(k key, inc string, to State, reason, cause string, ack *Ack) error {
+	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Cause: cause, Ack: ack})
 }
 
 func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *Ack, fp string) error {
+	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp})
+}
+
+func (e *Engine) write(lr logRecord) error {
 	// A new delivery is accepted only while the log keeps room for the records still to come of
 	// those accepted before it; any later record may use that room, up to the bound itself.
 	room := int64(0)
-	if to == Accepted {
+	if lr.State == Accepted {
 		room = e.reserve
 	}
-	lr := logRecord{At: time.Now().UTC(), Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp}
+	lr.At = time.Now().UTC()
 	if err := e.log.append(lr, room); err != nil {
 		return err
 	}
@@ -243,7 +247,7 @@ func (e *Engine) gate(k key, fp string) (res Result, err error, done bool) {
 }
 
 func (r *record) result() Result {
-	return Result{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason, Ack: r.ack}
+	return Result{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason, Cause: r.cause, Ack: r.ack}
 }
 
 type callResult struct {
@@ -357,19 +361,19 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		if !cl.returned {
 			cl.abandoned = true
 			e.mu.Unlock()
-			res, err := e.finish(k, inc, Uncertain, "no answer within the delivery deadline: "+cctx.Err().Error(), nil)
+			res, err := e.finish(k, inc, Uncertain, "no answer within the delivery deadline: "+cctx.Err().Error(), CauseDeadline, nil)
 			close(cl.finished)
 			return res, err
 		}
 		e.mu.Unlock()
 		<-cl.answered
 	}
-	to, reason, ack := outcome(cl.res)
+	to, reason, cause, ack := outcome(cl.res)
 	if testHookBeforeFinish != nil {
 		testHookBeforeFinish()
 	}
 	// @ai:invariant a call leaves calling only once its final state is written, so Close cannot release the log between an adapter's success and its record [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForTheFinalWrite]
-	res, err := e.finish(k, inc, to, reason, ack)
+	res, err := e.finish(k, inc, to, reason, cause, ack)
 	release()
 	return res, err
 }
@@ -385,20 +389,20 @@ var testHookMandateRead func()
 
 // outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
 // other error leaves the outcome unknown.
-func outcome(c callResult) (State, string, *Ack) {
+func outcome(c callResult) (to State, reason, cause string, ack *Ack) {
 	switch {
 	case c.err == nil:
-		return Delivered, "", &c.ack
+		return Delivered, "", "", &c.ack
 	case errors.Is(c.err, ErrRefused):
-		return Refused, c.err.Error(), nil
+		return Refused, c.err.Error(), "", nil
 	}
-	return Uncertain, "adapter error, outcome unknown: " + c.err.Error(), nil
+	return Uncertain, "adapter error, outcome unknown: " + c.err.Error(), CauseAdapterError, nil
 }
 
 // observeLate records the answer of an adapter call that returned after its caller's deadline.
 // A certain answer settles the uncertain delivery; an unknown one is logged and leaves it so.
 func (e *Engine) observeLate(k key, inc string, c callResult) {
-	to, reason, ack := outcome(c)
+	to, reason, cause, ack := outcome(c)
 	if reason == "" {
 		reason = "late answer of the adapter after the deadline"
 	} else {
@@ -409,19 +413,19 @@ func (e *Engine) observeLate(k key, inc string, c callResult) {
 	still := r != nil && r.state == Uncertain && !e.claims[k]
 	e.mu.Unlock()
 	if still {
-		e.transition(k, inc, to, reason, ack) // a failed write leaves it uncertain, as a restart would
+		e.transition(k, inc, to, reason, cause, ack) // a failed write leaves it uncertain, as a restart would
 	}
 }
 
 // finish records the final state of a delivery or reconcile and releases its claim. If the log
 // cannot be written, the delivery is uncertain in memory, as it will be after a restart.
-func (e *Engine) finish(k key, inc string, to State, reason string, ack *Ack) (Result, error) {
-	err := e.transition(k, inc, to, reason, ack)
+func (e *Engine) finish(k key, inc string, to State, reason, cause string, ack *Ack) (Result, error) {
+	err := e.transition(k, inc, to, reason, cause, ack)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	r := e.recs[k]
 	if err != nil {
-		r.prev, r.state, r.reason, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), time.Now().UTC(), nil
+		r.prev, r.state, r.reason, r.cause, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), CauseLogWrite, time.Now().UTC(), nil
 	}
 	delete(e.claims, k)
 	e.dropIDClaim(k)
@@ -530,9 +534,9 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 				return Result{}, err
 			}
 			if s.o == NotReceived {
-				return e.finish(k, inc, Refused, "reconciled: the target did not receive it", nil)
+				return e.finish(k, inc, Refused, "reconciled: the target did not receive it", "", nil)
 			}
-			return e.finish(k, inc, Delivered, "reconciled: the target received it", nil)
+			return e.finish(k, inc, Delivered, "reconciled: the target received it", "", nil)
 		default:
 			why = "the target answered " + string(s.o)
 		}
@@ -622,7 +626,7 @@ func (e *Engine) entry(r *record, now time.Time) Entry {
 	if prev == "" {
 		prev = "none"
 	}
-	return Entry{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason,
+	return Entry{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason, Cause: r.cause,
 		Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state), StillRunning: e.calling[key{r.target, r.id}]}
 }
 

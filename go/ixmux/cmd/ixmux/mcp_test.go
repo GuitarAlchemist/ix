@@ -343,7 +343,7 @@ func TestMCPIxmuxKilledDuringATurn(t *testing.T) {
 	q := startClaude(t, state, eff)
 	m.secrets = append(m.secrets, q.token)
 	res := m.resultOf("k1", "uncertain")
-	if res["mandate_id"] != "k1" {
+	if res["mandate_id"] != "k1" || res["cause"] != "restart" {
 		t.Errorf("result after the ixmux restart: %v", res)
 	}
 	rc := m.tool("ixmux_submit", submit("k1", inc, "A slow one."))

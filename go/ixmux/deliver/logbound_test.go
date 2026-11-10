@@ -220,8 +220,8 @@ func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 	if _, err := e2.Deliver(context.Background(), Mandate{MandateID: delivered[0].MandateID, Target: "a", Incarnation: "i", Text: "other"}); refusalCode(err) != MandateIDReuse {
 		t.Errorf("a delivered id with another text after the compaction: %v, want %s", err, MandateIDReuse)
 	}
-	if u1 := entryOf(e2, "u", "u1"); u1.State != Uncertain || u1.Reason != beforeU1.Reason || u1.Reason == "" {
-		t.Errorf("u1 after the compaction: %+v, want uncertain with its reason %q", u1, beforeU1.Reason)
+	if u1 := entryOf(e2, "u", "u1"); u1.State != Uncertain || u1.Reason != beforeU1.Reason || u1.Reason == "" || u1.Cause != CauseAdapterError {
+		t.Errorf("u1 after the compaction: %+v, want uncertain with its reason %q and cause %s", u1, beforeU1.Reason, CauseAdapterError)
 	}
 	// u1's last record is the compacted one: Reconcile asks the incarnation read back from it.
 	if res, err := e2.Reconcile(context.Background(), "u", "u1"); err != nil || res.State != Uncertain {

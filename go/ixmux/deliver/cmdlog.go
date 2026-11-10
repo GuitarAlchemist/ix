@@ -20,6 +20,7 @@ type logRecord struct {
 	Incarnation string    `json:"incarnation,omitempty"`
 	State       State     `json:"state"`
 	Reason      string    `json:"reason,omitempty"`
+	Cause       string    `json:"cause,omitempty"` // of an uncertain state: one of the Cause* values
 	Ack         *Ack      `json:"ack,omitempty"`
 	Fingerprint string    `json:"fp,omitempty"` // of the mandate, on its accepted records
 	// Written by a compaction only, which keeps one record per mandate: the state before its last

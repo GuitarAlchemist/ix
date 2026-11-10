@@ -126,12 +126,22 @@ type Target struct {
 	Incarnation func() (string, error)
 }
 
+// Causes of an uncertain state: why the engine cannot tell whether the target received the
+// mandate. A closed set, unlike Reason, which is free text and may quote an adapter's error.
+const (
+	CauseDeadline     = "deadline"         // the adapter did not answer within the delivery deadline
+	CauseAdapterError = "adapter-error"    // the adapter answered an error that is not a refusal
+	CauseRestart      = "restart"          // the engine restarted with the delivery under way
+	CauseLogWrite     = "log-write-failed" // the final state could not be written (in memory only)
+)
+
 // Result is the answer of Deliver or Reconcile.
 type Result struct {
 	Target    string `json:"target"`
 	MandateID string `json:"mandate_id"`
 	State     State  `json:"state"`
 	Reason    string `json:"reason,omitempty"`
+	Cause     string `json:"cause,omitempty"` // when uncertain: a Cause* value
 	Ack       *Ack   `json:"ack,omitempty"`
 	Replayed  bool   `json:"replayed"`
 }
@@ -142,9 +152,10 @@ type Entry struct {
 	MandateID string        `json:"mandate_id"`
 	State     State         `json:"state"`
 	Reason    string        `json:"reason,omitempty"`
-	Age       time.Duration `json:"age"`   // since it was first accepted
-	Since     time.Time     `json:"since"` // time of the last transition
-	Last      string        `json:"last"`  // the last transition, e.g. "delivering->uncertain"
+	Cause     string        `json:"cause,omitempty"` // when uncertain: a Cause* value
+	Age       time.Duration `json:"age"`             // since it was first accepted
+	Since     time.Time     `json:"since"`           // time of the last transition
+	Last      string        `json:"last"`            // the last transition, e.g. "delivering->uncertain"
 	// StillRunning: its adapter call has not returned, even past its deadline; Reconcile is refused
 	// (delivery-still-running) until it does.
 	StillRunning bool `json:"still_running"`

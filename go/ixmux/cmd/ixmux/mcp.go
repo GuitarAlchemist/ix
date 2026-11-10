@@ -125,6 +125,10 @@ var ixmuxCodes = map[string]string{
 	"stopping":                      "ixmux is stopping",
 }
 
+// uncertainCauses are the causes of an uncertain state that pass to a tool answer.
+var uncertainCauses = map[string]bool{deliver.CauseDeadline: true, deliver.CauseAdapterError: true,
+	deliver.CauseRestart: true, deliver.CauseLogWrite: true}
+
 func newMCP(state string, stdout io.Writer) *mcp {
 	// Each request dials its own connection (see exchange): loopback only, no proxy, none kept.
 	return &mcp{state: state, out: json.NewEncoder(stdout), posts: make(chan struct{}, MCPMaxPosts)}
@@ -779,9 +783,13 @@ func (m *mcp) result(raw json.RawMessage) (any, *toolErr) {
 		return nil, e
 	}
 	// The entry's reason is ixmux's free text (an adapter's error may quote anything): it does not
-	// pass. The state and last transition say what is known.
+	// pass. The state and last transition say what is known, and an uncertain state's cause, one
+	// of a closed set: any other value from the network is left out.
 	out := map[string]any{"mandate_id": v.MandateID, "target": v.Target, "state": v.State, "last": v.Last,
 		"still_running": v.StillRunning}
+	if uncertainCauses[v.Cause] {
+		out["cause"] = v.Cause
+	}
 	if v.Ack != nil {
 		text, cut := v.Ack.Text, v.Ack.Truncated
 		if len(text) > MCPMaxResultText {
