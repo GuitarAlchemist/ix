@@ -43,6 +43,7 @@ const (
 	NotUncertain            = "not-uncertain"
 	ReconcileUnsupported    = "reconcile-unsupported"
 	LogTooLarge             = "log-too-large"
+	LogFull                 = "log-full"
 	LogCorrupt              = "log-corrupt"
 	MandateIDReuse          = "mandate-id-reuse"
 	JournalLocked           = "journal-locked"

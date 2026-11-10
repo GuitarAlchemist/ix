@@ -35,6 +35,9 @@ type Engine struct {
 	notify  func(Transition)
 	timeout time.Duration
 	slots   chan struct{} // one per adapter call not yet returned
+	// reserve is the room (bytes) an accepted record must leave in the log: the last eighth of
+	// MaxLogBytes is kept for the delivering and final records of deliveries already accepted.
+	reserve int64
 
 	mu      sync.Mutex
 	targets map[string]*Target // one allocation per Register: a pointer names a registration
@@ -89,7 +92,7 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 		return nil, Recovery{}, err
 	}
 	l.lock = lock
-	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
+	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight), reserve: opt.MaxLogBytes / 8,
 		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, idClaim: map[string]idHold{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
@@ -152,8 +155,14 @@ func (e *Engine) transition(k key, inc string, to State, reason string, ack *Ack
 }
 
 func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *Ack, fp string) error {
+	// A new delivery is accepted only while the log keeps room for the records still to come of
+	// those accepted before it; any later record may use that room, up to the bound itself.
+	room := int64(0)
+	if to == Accepted {
+		room = e.reserve
+	}
 	lr := logRecord{At: time.Now().UTC(), Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp}
-	if err := e.log.append(lr); err != nil {
+	if err := e.log.append(lr, room); err != nil {
 		return err
 	}
 	e.mu.Lock()

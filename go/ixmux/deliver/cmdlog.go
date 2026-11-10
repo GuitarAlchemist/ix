@@ -31,6 +31,9 @@ type cmdLog struct {
 	f      logFile
 	lock   io.Closer
 	broken error // set by a failed write or sync: no more appends
+	// size is the log's length in bytes; max the bound Open reads back (MaxLogBytes). No append
+	// takes size past max, so the next Open can read whatever this one wrote.
+	size, max int64
 }
 
 // logFile is the append handle of the log (an *os.File; a test may wrap it).
@@ -135,16 +138,27 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	if err != nil {
 		return fail(err)
 	}
-	return &cmdLog{f: af}, recs, torn, nil
+	size := int64(len(data))
+	switch {
+	case needHeader: // the file was empty, or cut at 0 as a torn header
+		size = int64(len(logHeader))
+	case torn != nil:
+		size = torn.At
+	}
+	return &cmdLog{f: af, size: size, max: maxBytes}, recs, torn, nil
 }
 
 // append writes r as one line and syncs it. A failed write or sync breaks the log: a fragment
 // may be on disk, and any later line would be glued to it into one corrupt record. Every later
 // append is then refused (log-broken) until the engine is reopened, which cuts the fragment as a
 // torn tail.
+//
+// A line that would leave less than room bytes before max is refused log-full, and nothing is
+// written: the log stays whole and readable at the next Open.
 // @ai:invariant a transition counts only once its whole line is written, and nothing is appended after a partial write [T:test conf:0.85 src:go/ixmux/deliver/s2d_test.go:TestPartialWriteBreaksTheLog]
 // @ai:invariant a transition counts only once its line is synced, and nothing is appended after a failed sync [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestFailedSyncBreaksTheLog]
-func (l *cmdLog) append(r logRecord) error {
+// @ai:invariant no append takes the log past the bound Open reads back, so an engine can always reopen the log it wrote [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestALogFilledByItsOwnAppendsStillOpens]
+func (l *cmdLog) append(r logRecord, room int64) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -155,10 +169,14 @@ func (l *cmdLog) append(r logRecord) error {
 	if l.broken != nil {
 		return &Refusal{LogBroken, "the command log stopped after a failed write (" + l.broken.Error() + "); reopen the engine"}
 	}
+	if l.size+int64(len(b))+room > l.max {
+		return &Refusal{LogFull, fmt.Sprintf("the command log holds %d bytes of %d; a %d-byte record leaving %d bytes free does not fit", l.size, l.max, len(b), room)}
+	}
 	if n, err := l.f.Write(b); err != nil || n != len(b) {
 		l.broken = fmt.Errorf("wrote %d of %d bytes: %v", n, len(b), err)
 		return l.broken
 	}
+	l.size += int64(len(b))
 	if err := l.f.Sync(); err != nil {
 		l.broken = fmt.Errorf("sync: %w", err)
 		return l.broken
