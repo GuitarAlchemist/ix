@@ -151,7 +151,10 @@ Entrée : `{mandate_id}`. Sortie :
 
 - `state` : `accepted`, `delivering`, `delivered`, `refused` ou `uncertain`, et `last` la
   transition qui y a mené. La raison d'ixmux n'est pas transmise (texte libre). Un mandat
-  `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`.
+  `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`. Un
+  client ne doit pas non plus renvoyer son travail sous un autre id : `uncertain` veut dire que la
+  cible l'a peut-être pris. Rien n'est relancé automatiquement ; une personne décide, d'après la
+  sortie de la session ou une réconciliation.
 - `cause`, sur un mandat `uncertain`, dit pourquoi, dans un ensemble fermé : `deadline` (pas de
   réponse dans le délai de livraison d'ixmux), `adapter-error` (la cible a répondu une erreur,
   `is_error` compris), `restart` (ixmux a redémarré pendant la livraison), `log-write-failed` (son
@@ -168,7 +171,9 @@ Entrée : `{mandate_id}`. Sortie :
   sauf si son résultat était déjà arrivé.
 - Le résultat est lu dans le journal de commandes d'ixmux (`GET /v1/mandates/{id}`) : il survit à
   un redémarrage de l'adaptateur et à un redémarrage d'ixmux.
-- Un id inconnu donne `unknown-mandate`.
+- Un id inconnu donne `unknown-mandate` : jamais déposé, ou terminé (`delivered` ou `refused`)
+  depuis plus que la fenêtre de déduplication d'ixmux (`--dedup-window`, 720 h par défaut) et
+  oublié ; cet id est alors un nouveau mandat. Un mandat `uncertain` n'est jamais oublié.
 
 ## Arrêt
 

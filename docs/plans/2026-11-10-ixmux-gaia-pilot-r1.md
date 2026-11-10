@@ -83,11 +83,13 @@ C'est une preuve **locale**. [Gaïa] Ce n'est pas une preuve depuis Gaïa.
 | `ixmux-unavailable` | ixmux est arrêté, ou `ixmux.json` ou le jeton manquent | Relancer `serve`, puis lire sa ligne `command log:` |
 | `ixmux-unverified` | Le port est tenu par un autre processus que ixmux | Ne rien envoyer ; trouver le processus |
 | `uncertain` et `cause: deadline` | Pas de réponse dans le délai de livraison ; `still_running` dit si le tour court encore | Attendre, puis lire `ixmux_result` ; ne jamais renvoyer |
-| `uncertain` et `cause: adapter-error` | La cible a répondu une erreur (`is_error`) | Lire la sortie de la session ; nouveau mandat sous un nouvel id |
-| `uncertain` et `cause: restart` | ixmux a redémarré pendant la livraison | Réconcilier hors MCP, ou nouveau mandat sous un nouvel id |
+| `uncertain` et `cause: adapter-error` | La cible a répondu une erreur (`is_error`) après avoir peut-être pris le mandat | **Ne rien relancer**, ni sous le même id ni sous un autre. Lire la sortie de la session ; une personne décide |
+| `uncertain` et `cause: restart` | ixmux a redémarré pendant la livraison | **Ne rien relancer**. Réconcilier hors MCP (souvent impossible avec claude : nouvelle incarnation) ; une personne décide |
+
+Correction R2 (mandat GAIA-20261110-IXMUX-P1-R2) : cette table conseillait « nouveau mandat sous un nouvel id » pour `adapter-error` et `restart`. C'était une relance déguisée : `uncertain` veut dire que la cible a peut-être pris le mandat, et rien ne le relance automatiquement.
 | `target-busy` ou `busy` | Saturation : rien n'a été envoyé | Réessayer plus tard, avec le même id |
 | `submits-in-flight` | 4 dépôts attendent encore une réponse | Réessayer quand l'un d'eux a fini |
-| `log-full` | Journal de commandes plein | Redémarrer ixmux, ce qui le compacte ; **ne jamais supprimer le journal** |
+| `log-full` | Journal de commandes plein ; depuis R2, ixmux l'a déjà compacté sans succès : les mandats terminés dans la fenêtre de déduplication le remplissent | Rien n'a été envoyé. Réessayer plus tard, quand d'anciens mandats sortent de la fenêtre, ou relancer `serve` avec un `--dedup-window` plus court ; **ne jamais supprimer le journal** |
 | `mandate-id-reuse` | Même id avec un autre texte ou une autre incarnation | Après un redémarrage, redonner l'incarnation d'origine |
 
 ### Arrêt et retour arrière

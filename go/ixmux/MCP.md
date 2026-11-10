@@ -147,7 +147,9 @@ Input: `{mandate_id}`. Output:
 
 - `state`: `accepted`, `delivering`, `delivered`, `refused` or `uncertain`, and `last` the
   transition that led there. ixmux's reason is not passed on (free text). An `uncertain` mandate is
-  never replayed: a new submission is refused `uncertain-needs-reconcile`.
+  never replayed: a new submission is refused `uncertain-needs-reconcile`. Nor may a client send its
+  work again under another id: `uncertain` means the target may have taken it. Nothing is
+  relaunched automatically; a person decides, from the session's output or a reconcile.
 - `cause`, on an `uncertain` mandate, says why, from a closed set: `deadline` (no answer within
   ixmux's delivery deadline), `adapter-error` (the target answered an error, `is_error` included),
   `restart` (ixmux restarted with the delivery under way), `log-write-failed` (its final state
@@ -163,7 +165,9 @@ Input: `{mandate_id}`. Output:
   already come.
 - It is read from the command log of ixmux (`GET /v1/mandates/{id}`): it survives a restart of the
   adapter and a restart of ixmux.
-- An unknown id is `unknown-mandate`.
+- An unknown id is `unknown-mandate`: never submitted, or finished (`delivered` or `refused`) more
+  than ixmux's deduplication window ago (`--dedup-window`, 720 h by default) and forgotten; that
+  id is then a new mandate. An `uncertain` mandate is never forgotten.
 
 ## Stop
 
