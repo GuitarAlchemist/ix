@@ -1,0 +1,216 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"go/parser"
+	"go/token"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func mustInventory(t *testing.T, js string) *resumeInventory {
+	t.Helper()
+	inv, err := parseResumeInventory([]byte(js))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inv
+}
+
+// The start order puts each component after the ones it names; ties keep inventory order.
+func TestResumeOrderFollowsAfter(t *testing.T) {
+	inv := mustInventory(t, `{"components":[
+		{"name":"relay","after":["plane","voice"],"listen":"127.0.0.1:1"},
+		{"name":"voice","listen":"127.0.0.1:2"},
+		{"name":"plane","service":"ixctl"}]}`)
+	order, _ := resumeOrder(inv.Components)
+	var got []string
+	for _, c := range order {
+		got = append(got, c.Name)
+	}
+	if strings.Join(got, " ") != "voice plane relay" {
+		t.Fatalf("order %v", got)
+	}
+}
+
+func TestResumeInventoryRefusals(t *testing.T) {
+	for _, c := range []struct{ js, want string }{
+		{`{"components":[]}`, "no components"},
+		{`{"components":[{"name":"a","listen":"127.0.0.1:1"},{"name":"a","listen":"127.0.0.1:2"}]}`, "declared twice"},
+		{`{"components":[{"name":"a"}]}`, "nothing to observe"},
+		{`{"components":[{"name":"a","after":["b"],"listen":"127.0.0.1:1"}]}`, "not declared"},
+		{`{"components":[{"name":"a","after":["b"],"listen":"127.0.0.1:1"},{"name":"b","after":["a"],"listen":"127.0.0.1:2"}]}`, "cycle"},
+		{`{"components":[{"name":"a","health":"http://example.com/health"}]}`, "not a loopback address"},
+		{`{"components":[{"name":"a","health":"file:///etc/passwd"}]}`, "not http(s)"},
+		{`{"components":[{"name":"a","listen":"127.0.0.1"}]}`, "listen"},
+		{`{"components":[{"name":"a","listen":"127.0.0.1:1","start":"x.exe"}]}`, "unknown field"},
+	} {
+		if _, err := parseResumeInventory([]byte(c.js)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", c.js, err, c.want)
+		}
+	}
+}
+
+func fakeProbes(services map[string][2]string, listening map[string]bool, healthy map[string]error) resumeProbes {
+	return resumeProbes{
+		service: func(name string) (string, string, error) {
+			s, ok := services[name]
+			if !ok {
+				return "", "", errors.New("access is denied")
+			}
+			return s[0], s[1], nil
+		},
+		health:    func(u string) error { return healthy[u] },
+		listening: func(a string) (bool, error) { return listening[a], nil },
+		exists: func(p string) error {
+			if strings.Contains(p, "missing") {
+				return os.ErrNotExist
+			}
+			return nil
+		},
+	}
+}
+
+func TestResumeVerdicts(t *testing.T) {
+	inv := mustInventory(t, `{"components":[
+		{"name":"plane","service":"ixctl","health":"http://127.0.0.1:8761/health","durable":["C:/state/plane.json","C:/state/missing.json"],
+		 "owner":"IxForge","remedy":"sc.exe config ixctl start= delayed-auto"},
+		{"name":"auto","service":"auto-svc"},
+		{"name":"stopped","service":"stopped-svc"},
+		{"name":"denied","service":"secret-svc"},
+		{"name":"voice","listen":"127.0.0.1:59126","owner":"voice lane","remedy":"start piper-voice serve"},
+		{"name":"relay","after":["voice"],"health":"http://localhost:9/health"}]}`)
+	p := fakeProbes(
+		map[string][2]string{"ixctl": {"running", "manual"}, "auto-svc": {"running", "automatic (delayed)"}, "stopped-svc": {"stopped", "automatic"}},
+		map[string]bool{},
+		map[string]error{"http://localhost:9/health": errors.New("connection refused")},
+	)
+	got := map[string]resumeResult{}
+	for _, r := range checkResume(inv, p) {
+		got[r.Name] = r
+	}
+	expect := func(name, verdict, line string) {
+		t.Helper()
+		r := got[name]
+		if r.Verdict != verdict || !strings.Contains(strings.Join(r.Checks, "\n"), line) {
+			t.Errorf("%s: %s %q, want %s with %q", name, r.Verdict, r.Checks, verdict, line)
+		}
+	}
+	expect("plane", verdictDegraded, "start type manual: it will not start after a reboot")
+	expect("plane", verdictDegraded, "durable state C:/state/missing.json is missing")
+	expect("auto", verdictOK, "running, start type automatic (delayed)")
+	expect("stopped", verdictDown, "is stopped (start type automatic)")
+	expect("denied", verdictUnknown, "access is denied")
+	expect("voice", verdictDown, "nothing listens on 127.0.0.1:59126 (a client gets connection refused)")
+	expect("relay", verdictDown, "connection refused")
+	if b := got["relay"].BlockedBy; len(b) != 1 || b[0] != "voice" {
+		t.Errorf("relay blocked by %v, want voice", b)
+	}
+
+	var out bytes.Buffer
+	writeResume(&out, checkResume(inv, p), false)
+	text := out.String()
+	for _, want := range []string{"6 components, 5 not ready", "owner: IxForge", "remedy (run by a human): start piper-voice serve", "starts after voice, which is not up"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\nready") {
+		t.Errorf("printed ready:\n%s", text)
+	}
+}
+
+// The check observes only: no file of it starts a process.
+func TestResumeStartsNothing(t *testing.T) {
+	for _, name := range []string{"resume.go", "resume_windows.go", "resume_other.go"} {
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, imp := range f.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == "os/exec" || p == "syscall" {
+				t.Errorf("%s imports %s", name, p)
+			}
+		}
+	}
+}
+
+// The real listener probe sees a real listener, then its absence, without connecting.
+func TestTCPListeningSeesARealListener(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if on, err := tcpListening(addr); err != nil || !on {
+		t.Fatalf("listening %s: %v %v", addr, on, err)
+	}
+	ln.Close()
+	if on, err := tcpListening(addr); err != nil || on {
+		t.Fatalf("closed %s still listening: %v %v", addr, on, err)
+	}
+}
+
+func TestQueryServiceReadsARealService(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the Windows service manager")
+	}
+	state, start, err := queryService("EventLog")
+	if err != nil || state != "running" || !strings.HasPrefix(start, "automatic") {
+		t.Fatalf("EventLog: %q %q %v", state, start, err)
+	}
+	if state, _, err := queryService("ixctl-resume-check-no-such-service"); err != nil || state != "not installed" {
+		t.Fatalf("missing service: %q %v", state, err)
+	}
+}
+
+// End to end with the real probes on stand-in components: ready exits 0, a component down
+// exits 1 and names it.
+func TestResumeCheckCommand(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer up.Close()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	gone, _ := net.Listen("tcp4", "127.0.0.1:0")
+	goneAddr := gone.Addr().String()
+	gone.Close()
+
+	dir := t.TempDir()
+	write := func(js string) string {
+		p := filepath.Join(dir, fmt.Sprintf("inv%d.json", len(js)))
+		os.WriteFile(p, []byte(js), 0o644)
+		return p
+	}
+	ready := write(fmt.Sprintf(`{"components":[{"name":"plane","health":%q},{"name":"voice","listen":%q,"after":["plane"]}]}`,
+		up.URL+"/health", ln.Addr().String()))
+	var out, errb bytes.Buffer
+	if code := cli([]string{"resume", "check", ready}, &out, &errb); code != 0 || !strings.HasSuffix(out.String(), "ready\n") {
+		t.Fatalf("ready: exit %d\n%s%s", code, out.String(), errb.String())
+	}
+	down := write(fmt.Sprintf(`{"components":[{"name":"voice","listen":%q,"remedy":"start it"},{"name":"hook","health":"http://%s/v1/hook","after":["voice"]}]}`,
+		goneAddr, goneAddr))
+	out.Reset()
+	if code := cli([]string{"resume", "check", down}, &out, &errb); code != 1 ||
+		!strings.Contains(out.String(), "nothing listens on "+goneAddr) || !strings.Contains(out.String(), "remedy (run by a human): start it") {
+		t.Fatalf("down: exit %d\n%s", code, out.String())
+	}
+	out.Reset()
+	if code := cli([]string{"resume", "check", down, "--json"}, &out, &errb); code != 1 || !strings.Contains(out.String(), `"ready": false`) {
+		t.Fatalf("json: exit %d\n%s", code, out.String())
+	}
+	if code := cli([]string{"resume", "check", filepath.Join(dir, "none.json")}, &out, &errb); code != 1 {
+		t.Fatalf("missing inventory: exit %d", code)
+	}
+}

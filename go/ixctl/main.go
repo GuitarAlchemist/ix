@@ -27,6 +27,7 @@ const usage = `usage:
   ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N] [--delta-journal FILE]
   ixctl bench <spec.json>
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
+  ixctl resume check <inventory.json> [--json]   # after a reboot: what came back, in start order (observes only; exit 1 when not ready)
   ixctl version`
 
 func main() { os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -48,6 +49,11 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(kindsReply(defaultProbeBudget))
+	case "resume":
+		var ready bool
+		if ready, err = cmdResume(args[1:], stdout, realResumeProbes()); err == nil && !ready {
+			return 1
+		}
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 	default:

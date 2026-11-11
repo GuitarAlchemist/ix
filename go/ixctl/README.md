@@ -592,6 +592,31 @@ appends are not `fsync`ed, write errors are ignored, and a crash can cut the las
 boot's header then starts a line of its own), so no record is a commit point; durable restoration would be a separate contract that announces itself
 (door 3).
 
+## Resume after a reboot
+
+`ixctl resume check <inventory.json> [--json]` says what came back after a reboot or a power cut,
+in start order, and exits 1 until everything is ready. It only observes: it starts, stops and
+replays nothing, and a component it cannot observe is `unknown`, never assumed up.
+
+```json
+{"components": [
+  {"name": "plane", "service": "ixctl", "durable": ["C:\\ProgramData\\ixctl\\spec.json"],
+   "owner": "…", "remedy": "elevated: sc.exe config ixctl start= delayed-auto"},
+  {"name": "voice", "after": ["plane"], "listen": "127.0.0.1:59126", "remedy": "…"}
+]}
+```
+
+- `service`: a Windows service's state and start type, read with query rights only. A running
+  service whose start type is not automatic is `degraded`: it will not come back after the next
+  reboot.
+- `listen`: whether a listener holds the address, read from the system's TCP table (Windows
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Nothing connects to the port.
+- `health`: a loopback http(s) URL that must answer 2xx; any other host is refused.
+- `durable`: where the component's state lives, reported present or missing, never opened.
+- `after`: the start order; a component after one that is down says so. A cycle is refused.
+- `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human
+  to run.
+
 ## Gate
 
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust

@@ -632,6 +632,33 @@ synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash pe
 ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
 un contrat distinct qui s'annoncerait lui-même (porte 3).
 
+## Reprise après un redémarrage
+
+`ixctl resume check <inventory.json> [--json]` dit ce qui est revenu après un redémarrage ou une
+coupure de courant, dans l'ordre de démarrage, et sort en 1 tant que tout n'est pas prêt. Il ne fait
+qu'observer : il ne démarre, n'arrête et ne rejoue rien, et un composant qu'il ne peut pas observer
+est `unknown`, jamais supposé démarré.
+
+```json
+{"components": [
+  {"name": "plane", "service": "ixctl", "durable": ["C:\\ProgramData\\ixctl\\spec.json"],
+   "owner": "…", "remedy": "elevated: sc.exe config ixctl start= delayed-auto"},
+  {"name": "voice", "after": ["plane"], "listen": "127.0.0.1:59126", "remedy": "…"}
+]}
+```
+
+- `service` : l'état et le type de démarrage d'un service Windows, lus avec les seuls droits de
+  consultation. Un service démarré dont le type de démarrage n'est pas automatique est `degraded` :
+  il ne reviendra pas après le prochain redémarrage.
+- `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Rien ne se connecte au port.
+- `health` : une URL http(s) en boucle locale qui doit répondre 2xx ; tout autre hôte est refusé.
+- `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
+- `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle
+  est refusé.
+- `owner` et `remedy` s'affichent pour un composant qui n'est pas prêt : le remède est à lancer par
+  un humain.
+
 ## Barrière
 
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
