@@ -157,7 +157,7 @@ Entrée : `{mandate_id}`. Sortie :
   sortie de la session ou une réconciliation.
 - `cause`, sur un mandat `uncertain`, dit pourquoi, dans un ensemble fermé : `deadline` (pas de
   réponse dans le délai de livraison d'ixmux), `adapter-error` (la cible a répondu une erreur,
-  `is_error` compris), `restart` (ixmux a redémarré pendant la livraison), `log-write-failed` (son
+  `is_error` compris), `restart` (ixmux s'est arrêté, proprement ou non, ou a redémarré pendant la livraison), `log-write-failed` (son
   état final n'a pas pu être écrit). Toute autre valeur venue d'ixmux est écartée. La saturation
   n'est pas un état : c'est un dépôt refusé, `target-busy` ou `busy`.
 - `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré avec une réponse.

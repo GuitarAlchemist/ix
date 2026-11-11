@@ -59,6 +59,19 @@ type Engine struct {
 	calling map[key]bool       // keys whose adapter call has not returned, even past its deadline
 	asking  map[key]bool       // keys whose Status call has not returned, even past its deadline
 	closing bool               // Close has begun: no new Deliver or Reconcile
+	// stopping: the process is stopping (Stopping), so an adapter error is the stop's doing.
+	stopping bool
+}
+
+// Stopping says the process is stopping and is about to end its adapters' work (a clean stop
+// closes the claude children before Close). From then on, an adapter call that ends in an error
+// that is not a refusal is recorded uncertain with cause restart, ixmux stopped with the delivery
+// under way, and not adapter-error, which says the target answered an error.
+// @ai:invariant a clean stop during a turn leaves the mandate uncertain with cause restart, never adapter-error [T:test conf:0.85 src:go/ixmux/cmd/ixmux/stopcause_test.go:TestACleanStopDuringATurnIsCauseRestart]
+func (e *Engine) Stopping() {
+	e.mu.Lock()
+	e.stopping = true
+	e.mu.Unlock()
 }
 
 // call is one adapter call, shared by the caller and the goroutine that runs it.
@@ -550,6 +563,14 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		<-cl.answered
 	}
 	to, reason, cause, ack := outcome(cl.res)
+	if cause == CauseAdapterError {
+		e.mu.Lock()
+		stopping := e.stopping
+		e.mu.Unlock()
+		if stopping {
+			reason, cause = "stop: ixmux stopped with the delivery under way; "+reason, CauseRestart
+		}
+	}
 	if testHookBeforeFinish != nil {
 		testHookBeforeFinish()
 	}

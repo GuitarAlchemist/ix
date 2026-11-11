@@ -140,7 +140,7 @@ type Target struct {
 const (
 	CauseDeadline     = "deadline"         // the adapter did not answer within the delivery deadline
 	CauseAdapterError = "adapter-error"    // the adapter answered an error that is not a refusal
-	CauseRestart      = "restart"          // the engine restarted with the delivery under way
+	CauseRestart      = "restart"          // the engine stopped (Stopping) or restarted with the delivery under way
 	CauseLogWrite     = "log-write-failed" // the final state could not be written (in memory only)
 )
 

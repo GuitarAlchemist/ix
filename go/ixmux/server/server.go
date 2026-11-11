@@ -352,7 +352,9 @@ func (s *Server) stop(code int) int {
 	case <-time.After(ShutdownGrace):
 	}
 	// The claude children are stopped before the engine is closed: closing stdin ends their turn
-	// or kills them, so no adapter call is left running (Close is not relied on for that).
+	// or kills them, so no adapter call is left running (Close is not relied on for that). The
+	// engine is told first: the error those calls then end in is the stop's, cause restart.
+	s.eng.Stopping()
 	s.stopClaude()
 	s.cancel()
 	if err := s.eng.Close(); err != nil {
