@@ -12,7 +12,7 @@ import (
 func TestFingerprintHasNoNULAmbiguity(t *testing.T) {
 	a := Mandate{MandateID: "m", Target: "t", Incarnation: "b\x00c", Text: "d"}
 	b := Mandate{MandateID: "m", Target: "t", Incarnation: "b", Text: "c\x00d"}
-	if fingerprint(a) == fingerprint(b) {
+	if Fingerprint(a) == Fingerprint(b) {
 		t.Errorf("incarnation %q + text %q and incarnation %q + text %q share a fingerprint", a.Incarnation, a.Text, b.Incarnation, b.Text)
 	}
 }

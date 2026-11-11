@@ -141,14 +141,16 @@ type child struct {
 	written int64 // bytes of stdout written to stream.jsonl (under a.logMu)
 	over    bool  // past MaxStream: nothing more is written (under a.logMu)
 
-	mu      sync.Mutex
-	inited  bool
-	initSID string
-	tools   []string
-	toolsOK bool // every init had a tools field that is an array
-	gen     int  // inits routed so far
-	dead    error
-	pending *turn
+	sendMu       sync.Mutex // serializes init routing with the asynchronous stdin write
+	mu           sync.Mutex
+	inited       bool
+	initSID      string
+	tools        []string
+	toolsOK      bool // every init had a tools field that is an array
+	gen          int  // inits routed so far
+	dead         error
+	pending      *turn
+	writePending bool // stdin write has not returned (under mu)
 }
 
 type turn struct {
@@ -486,6 +488,10 @@ func ackOf(text string) string {
 // answers the pending turn only if it is of the init's session and a turn is pending.
 // @ai:invariant a result answers the pending turn only if its session_id is the child's init session, and is delivered only if it acknowledges that mandate or no mandate [T:test conf:0.85 src:go/ixmux/claudestream/s4b1_test.go:TestResultsAreCorrelated]
 func (c *child) route(l lineMsg) {
+	// No result (including an unreadable line) may retire the watchdog before
+	// the complete stdin write returns. State queries and kill do not take this lock.
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	if l.cut {
 		// A line over the bound cannot be read; a turn waiting for it could wait forever.
 		c.mu.Lock()
@@ -584,10 +590,10 @@ func (c *child) check(inc string) (int, string) {
 	return c.gen, c.refusal(inc)
 }
 
-// send writes one user message on stdin. For a mandate (gen >= 0) it checks again, under the
-// lock it writes under, that the child still takes incarnation inc and has routed no init since
-// the check at gen; the router takes that lock to route an init, so none is taken in between.
-// The send is journaled (synced) before the write.
+// send starts one user message on stdin. sendMu excludes init routing between the final
+// check and the write. The state mutex is never held over pipe I/O: status and kill remain
+// available, and the returned turn lets the caller watch TurnMax while the write is blocked.
+// The send is journaled (synced) before the asynchronous write.
 // @ai:invariant a mandate is written to the child only if, under the lock of the write, its incarnation is the child's init session_id, the init had an empty tools array, and no init came since the check [T:test conf:0.85 src:go/ixmux/claudestream/s4b2_test.go:TestInitBetweenCheckAndWrite]
 func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	b, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user",
@@ -595,6 +601,13 @@ func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.sendMu.Lock()
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			c.sendMu.Unlock()
+		}
+	}()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if gen >= 0 {
@@ -613,10 +626,23 @@ func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	}
 	p := newTurn(id)
 	c.pending = p
-	if _, err := c.stdin.Write(append(b, '\n')); err != nil {
-		c.pending = nil
-		return nil, err
-	}
+	c.writePending = true
+	handedOff = true
+	go func() {
+		defer c.sendMu.Unlock()
+		_, err := c.stdin.Write(append(b, '\n'))
+		c.mu.Lock()
+		c.writePending = false
+		if err != nil {
+			if c.pending == p {
+				c.pending = nil
+			}
+			c.mu.Unlock()
+			p.resolve(turnResult{err: fmt.Errorf("send to claude: %w", err)})
+		} else {
+			c.mu.Unlock()
+		}
+	}()
 	return p, nil
 }
 
@@ -626,6 +652,14 @@ func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 // @ai:invariant every wait after a kill is bounded by StopWait; past it the incarnation is lost (kill-failed) and its turn resolves in error [T:test conf:0.85 src:go/ixmux/claudestream/s6c_kill_test.go:TestKillThatFailsAtTurnMax]
 func (c *child) kill() error {
 	kerr := killJob(c.job)
+	// Release a blocked writer even if killing the job failed, without changing
+	// the normal kill-failure path for a child waiting for its next message.
+	c.mu.Lock()
+	writing := c.writePending
+	c.mu.Unlock()
+	if writing {
+		c.stdin.Close()
+	}
 	select {
 	case <-c.exited:
 		return nil

@@ -646,7 +646,7 @@ func (m *mcp) status(raw json.RawMessage) (any, *toolErr) {
 
 // submit hands a mandate to ixmux and answers a receipt within MCPReceiptWait (plus one bounded
 // read). POST /v1/mandates waits for the whole turn, so it runs on; the receipt says accepted only
-// once ixmux answered, or GET /v1/mandates/{id} shows the mandate in a durable state: the engine
+// once ixmux answered, or GET /v1/mandates/{id} shows the same submission fingerprint in a durable state: the engine
 // shows a transition only after its line is written and synced in the command log. A POST cut at
 // the transport proves nothing either way: the entry is read on until the bound.
 func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
@@ -716,6 +716,7 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 			map[string]string{"mandate_id": a.MandateID, "target": a.Target, "incarnation": a.Incarnation, "text": a.Text}, &res)
 		done <- posted{res, e}
 	}()
+	fp := deliver.Fingerprint(deliver.Mandate{Target: a.Target, Incarnation: a.Incarnation, Text: a.Text})
 	receipt := map[string]any{"mandate_id": a.MandateID, "target": a.Target, "incarnation": a.Incarnation}
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
@@ -739,11 +740,11 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 			}
 			return receipt, nil
 		case <-tick.C:
-			// Any durable state proves the mandate is in the command log: the engine shows an
-			// entry only once its accepted line is synced.
-			// @ai:invariant the receipt says accepted only on ixmux's answer or a durable state of the entry [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestReceiptAfterACutPOST]
+			// Only the same submission in a durable state proves acceptance: a reused ID may
+			// expose an older entry while this POST is still being validated.
+			// @ai:invariant the receipt says accepted only on ixmux's answer or a matching durable submission [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestReceiptAfterACutPOST]
 			var en deliver.Entry
-			if m.do(budget, c, "GET", "/v1/mandates/"+a.MandateID, nil, &en) == nil && durable(en.State) {
+			if m.do(budget, c, "GET", "/v1/mandates/"+a.MandateID, nil, &en) == nil && durable(en.State) && en.MandateID == a.MandateID && en.Target == a.Target && en.Fingerprint == fp {
 				receipt["accepted"], receipt["state"], receipt["replayed"] = true, en.State, false
 				return receipt, nil
 			}

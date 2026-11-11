@@ -481,7 +481,7 @@ func TestAKnownMandateWithLongKeysIsReplayed(t *testing.T) {
 	a := &fakeTarget{inc: "i"}
 	e.Register("a", a.target())
 	m := Mandate{MandateID: strings.Repeat("L", 600), Target: "a", Incarnation: "i", Text: "t"}
-	k, fp := key{"a", m.MandateID}, fingerprint(m)
+	k, fp := key{"a", m.MandateID}, Fingerprint(m)
 	for _, s := range []State{Accepted, Delivering} {
 		if err := e.transitionFP(k, "i", s, "", nil, fp); err != nil {
 			t.Fatal(err)

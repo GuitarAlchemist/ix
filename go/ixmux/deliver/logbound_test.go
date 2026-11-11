@@ -170,7 +170,7 @@ func TestARestartCompactsAFullLogAndForgetsNothing(t *testing.T) {
 	// d1 is left delivering, as by a crash during its adapter call.
 	d1 := Mandate{MandateID: "d1", Target: "a", Incarnation: "i", Text: "t"}
 	for _, s := range []State{Accepted, Delivering} {
-		if err := e.transitionFP(key{"a", "d1"}, "i", s, "", nil, fingerprint(d1)); err != nil {
+		if err := e.transitionFP(key{"a", "d1"}, "i", s, "", nil, Fingerprint(d1)); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -168,6 +168,8 @@ type Entry struct {
 	// StillRunning: its adapter call has not returned, even past its deadline; Reconcile is refused
 	// (delivery-still-running) until it does.
 	StillRunning bool `json:"still_running"`
+	// Fingerprint identifies the exact accepted target, incarnation and text.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // Options of an Engine; zero values take the named bounds.

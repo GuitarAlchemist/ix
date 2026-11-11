@@ -118,7 +118,7 @@ func TestARestartWhoseTransitionsDoNotFitStillStarts(t *testing.T) {
 	}
 	d1 := Mandate{MandateID: "d1", Target: "a", Incarnation: "i", Text: "t"}
 	for _, s := range []State{Accepted, Delivering} {
-		if err := e.transitionFP(key{"a", "d1"}, "i", s, "", nil, fingerprint(d1)); err != nil {
+		if err := e.transitionFP(key{"a", "d1"}, "i", s, "", nil, Fingerprint(d1)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -169,13 +169,13 @@ func TestACompactionThatWouldNotShrinkIsSkipped(t *testing.T) {
 	// would gain its creation time. One mandate with two records makes the log a candidate.
 	for i := 0; i < 20; i++ {
 		m := Mandate{MandateID: "a" + strings.Repeat("0", i), Target: "a", Incarnation: "i", Text: "t"}
-		if err := e.transitionFP(key{"a", m.MandateID}, "i", Accepted, "", nil, fingerprint(m)); err != nil {
+		if err := e.transitionFP(key{"a", m.MandateID}, "i", Accepted, "", nil, Fingerprint(m)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	k := Mandate{MandateID: "k1", Target: "a", Incarnation: "i", Text: "t"}
 	for _, s := range []State{Accepted, Delivering} {
-		if err := e.transitionFP(key{"a", "k1"}, "i", s, "", nil, fingerprint(k)); err != nil {
+		if err := e.transitionFP(key{"a", "k1"}, "i", s, "", nil, Fingerprint(k)); err != nil {
 			t.Fatal(err)
 		}
 	}
