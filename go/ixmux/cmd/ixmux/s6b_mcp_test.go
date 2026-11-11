@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
 	"github.com/GuitarAlchemist/ix/go/ixmux/server"
 )
 
@@ -177,7 +178,7 @@ func TestEOFWithAPOSTInFlight(t *testing.T) {
 			case <-r.Context().Done():
 			}
 		default:
-			w.Write([]byte(`{"target":"c","mandate_id":"m1","state":"accepted"}`))
+			json.NewEncoder(w).Encode(receiptEntry("m1", deliver.Accepted))
 		}
 	})
 	hold = release(t)
@@ -338,7 +339,7 @@ func TestDetachedPOSTsAreBounded(t *testing.T) {
 			case <-r.Context().Done():
 			}
 		default:
-			w.Write([]byte(`{"target":"c","mandate_id":"x","state":"accepted"}`))
+			json.NewEncoder(w).Encode(receiptEntry(strings.TrimPrefix(r.URL.Path, "/v1/mandates/"), deliver.Accepted))
 		}
 	})
 	hold = release(t)
@@ -390,7 +391,7 @@ func TestReceiptAfterACutPOST(t *testing.T) {
 				case r.Method == "POST":
 					<-hold
 				case r.URL.Path == "/v1/mandates/m1":
-					w.Write([]byte(tc.entry))
+					w.Write([]byte(strings.Replace(tc.entry, `"target":`, `"fingerprint":"`+deliver.Fingerprint(deliver.Mandate{Target: "c", Incarnation: "inc-1", Text: "x"})+`","target":`, 1)))
 				}
 			})
 			hold = release(t)
@@ -403,4 +404,10 @@ func TestReceiptAfterACutPOST(t *testing.T) {
 			}
 		})
 	}
+}
+
+// receiptEntry identifies the fake's exact submission, as the engine's durable entry does.
+func receiptEntry(id string, state deliver.State) deliver.Entry {
+	return deliver.Entry{Target: "c", MandateID: id, State: state,
+		Fingerprint: deliver.Fingerprint(deliver.Mandate{Target: "c", Incarnation: "inc-1", Text: "x"})}
 }

@@ -91,6 +91,15 @@ func main() {
 		emit(init)
 		inited = true
 	}
+	if id := os.Getenv("FAKE_EARLY_ACK"); id != "" {
+		time.Sleep(200 * time.Millisecond)
+		emit(map[string]any{"type": "result", "session_id": session, "result": "ACK " + id})
+	}
+	if os.Getenv("FAKE_NOREAD") != "" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	in := bufio.NewReader(os.Stdin)
 	for {
 		line, err := in.ReadBytes('\n')

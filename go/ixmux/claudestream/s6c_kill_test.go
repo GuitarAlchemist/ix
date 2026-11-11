@@ -19,7 +19,9 @@ func failKills(t *testing.T, c *child) {
 		select {
 		case <-c.exited:
 		default:
-			old(c.job)
+			// Stop may already have closed the Windows job handle before the router
+			// closes exited. Kill the test process through its still-valid process wrapper.
+			c.cmd.Process.Kill()
 		}
 	})
 }

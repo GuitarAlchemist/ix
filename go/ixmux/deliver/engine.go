@@ -134,9 +134,9 @@ func (e *Engine) apply(lr logRecord) {
 	}
 }
 
-// fingerprint names what a mandate asks: its target, incarnation and text, each prefixed by its
+// Fingerprint names what a mandate asks: its target, incarnation and text, each prefixed by its
 // length, so no choice of bytes (NUL included) makes two different mandates collide.
-func fingerprint(m Mandate) string {
+func Fingerprint(m Mandate) string {
 	h := sha256.New()
 	for _, f := range []string{m.Target, m.Incarnation, m.Text} {
 		fmt.Fprintf(h, "%d:", len(f))
@@ -218,7 +218,7 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	case len(m.Text) > MaxText:
 		return Result{}, &Refusal{TextTooLong, fmt.Sprintf("text of %d bytes, bound %d", len(m.Text), MaxText)}
 	}
-	k, fp := key{m.Target, m.MandateID}, fingerprint(m)
+	k, fp := key{m.Target, m.MandateID}, Fingerprint(m)
 	e.mu.Lock()
 	t, ok := e.targets[m.Target]
 	if !ok {
@@ -579,7 +579,7 @@ func (e *Engine) entry(r *record, now time.Time) Entry {
 	if prev == "" {
 		prev = "none"
 	}
-	return Entry{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason,
+	return Entry{Target: r.target, MandateID: r.id, Fingerprint: r.fp, State: r.state, Reason: r.reason,
 		Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state), StillRunning: e.calling[key{r.target, r.id}]}
 }
 
