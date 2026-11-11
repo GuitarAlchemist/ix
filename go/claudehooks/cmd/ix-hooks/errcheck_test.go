@@ -2,12 +2,7 @@ package main
 
 import (
 	"go/ast"
-	"go/importer"
-	"go/parser"
-	"go/token"
 	"go/types"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -16,26 +11,7 @@ import (
 // to state/digests/archive, then latest.md overwritten (PR #512 review). Printing to stdout or
 // stderr (fmt.Print*, fmt.Fprint*) is exempt, as in errcheck.
 func TestNoErrorIsDroppedSilently(t *testing.T) {
-	fset := token.NewFileSet()
-	names, _ := filepath.Glob("*.go")
-	var files []*ast.File
-	for _, name := range names {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, name, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, f)
-	}
-	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Uses: map[*ast.Ident]types.Object{}}
-	// "source" type-checks the standard library from GOROOT: about 15 s, offline. "gc" was slower
-	// (77 s, one `go list -export` per import).
-	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
-	if _, err := conf.Check("main", fset, files, info); err != nil {
-		t.Fatal(err)
-	}
+	_, files, info := checkedPackage(t)
 	errType := types.Universe.Lookup("error").Type()
 	returnsError := func(tv types.TypeAndValue) bool {
 		if tuple, ok := tv.Type.(*types.Tuple); ok {
@@ -69,7 +45,7 @@ func TestNoErrorIsDroppedSilently(t *testing.T) {
 					}
 				}
 			}
-			t.Errorf("%s: the error of %s is dropped; handle it or write `_ = …`", fset.Position(call.Pos()), types.ExprString(call.Fun))
+			t.Errorf("%s: the error of %s is dropped; handle it or write `_ = …`", checkedFset.Position(call.Pos()), types.ExprString(call.Fun))
 			return true
 		})
 	}
