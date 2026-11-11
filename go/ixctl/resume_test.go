@@ -52,6 +52,7 @@ func TestResumeInventoryRefusals(t *testing.T) {
 		{`{"components":[{"name":"a","health":"http://example.com/health"}]}`, "not a loopback address"},
 		{`{"components":[{"name":"a","health":"file:///etc/passwd"}]}`, "not http(s)"},
 		{`{"components":[{"name":"a","listen":"127.0.0.1"}]}`, "listen"},
+		{`{"components":[{"name":"a","listen":"127.0.0.1:1","health_host":"h"}]}`, "health_host without health"},
 		{`{"components":[{"name":"a","listen":"127.0.0.1:1","start":"x.exe"}]}`, "unknown field"},
 	} {
 		if _, err := parseResumeInventory([]byte(c.js)); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -69,7 +70,7 @@ func fakeProbes(services map[string][2]string, listening map[string]bool, health
 			}
 			return s[0], s[1], nil
 		},
-		health:    func(u string) error { return healthy[u] },
+		health:    func(u, _ string) error { return healthy[u] },
 		listening: func(a string) (bool, error) { return listening[a], nil },
 		exists: func(p string) error {
 			if strings.Contains(p, "missing") {
@@ -170,6 +171,23 @@ func TestQueryServiceReadsARealService(t *testing.T) {
 	}
 	if state, _, err := queryService("ixctl-resume-check-no-such-service"); err != nil || state != "not installed" {
 		t.Fatalf("missing service: %q %v", state, err)
+	}
+}
+
+// A server that gates on the Host header (IxForge's workshop) is healthy only with health_host.
+func TestResumeHealthCarriesTheHostHeader(t *testing.T) {
+	gated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "aw.example.ts.net" {
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer gated.Close()
+	health := realResumeProbes().health
+	if err := health(gated.URL+"/workshop/branding.json", ""); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("without the host: %v", err)
+	}
+	if err := health(gated.URL+"/workshop/branding.json", "aw.example.ts.net"); err != nil {
+		t.Fatalf("with the host: %v", err)
 	}
 }
 

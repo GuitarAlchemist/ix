@@ -611,7 +611,9 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   reboot.
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Nothing connects to the port.
-- `health`: a loopback http(s) URL that must answer 2xx; any other host is refused.
+- `health`: a loopback http(s) URL that must answer 2xx; any other host is refused. `health_host`
+  sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
+  any other host).
 - `durable`: where the component's state lives, reported present or missing, never opened.
 - `after`: the start order; a component after one that is down says so. A cycle is refused.
 - `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human
