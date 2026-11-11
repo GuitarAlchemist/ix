@@ -37,6 +37,10 @@ type resumeComponent struct {
 	// HealthHost is the Host header the health request carries, for a server that gates on it
 	// (IxForge's workshop answers 403 to any other host).
 	HealthHost string `json:"health_host,omitempty"`
+	// HealthExpect is text the health body must contain, naming the program and, when it
+	// matters, its version: a 2xx from another program holding the port after a reboot is not
+	// health.
+	HealthExpect string `json:"health_expect,omitempty"`
 	// Listen is a host:port the component listens on, read from the system's TCP table: no
 	// connection is made, so a port nobody may touch can still be observed.
 	Listen string `json:"listen,omitempty"`
@@ -51,8 +55,9 @@ type resumeComponent struct {
 type resumeProbes struct {
 	// service is a Windows service's state ("running", "stopped", …) and start type
 	// ("automatic", "automatic (delayed)", "manual", "disabled").
-	service   func(name string) (state, start string, err error)
-	health    func(url, host string) error
+	service func(name string) (state, start string, err error)
+	// health GETs url (with Host host when set) and returns the first 64 KiB of a 2xx body.
+	health    func(url, host string) ([]byte, error)
 	listening func(addr string) (bool, error)
 	exists    func(path string) error
 }
@@ -61,24 +66,24 @@ func realResumeProbes() resumeProbes {
 	client := &http.Client{Timeout: 2 * time.Second}
 	return resumeProbes{
 		service: queryService,
-		health: func(u, host string) error {
+		health: func(u, host string) ([]byte, error) {
 			req, err := http.NewRequest(http.MethodGet, u, nil)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if host != "" {
 				req.Host = host
 			}
 			resp, err := client.Do(req)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			defer resp.Body.Close()
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			if resp.StatusCode/100 != 2 {
-				return fmt.Errorf("HTTP %d", resp.StatusCode)
+				return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 			}
-			return nil
+			return body, err
 		},
 		listening: tcpListening,
 		exists: func(p string) error {
@@ -132,8 +137,8 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			if err := loopbackURL(c.Health); err != nil {
 				return nil, fmt.Errorf("inventory: %s health: %w", c.Name, err)
 			}
-		} else if c.HealthHost != "" {
-			return nil, fmt.Errorf("inventory: %s has health_host without health", c.Name)
+		} else if c.HealthHost != "" || c.HealthExpect != "" {
+			return nil, fmt.Errorf("inventory: %s has health_host or health_expect without health", c.Name)
 		}
 		if c.Listen != "" {
 			if _, _, err := net.SplitHostPort(c.Listen); err != nil {
@@ -242,8 +247,10 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 			}
 		}
 		if c.Health != "" {
-			if err := p.health(c.Health, c.HealthHost); err != nil {
+			if body, err := p.health(c.Health, c.HealthHost); err != nil {
 				worse(verdictDown, fmt.Sprintf("health %s: %v", c.Health, err))
+			} else if c.HealthExpect != "" && !strings.Contains(string(body), c.HealthExpect) {
+				worse(verdictDown, fmt.Sprintf("health %s answers, but its body lacks %q: another program or version holds it", c.Health, c.HealthExpect))
 			} else {
 				worse(verdictOK, fmt.Sprintf("health %s answers", c.Health))
 			}

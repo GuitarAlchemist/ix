@@ -52,7 +52,7 @@ func TestResumeInventoryRefusals(t *testing.T) {
 		{`{"components":[{"name":"a","health":"http://example.com/health"}]}`, "not a loopback address"},
 		{`{"components":[{"name":"a","health":"file:///etc/passwd"}]}`, "not http(s)"},
 		{`{"components":[{"name":"a","listen":"127.0.0.1"}]}`, "listen"},
-		{`{"components":[{"name":"a","listen":"127.0.0.1:1","health_host":"h"}]}`, "health_host without health"},
+		{`{"components":[{"name":"a","listen":"127.0.0.1:1","health_host":"h"}]}`, "without health"},
 		{`{"components":[{"name":"a","listen":"127.0.0.1:1","start":"x.exe"}]}`, "unknown field"},
 	} {
 		if _, err := parseResumeInventory([]byte(c.js)); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -70,7 +70,7 @@ func fakeProbes(services map[string][2]string, listening map[string]bool, health
 			}
 			return s[0], s[1], nil
 		},
-		health:    func(u, _ string) error { return healthy[u] },
+		health:    func(u, _ string) ([]byte, error) { return nil, healthy[u] },
 		listening: func(a string) (bool, error) { return listening[a], nil },
 		exists: func(p string) error {
 			if strings.Contains(p, "missing") {
@@ -183,11 +183,32 @@ func TestResumeHealthCarriesTheHostHeader(t *testing.T) {
 	}))
 	defer gated.Close()
 	health := realResumeProbes().health
-	if err := health(gated.URL+"/workshop/branding.json", ""); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := health(gated.URL+"/workshop/branding.json", ""); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Fatalf("without the host: %v", err)
 	}
-	if err := health(gated.URL+"/workshop/branding.json", "aw.example.ts.net"); err != nil {
+	if _, err := health(gated.URL+"/workshop/branding.json", "aw.example.ts.net"); err != nil {
 		t.Fatalf("with the host: %v", err)
+	}
+}
+
+// A 2xx from the wrong program is not health: after a reboot another process can hold the port.
+// health_expect names what the body must contain (IxForge's branding.json: "name":"IxForge").
+func TestResumeHealthChecksTheIdentity(t *testing.T) {
+	body := `{"name":"Impostor","version":"9.9"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, body) }))
+	defer srv.Close()
+	inv := mustInventory(t, fmt.Sprintf(`{"components":[{"name":"workshop","health":%q,"health_expect":"\"name\":\"IxForge\""}]}`,
+		srv.URL+"/workshop/branding.json"))
+	r := checkResume(inv, realResumeProbes())[0]
+	if r.Verdict != verdictDown || !strings.Contains(strings.Join(r.Checks, "\n"), `lacks "\"name\":\"IxForge\""`) {
+		t.Fatalf("impostor: %s %q", r.Verdict, r.Checks)
+	}
+	body = `{"name":"IxForge","short_name":"IxForge","version":"0.1.1"}`
+	if r := checkResume(inv, realResumeProbes())[0]; r.Verdict != verdictOK {
+		t.Fatalf("IxForge: %s %q", r.Verdict, r.Checks)
+	}
+	if _, err := parseResumeInventory([]byte(`{"components":[{"name":"a","listen":"127.0.0.1:1","health_expect":"x"}]}`)); err == nil {
+		t.Fatal("health_expect without health accepted")
 	}
 }
 
