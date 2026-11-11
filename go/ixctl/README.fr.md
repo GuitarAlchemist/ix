@@ -360,6 +360,14 @@ Pour prouver le résultat d'un `run` opaque donné, un consommateur suit cet ord
 
 La sortie d'une autre exécution, y compris `last_exit`, ne la remplace jamais.
 
+L'arbre d'un run est tué avant que sa sortie soit drainée : `truncated` demande donc un processus
+sorti de l'arbre avec la sortie encore ouverte. Sous Windows, aucun ne le peut : le job object
+tient chaque descendant et n'autorise aucune sortie, et la fin est `complete`. Sous Linux, un
+descendant qui appelle `setsid` quitte le groupe de processus que le plan tue et garde la sortie
+ouverte : la fin arrive alors à la borne de drainage, `truncated`
+(`TestADescendantHoldingStdoutEndsTheRunAtTheDrainBound`, un vrai descendant sur les deux
+systèmes).
+
 Après une fin tronquée, les lignes tardives sont écartées et comptées dans
 `services[].last_exit.late_lines` ; le compteur sature au lieu de boucler. Les marqueurs restent
 dans l'anneau, mais SSE et WebSocket les sautent, même en rejeu, sauf demande de `markers=run`
@@ -667,6 +675,141 @@ enregistrements les enfreignent est refusé au démarrage. Chaque op `bookmark.*
 à un pair (`peer`), dans la séquence duquel le signet pointe alors ; le rejeu reste local à ce
 pair.
 
+## Besoins (needs)
+
+Un besoin est une question qu'une tâche en attente pose au plan (issue #486) : `information`,
+`authorization` ou `capacity`. Il porte une échéance absolue, `deadline_ms`, qui ne bouge jamais. Le
+plan le garde dans `<state>/<name>.needs.json`, à part de l'anneau d'événements. Il survit au
+processus qui l'a posé, et un redémarrage du plan garde chaque besoin, échéance, prise en charge et
+jeton de fencing tels qu'écrits.
+
+```text
+ixctl need submit  --name desk < q.json   # {"id","kind","requester","incarnation","body","deadline_ms"}
+ixctl need claim   --name desk < c.json   # {"id","resolver","lease_ms"} -> claim.fence
+ixctl need resolve --name desk < r.json   # {"id","resolver","fence","answer"}  (refuse : "reason")
+ixctl need wait    --name desk < w.json   # {"id","requester","incarnation","timeout_ms"}
+ixctl need status  --name desk < s.json   # {"id","requester","incarnation"}
+```
+
+Chaque op est `POST /v1/need/<op>`, ou une trame `need.<op>` sur le WebSocket, avec le jeton
+bearer. Chacune répond avec le besoin à sa `rev`, que chaque transition augmente de un.
+
+- **Submit** est idempotent sur `id`.
+  - Le même contenu rend le même besoin avec `duplicate: true`, même après un redémarrage ou passé
+    l'échéance. Son `digest` sha256 couvre kind, requester, incarnation, échéance et body.
+  - Un autre contenu sous le même `id` est un 409.
+  - Les bornes sont vérifiées avant toute écriture :
+    - `id` suit la règle des noms d'instance ;
+    - body et réponse font au plus 4096 octets de JSON ;
+    - l'échéance est après maintenant et dans les 7 jours ;
+    - un plan garde au plus 256 besoins.
+- **Claim** donne à un seul répondant un bail, d'au plus une heure, et un nouveau `fence`.
+  - Seul ce répondant peut `resolve` ou `refuse`. Il doit utiliser ce fence, tant que le bail tient
+    et avant l'échéance.
+  - Toute autre réponse est un 409 qui dit pourquoi : fence périmé, bail perdu, expiré, ou déjà
+    résolu. Une réponse tardive ne résout jamais.
+  - Une fois un bail échu, un autre répondant peut prendre le besoin, et reçoit un fence plus grand.
+- **Wait** rend l'issue `resolved`, `refused` ou `expired`. Il rend `wait-timeout` quand son propre
+  `timeout_ms` passe d'abord.
+  - Une attente expirée ou annulée laisse le besoin tel quel.
+  - Un besoin expiré ne dit rien de la tâche, ni des effets déjà produits.
+- **Status** montre l'état, la prise en charge et la résolution à tout détenteur du jeton.
+  - La question (`body`) va au requester et à l'incarnation qui l'ont posée, et au répondant qui
+    détient une prise en charge vivante : la réponse au claim la porte, de même que `status` avec
+    `resolver`.
+  - La `answer` ne va qu'au requester et à l'incarnation qui ont posé le besoin.
+
+**Les identités sont déclarées, pas authentifiées.**
+- `requester`, `incarnation` et `resolver` sont des noms que l'appelant déclare. Le plan ne les
+  authentifie pas.
+- Tout détenteur du jeton bearer du plan a la même confiance. Réserver la question et la réponse
+  comme ci-dessus est une corrélation chez un seul propriétaire de confiance, pas une isolation.
+
+**Un besoin `authorization` n'accorde rien.**
+- C'est un enregistrement pour les propres contrôles du demandeur, jamais une permission.
+- Le demandeur ne peut pas prendre son propre besoin `authorization`.
+- Les ops need ne sont jamais relayées à un pair.
+
+**Durabilité.** Chaque transition écrit le fichier entier dans un temporaire, le synchronise, puis
+le renomme par-dessus l'ancien. L'op ne répond qu'une fois le renommage revenu.
+- Les tests interrompent une écriture avant le renommage, pendant, et après. Dans chaque cas, une
+  réouverture trouve l'état précédent ou l'état committé, ou répond `unknown`.
+  - Un commit dont la réponse s'est perdue est retrouvé à la réouverture, et une réponse rejouée est
+    refusée.
+  - Ce sont des interruptions injectées : elles prouvent le modèle, pas le système d'exploitation.
+- Non couvert : une coupure de courant, et l'atomicité du renommage lui-même sous Windows.
+  `os.Rename` ne promet pas d'atomicité hors Unix, et rien ici ne synchronise le dossier. Quand une
+  réouverture ne peut pas trancher, elle répond `unknown` (fail-closed), jamais un magasin vide.
+- Chaque op need répond 503 `unknown` jusqu'à réconciliation quand le fichier :
+  - est illisible ;
+  - enfreint les invariants des enregistrements ;
+  - dépasse sa borne en octets ;
+  - ou manque alors que son temporaire reste.
+
+  Un tel fichier n'est jamais vidé ni réécrit.
+- Quand un renommage échoue, l'issue de l'op est inconnue (503). L'op suivante relit le fichier ;
+  rien n'est rejoué de mémoire.
+
+**Aucun répondant ne tourne ici.** Les ops need enregistrent une question, sa réponse et ses
+comptes de tokens. Aucune ne lance ni n'appelle un répondant : le répondant est le processus,
+quel qu'il soit, qui prend le besoin.
+
+### Budget de tokens : comptabilité et admission, pas un plafond fournisseur
+
+Une échéance borne le temps ; un budget borne les tokens. Ce sont deux limites distinctes,
+vérifiées à part.
+
+```text
+ixctl need submit  --name desk < q.json   # ... "budget":{"total_tokens":1000}  (enfant : "parent":"<id de besoin>")
+ixctl need reserve --name desk < v.json   # {"id","resolver","fence","reservation_id","runner":"deterministic","tokens"}
+ixctl need settle  --name desk < u.json   # {"id","resolver","reservation_id","usage":{...}}
+```
+
+- **Un total par besoin.** Il entre dans le digest du besoin. Un resubmit avec un autre total sous
+  le même `id` est un 409. Un nouvel essai, un redémarrage, un bail renouvelé ou une nouvelle prise
+  en charge ne le remettent jamais à zéro.
+- **Un enfant est prélevé sur son parent.**
+  - Un besoin soumis avec `budget.parent` prend son total sur ce qui reste au parent, au submit.
+    S'il reste trop peu, le submit est un 409.
+  - Le parent compte chaque enfant une fois : à son total, ou à ce que l'enfant a réellement
+    consommé quand c'est plus. Le dépassement d'un enfant se voit aussi sur son parent.
+  - Le parent doit être un besoin budgété du même magasin. Un parent ailleurs est refusé (404,
+    non supporté).
+- **Réserver avant de lancer.**
+  - Seul le répondant de la prise en charge vivante, avec son fence, peut réserver.
+  - Une réservation n'est admise que si les engagements du besoin laissent de la place. Deux
+    réservations concurrentes ne peuvent pas prendre toutes deux les derniers tokens.
+  - `reservation_id` rend un nouvel essai idempotent : le même contenu est un doublon, un autre
+    contenu un 409.
+- **Régler après le lancement.**
+  - Un règlement porte l'`usage` de ce seul lancement, jamais un total cumulé : `unit` `tokens`,
+    une `source`, et quatre comptes disjoints : `input_tokens` (hors cache), `output_tokens`,
+    `cache_write_tokens` et `cache_read_tokens`, chacun un entier de 0 à 2⁴⁰.
+  - Le même usage une seconde fois est un doublon. Un autre usage est un 409 : un compteur
+    cumulatif ne peut pas être compté deux fois.
+  - Des comptes négatifs, fractionnaires, absents ou trop grands sont refusés avant toute écriture.
+  - Un règlement n'exige ni prise en charge vivante ni échéance future : la consommation est un fait.
+- **Inconnu n'est pas zéro.**
+  - Une réservation pas encore réglée, ou réglée avec `"unknown": true`, garde tous ses tokens
+    engagés.
+  - Seul un usage connu avec `"effects_clarified": true` remplace un usage inconnu.
+- **Tokens engagés.** Engagé = réservé + inconnu + réglé + enfants. Chaque réponse montre ces
+  sommes, le reste et un éventuel dépassement.
+- **Durabilité.** Budgets et réservations vivent dans l'enregistrement du besoin et s'écrivent
+  comme toute transition. Les tests interrompent une réservation et un règlement au renommage et
+  après, puis rouvrent : rien n'est réservé ni crédité deux fois.
+- **Ce qui est imposé.**
+  - `enforcement` vaut `accounting`. Le plan admet ou refuse des réservations ; il n'arrête aucun
+    lanceur et n'impose le plafond d'aucun fournisseur.
+  - `runner` doit valoir `deterministic`. Toute autre valeur, comme `model`, est un 501
+    `unsupported` : aucun adaptateur ici n'impose de plafond total dur, donc un lancement de
+    modèle est refusé plutôt que promis borné.
+  - Aucun fournisseur, modèle ni API n'est branché. Les tests utilisent des fixtures : ils prouvent
+    le noyau comptable, pas qu'une consommation réelle de modèle est bornée.
+- **Aucune autorité.** Le total d'un besoin racine est ce que déclare celui qui le soumet, avec le
+  même jeton bearer que toute op, pas une autorisation authentifiée. Un budget n'accorde rien.
+- Un champ inconnu, comme `token_budget`, est refusé en 400 avant toute écriture.
+
 ## Journal
 
 `<nom>.journal.jsonl` ajoute, en lignes JSON, un en-tête `boot` par démarrage (`schema:
@@ -679,6 +822,66 @@ synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash pe
 ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
 un contrat distinct qui s'annoncerait lui-même (porte 3).
 
+## Service Windows
+
+`ixctl service run <spec.json> --state DIR` héberge une instance pour un gestionnaire de services :
+le SCM de Windows quand c'est lui qui a lancé le processus, sinon la console (une interruption vaut
+un arrêt). C'est la même instance qu'`ixctl up`, avec son verrou, son jeton, son écoute en boucle
+locale et ses Job Objects. Ce que l'hôte ajoute :
+
+- **États.** Il rapporte `start-pending`, puis `running` dès que l'instance sert (arrêt et extinction
+  acceptés), puis `stop-pending` avec un point de contrôle qui croît et le temps restant comme délai
+  annoncé, puis `stopped`. Codes de sortie, propres au service : 0 un arrêt observé ; 1 l'instance
+  n'a pas démarré ; 2 le nom est tenu par une instance en marche (rien n'est rapporté `running`) ;
+  3 les arbres n'ont pas été vus disparus dans `--stop-timeout` (30 s par défaut) — le processus
+  sort quand même et les jobs se ferment avec lui, ce qui tue ce qui reste, mais l'hôte ne prétend
+  pas l'avoir vu ; de même si un arbre tenait encore un processus quand le superviseur a cessé de
+  l'attendre. En console, le processus sort avec le même code. Sous le SCM, la spec, le répertoire
+  d'état et le journal du service sont ouverts après la connexion au SCM : un échec à cette étape
+  est le code 1, que le SCM voit.
+- **Un arrêt en trois moments.** `host.stop` sur `ctl` avec `phase: requested` (la commande a atteint
+  l'hôte ; `source` vaut `scm`, `signal` ou `api` pour `/v1/shutdown`), puis `phase: received` (le
+  plan n'admet plus rien : un apply répond 503), tous deux avant l'arrêt de tout service ; puis
+  `observed` (tous les arbres vus disparus dans la borne, avec `ms`) ou `unobserved` (avec
+  `bound_ms` ou `trees_not_seen_gone`), dans le journal du service seulement, puisque le journal du
+  plan est fermé à ce moment. Pour `api`, le plan a fermé ses admissions en prenant la requête, avant
+  que l'hôte la voie : un apply peut alors recevoir 503 avant l'un ou l'autre événement.
+- **Journal du service.** `<nom>.service.log` dans le répertoire d'état, un objet JSON par ligne
+  (`host.ready`, `host.refused`, `host.failed`, `host.stop`), jamais le jeton ; borné à deux fichiers
+  de 4 Mio (`.service.log` et `.service.log.1`).
+- **Après un crash.** Les jobs meurent avec l'hôte. Le démarrage suivant tire un nouvel epoch, en
+  génération 0, comme tout redémarrage (voir Journal) : ce que l'hôte mort devait faire tourner n'est
+  pas relancé, et une exécution coupée par le crash reste l'effet que run/1 appelle `unknown`, à
+  réconcilier par une personne ou un client.
+
+`ixctl service plan --spec FICHIER --client-user DOMAINE\UTILISATEUR` affiche les commandes
+d'installation, de démarrage, de statut, d'arrêt et de désinstallation, pour un PowerShell élevé ;
+ixctl n'en exécute aucune. Le plan utilise le compte virtuel `NT SERVICE\ixctl` (aucun mot de passe
+enregistré), un démarrage manuel, aucun redémarrage automatique (un plan redémarré part de sa spec,
+pas de ce qu'il faisait tourner), la boucle locale seulement, et un répertoire d'état sous
+`C:\ProgramData\ixctl` dont l'ACL donne la lecture au seul utilisateur client nommé, qui y lit le
+jeton. Il demande PowerShell 7.4 ou plus : chaque section s'ouvre sur
+`$ErrorActionPreference = 'Stop'` et `$PSNativeCommandUseErrorActionPreference = $true`, et s'arrête
+donc au premier échec, celui d'une commande native compris. Un démarrage ou un arrêt ne fait que
+demander au SCM : chacun est suivi d'un `WaitForStatus` borné (30 s pour running, 60 s pour stopped)
+dont l'expiration termine la section ; un service qui échoue dans sa préparation finit arrêté, et
+l'attente du démarrage le dit. Le plan lit la spec pour le nom de l'instance, et désigne la spec et
+le binaire qui l'a affiché par des chemins absolus. Un test en vérifie le contenu ; ses sections
+d'installation, de démarrage et de statut ont tourné une fois sur Windows 11 (2026-10-31), pas encore
+celles d'arrêt et de désinstallation. `--delta-journal FICHIER`, sur les deux commandes, donne au
+service le journal de Delta pour le type de sonde `delta@1`, comme `ixctl up --delta-journal` : le
+plan le passe dans la ligne de commande du service, accorde au compte du service la lecture de ce
+seul fichier, et retire cet accord à la désinstallation. Limite connue : la borne d'arrêt part de la demande,
+mais l'hôte écrit ses rapports, ses événements et son journal sur la même goroutine, de sorte qu'une
+écriture du journal qui ne revient jamais retient l'hôte au-delà de la borne. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
+`ixctl up` de la session de l'utilisateur, pair du service.
+
+Le plan refuse un répertoire d'état existant. Il appelle
+`ixctl service prepare-config --spec FICHIER --output FICHIER` pour créer
+`config/spec.json` sous ce répertoire, hors de l'espace des fichiers d'état d'instance.
+Le chargeur Go résout commandes, répertoires de travail et chemins des pairs par rapport
+à la configuration source. Les chaînes des arguments et de l'environnement sont conservées,
+sans être incorporées au plan affiché. La préparation refuse un fichier de sortie existant.
 ## Barrière
 
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le

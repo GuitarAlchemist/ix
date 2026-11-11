@@ -19,6 +19,7 @@ type Plane struct {
 	peers     map[string]*peerLink
 	probes    *probeTree
 	bookmarks *bookmarkStore
+	needs     *needStore // nil: the plane keeps no needs
 	journal   *journal
 	started   time.Time
 
@@ -177,6 +178,8 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 		return p.bookmarks.list(), nil
 	case "bookmark.remove":
 		return p.bookmarks.remove(req.Bookmark)
+	case "need.submit", "need.status", "need.claim", "need.resolve", "need.refuse", "need.reserve", "need.settle", "need.wait":
+		return p.needRequest(ctx, req)
 	case "":
 		return nil, badRequest("missing op")
 	}
@@ -922,6 +925,16 @@ func (p *Plane) RequestShutdown() {
 		close(p.quit)
 		p.stopWaits()
 	})
+}
+
+// TreesNotSeenGone counts the runs, over this boot, whose tree still held a process when the
+// supervisor stopped waiting for it.
+func (p *Plane) TreesNotSeenGone() int64 {
+	var n int64
+	for _, s := range p.svcs {
+		n += s.notGone.Load()
+	}
+	return n
 }
 
 // Quit is closed once a shutdown has been requested.

@@ -29,6 +29,17 @@ func TestMain(m *testing.M) {
 	case "agents-list": // `claude agents --json` answering one session with no pid
 		fmt.Println(`[{"sessionId":"s1","name":"one","kind":"interactive","status":"idle"}]`)
 		os.Exit(0)
+	case "holder":
+		// Holds the stdout it inherited past its parent's exit, and writes one line once the
+		// file IXCTL_TEST_RELEASE names exists (the test creates it after run.end).
+		for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+			if _, err := os.Stat(os.Getenv("IXCTL_TEST_RELEASE")); err == nil {
+				break
+			}
+		}
+		fmt.Println("late from holder")
+		time.Sleep(3 * time.Second)
+		os.Exit(0)
 	case "main":
 		os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr))
 	}
@@ -71,6 +82,7 @@ func fakeService(args []string) int {
 	hogMB := fs.Int("hog-mb", 0, "hold this much memory, touched, for the whole run")
 	burnMS := fs.Int("burn-ms", 0, "spin on one core for this long at start")
 	emitReserved := fs.Bool("emit-reserved", false, "emit worker events used by the reserved-prefix test")
+	holdStdout := fs.Bool("hold-stdout", false, "start a descendant holding this stdout, leaving the tree where the OS lets it, report its pid and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -97,6 +109,18 @@ func fakeService(args []string) int {
 	if *emitReserved {
 		fmt.Println(`{"kind":"ixctl.run.end","run":{"origin":"worker","epoch":"forged","seq":1}}`)
 		fmt.Println(`{"kind":"service.exited","run":{"origin":"worker","epoch":"forged","seq":2}}`)
+	}
+	if *holdStdout {
+		cmd := exec.Command(os.Args[0])
+		cmd.Env = append(os.Environ(), "IXCTL_TEST_ROLE=holder")
+		cmd.Stdout = os.Stdout
+		leaveTree(cmd)
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "spawn:", err)
+			return 4
+		}
+		emit("child", map[string]any{"pid": cmd.Process.Pid})
+		return 0
 	}
 	if *spawn {
 		cmd := exec.Command(os.Args[0])

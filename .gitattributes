@@ -13,7 +13,7 @@ crates/ix-duck/tests/fixtures/persistence/*.csv -text
 crates/ix-origami/tests/fixtures/*.fold -text
 
 # Go sources stay LF on every checkout: gofmt normalises CRLF away, so a Windows
-# runner with core.autocrlf=true would list every file as unformatted (ixctl-go job).
+# runner with core.autocrlf=true would list every file as unformatted (go-modules job).
 *.go text eol=lf
 
 # The ixctl gate and its helpers run on both CI rows; LF on every checkout keeps the Windows
