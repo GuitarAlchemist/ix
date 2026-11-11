@@ -44,6 +44,11 @@ type resumeComponent struct {
 	// Listen is a host:port the component listens on, read from the system's TCP table: no
 	// connection is made, so a port nobody may touch can still be observed.
 	Listen string `json:"listen,omitempty"`
+	// ListenImage is the file name the listening process's executable must have (compared
+	// without case, path ignored), such as "delta-remote-v0.6.0-21-g2ca5e6c.exe": which build
+	// holds the port, read from the system with no connection. It is a name, not a proof of
+	// content (see listenerImage). Windows only.
+	ListenImage string `json:"listen_image,omitempty"`
 	// Durable is where the component's state lives (projects, mandates, receipts): each path is
 	// reported present or missing, never opened or changed.
 	Durable []string `json:"durable,omitempty"`
@@ -59,14 +64,49 @@ type resumeProbes struct {
 	// health GETs url (with Host host when set) and returns the first 64 KiB of a 2xx body.
 	health    func(url, host string) ([]byte, error)
 	listening func(addr string) (bool, error)
-	exists    func(path string) error
+	// listenOwner is the PID holding addr in the TCP table, 0 when none.
+	listenOwner func(addr string) (uint32, error)
+	// imageOf opens a process, which pins its PID until release, and returns its image path.
+	imageOf func(pid uint32) (image string, release func(), err error)
+	exists  func(path string) error
+}
+
+// listenerImage is the executable file name of the process holding addr, "" when nobody holds
+// it. The PID is read from the table, the process opened (Windows does not reuse a PID while a
+// handle to it is open) and its image read, then the table read again: when another PID holds
+// the address by then, the answer is an error, never a name that may belong to a process that
+// exited and whose PID was reused.
+//
+// Trust limits: the name is what the file is called, not what it contains (no hash, no
+// signature): a renamed program passes. A process that refuses query access (protected, or
+// HTTP.sys's PID 4) is an error, so the verdict is unknown.
+func listenerImage(p resumeProbes, addr string) (string, error) {
+	pid, err := p.listenOwner(addr)
+	if err != nil || pid == 0 {
+		return "", err
+	}
+	image, release, err := p.imageOf(pid)
+	if err != nil {
+		return "", fmt.Errorf("process %d: %w", pid, err)
+	}
+	defer release()
+	again, err := p.listenOwner(addr)
+	if err != nil {
+		return "", err
+	}
+	if again != pid {
+		return "", fmt.Errorf("the listener changed from process %d to %d while it was read", pid, again)
+	}
+	return image[strings.LastIndexAny(image, `\/`)+1:], nil
 }
 
 func realResumeProbes() resumeProbes {
 	return resumeProbes{
-		service:   queryService,
-		health:    healthProbe(nil),
-		listening: tcpListening,
+		service:     queryService,
+		health:      healthProbe(nil),
+		listening:   tcpListening,
+		listenOwner: tcpListenOwner,
+		imageOf:     processImage,
 		exists: func(p string) error {
 			_, err := os.Stat(p)
 			return err
@@ -160,6 +200,12 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			if _, _, err := net.SplitHostPort(c.Listen); err != nil {
 				return nil, fmt.Errorf("inventory: %s listen: %w", c.Name, err)
 			}
+		}
+		switch {
+		case c.ListenImage != "" && c.Listen == "":
+			return nil, fmt.Errorf("inventory: %s has listen_image without listen", c.Name)
+		case strings.ContainsAny(c.ListenImage, `\/`):
+			return nil, fmt.Errorf("inventory: %s listen_image is a file name, not a path", c.Name)
 		}
 	}
 	for _, c := range inv.Components {
@@ -260,6 +306,19 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 				worse(verdictDown, fmt.Sprintf("nothing listens on %s (a client gets connection refused)", c.Listen))
 			default:
 				worse(verdictOK, fmt.Sprintf("a listener holds %s", c.Listen))
+				if c.ListenImage != "" {
+					image, err := listenerImage(p, c.Listen)
+					switch {
+					case err != nil:
+						worse(verdictUnknown, fmt.Sprintf("listener %s image: %v", c.Listen, err))
+					case image == "":
+						worse(verdictUnknown, fmt.Sprintf("the listener on %s was gone when its image was read", c.Listen))
+					case !strings.EqualFold(image, c.ListenImage):
+						worse(verdictDown, fmt.Sprintf("%s is held by %s, not %s", c.Listen, image, c.ListenImage))
+					default:
+						worse(verdictOK, fmt.Sprintf("%s is held by %s", c.Listen, image))
+					}
+				}
 			}
 		}
 		if c.Health != "" {

@@ -17,6 +17,16 @@ func queryService(string) (string, string, error) {
 	return "", "", errors.New("service checks read the Windows service manager; this system has none")
 }
 
+// The listener's owner and image are read on Windows only: /proc/net/tcp gives an inode, not a
+// PID, so a listen_image check is unknown here.
+func tcpListenOwner(string) (uint32, error) {
+	return 0, errors.New("listen_image is read from the Windows TCP table only")
+}
+
+func processImage(uint32) (string, func(), error) {
+	return "", nil, errors.New("listen_image is read on Windows only")
+}
+
 // tcpListening reads /proc/net/tcp (Linux): addr is held when a LISTEN row (state 0A) has its
 // port on its address or on 0.0.0.0. Nothing connects to the port.
 func tcpListening(addr string) (bool, error) {

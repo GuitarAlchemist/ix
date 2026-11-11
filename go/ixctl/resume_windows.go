@@ -65,21 +65,28 @@ func queryService(name string) (state, start string, err error) {
 
 var procGetExtendedTcpTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")
 
-// tcpListening reads the IPv4 listener table (GetExtendedTcpTable,
-// TCP_TABLE_OWNER_PID_LISTENER): addr is held when a listener has its port on its address or on
-// 0.0.0.0. Nothing connects to the port.
+// tcpListening reports whether a listener holds addr (see tcpListenOwner). Nothing connects to
+// the port.
 func tcpListening(addr string) (bool, error) {
+	pid, err := tcpListenOwner(addr)
+	return pid != 0, err
+}
+
+// tcpListenOwner reads the IPv4 listener table (GetExtendedTcpTable,
+// TCP_TABLE_OWNER_PID_LISTENER) and returns the PID of a listener with addr's port on addr's
+// address or on 0.0.0.0, 0 when there is none.
+func tcpListenOwner(addr string) (uint32, error) {
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	ip := net.ParseIP(host).To4()
 	if ip == nil {
-		return false, fmt.Errorf("%s: only IPv4 addresses are read", addr)
+		return 0, fmt.Errorf("%s: only IPv4 addresses are read", addr)
 	}
 	const afInet, tcpTableOwnerPidListener = 2, 3
 	size := uint32(0)
@@ -94,15 +101,15 @@ func tcpListening(addr string) (bool, error) {
 			break
 		}
 		if windows.Errno(r) != windows.ERROR_INSUFFICIENT_BUFFER {
-			return false, fmt.Errorf("GetExtendedTcpTable: %w", windows.Errno(r))
+			return 0, fmt.Errorf("GetExtendedTcpTable: %w", windows.Errno(r))
 		}
 		buf = make([]byte, size)
 		if i == 3 {
-			return false, errors.New("GetExtendedTcpTable: the table kept growing")
+			return 0, errors.New("GetExtendedTcpTable: the table kept growing")
 		}
 	}
 	if len(buf) < 4 {
-		return false, nil
+		return 0, nil
 	}
 	// MIB_TCPTABLE_OWNER_PID: dwNumEntries, then rows of six DWORDs: state, local address,
 	// local port (network order in the low 16 bits), remote address, remote port, owning pid.
@@ -112,8 +119,24 @@ func tcpListening(addr string) (bool, error) {
 		local := net.IP(row[4:8])
 		p := int(row[8])<<8 | int(row[9])
 		if p == port && (local.Equal(ip) || local.Equal(net.IPv4zero)) {
-			return true, nil
+			return binary.LittleEndian.Uint32(row[20:24]), nil
 		}
 	}
-	return false, nil
+	return 0, nil
+}
+
+// processImage opens pid with PROCESS_QUERY_LIMITED_INFORMATION only and returns its image path.
+// The handle stays open until release, so the PID cannot be reused meanwhile.
+func processImage(pid uint32) (string, func(), error) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return "", nil, err
+	}
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	n := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &n); err != nil {
+		_ = windows.CloseHandle(h)
+		return "", nil, err
+	}
+	return windows.UTF16ToString(buf[:n]), func() { _ = windows.CloseHandle(h) }, nil
 }

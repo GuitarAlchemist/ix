@@ -652,6 +652,14 @@ est `unknown`, jamais supposé démarré.
   il ne reviendra pas après le prochain redémarrage.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Rien ne se connecte au port.
+- `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui
+  écoute, par exemple `delta-remote-v0.6.0-21-g2ca5e6c.exe` (sans chemin, casse ignorée) : quelle
+  version est revenue. Le PID vient de la table TCP ; le processus est ouvert avec les seuls droits
+  de consultation, ce qui empêche la réutilisation de son PID, puis la table est relue, et un
+  propriétaire qui a changé entre-temps donne `unknown`. Limites de confiance : c'est le nom du
+  fichier, pas son contenu (ni empreinte ni signature), donc un programme renommé passe ; un
+  processus qui refuse la consultation, comme un service sous son propre compte (c'est le cas de
+  l'ixctl installé) ou le PID 4 de HTTP.sys, donne `unknown` ; Linux donne `unknown`.
 - `health` : une URL http(s) en boucle locale qui doit répondre 2xx ; tout autre hôte est refusé, et
   une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus).
   `health_host` fixe l'en-tête Host de la requête, pour un serveur qui filtre sur lui (le workshop

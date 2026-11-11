@@ -254,6 +254,78 @@ func TestResumeHealthRefusesARedirectOffLoopback(t *testing.T) {
 	}
 }
 
+// listen_image: which build holds the port, from the PID in the TCP table and the process's image.
+func TestResumeListenImage(t *testing.T) {
+	const want = "delta-remote-v0.6.0-21-g2ca5e6c.exe"
+	inv := mustInventory(t, `{"components":[{"name":"remote","listen":"192.168.86.250:8810","listen_image":"`+want+`"}]}`)
+	run := func(owners []uint32, image string, openErr error) (resumeResult, int) {
+		released, reads := 0, 0
+		p := resumeProbes{
+			listening: func(string) (bool, error) { return true, nil },
+			listenOwner: func(string) (uint32, error) {
+				pid := owners[min(reads, len(owners)-1)]
+				reads++
+				return pid, nil
+			},
+			imageOf: func(uint32) (string, func(), error) {
+				if openErr != nil {
+					return "", nil, openErr
+				}
+				return image, func() { released++ }, nil
+			},
+		}
+		return checkResume(inv, p)[0], released
+	}
+	expect := func(what string, r resumeResult, verdict, line string) {
+		t.Helper()
+		if r.Verdict != verdict || !strings.Contains(strings.Join(r.Checks, "\n"), line) {
+			t.Errorf("%s: %s %q, want %s with %q", what, r.Verdict, r.Checks, verdict, line)
+		}
+	}
+	r, released := run([]uint32{4242}, `C:\Users\x\Temp\delta-remote\DELTA-REMOTE-v0.6.0-21-g2ca5e6c.EXE`, nil)
+	expect("right image", r, verdictOK, "is held by DELTA-REMOTE-v0.6.0-21-g2ca5e6c.EXE")
+	if released != 1 {
+		t.Errorf("handle released %d times", released)
+	}
+	r, _ = run([]uint32{4242}, `C:\tools\delta-remote-v0.5.0.exe`, nil)
+	expect("wrong image", r, verdictDown, "held by delta-remote-v0.5.0.exe, not "+want)
+	r, released = run([]uint32{4242, 5151}, `C:\other\impostor.exe`, nil)
+	expect("PID reused", r, verdictUnknown, "changed from process 4242 to 5151")
+	if released != 1 {
+		t.Errorf("PID reused: handle released %d times", released)
+	}
+	r, _ = run([]uint32{0}, "", nil)
+	expect("listener gone", r, verdictUnknown, "was gone when its image was read")
+	r, _ = run([]uint32{4}, "", errors.New("Access is denied."))
+	expect("query refused", r, verdictUnknown, "process 4: Access is denied.")
+
+	for _, js := range []string{
+		`{"components":[{"name":"a","service":"s","listen_image":"x.exe"}]}`,
+		`{"components":[{"name":"a","listen":"127.0.0.1:1","listen_image":"C:\\tools\\x.exe"}]}`,
+	} {
+		if _, err := parseResumeInventory([]byte(js)); err == nil {
+			t.Errorf("accepted %s", js)
+		}
+	}
+}
+
+// On Windows the real probes name this test binary as the holder of its own listener.
+func TestResumeListenImageReadsARealProcess(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the Windows TCP table")
+	}
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	self, _ := os.Executable()
+	got, err := listenerImage(realResumeProbes(), ln.Addr().String())
+	if err != nil || !strings.EqualFold(got, filepath.Base(self)) {
+		t.Fatalf("image %q %v, want %s", got, err, filepath.Base(self))
+	}
+}
+
 // End to end with the real probes on stand-in components: ready exits 0, a component down
 // exits 1 and names it.
 func TestResumeCheckCommand(t *testing.T) {

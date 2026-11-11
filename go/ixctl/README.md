@@ -611,6 +611,13 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   reboot.
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Nothing connects to the port.
+- `listen_image` (Windows): the file name the listening process's executable must have, such as
+  `delta-remote-v0.6.0-21-g2ca5e6c.exe` (no path, case ignored): which build came back. The PID
+  comes from the TCP table; the process is opened with query rights only, which keeps its PID
+  from being reused, then the table is read again, and an owner that changed meanwhile is
+  `unknown`. Trust limits: it is the file's name, not its content (no hash, no signature), so a
+  renamed program passes; a process that refuses the query, such as a service under its own
+  account (the installed ixctl does) or HTTP.sys's PID 4, is `unknown`; Linux is `unknown`.
 - `health`: a loopback http(s) URL that must answer 2xx; any other host is refused, and a redirect
   is followed only while it stays on loopback (at most 5). `health_host`
   sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
