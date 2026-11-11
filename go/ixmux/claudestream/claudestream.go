@@ -653,14 +653,18 @@ func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	return p, nil
 }
 
-// kill kills the child's job and waits StopWait at most for it to die (reaped: the wait is for the
-// process, not for the exit line ixmux then writes and syncs, which a busy disk can hold longer
-// than StopWait). A child that died is then waited for until its exit is noted, so the journal
-// keeps exit before the stop step. Past StopWait, whether the kill
-// failed or the child did not die, the incarnation is lost: the child is dead with kill-failed,
-// its pending turn resolves with that error, and the line is noted. Nothing waits on it longer.
+// kill kills the child's job and waits StopWait at most for it to be reaped: for router to have
+// routed the lines the child left and seen its process end, not for the exit line ixmux then
+// writes and syncs, which a busy disk can hold longer than StopWait. A reaped child is not lost.
+// kill then waits StopWait more, at most, for that exit line, so the journal keeps exit before
+// the stop step; past it kill returns all the same, and the exit line comes after the stop step,
+// or not at all if the journal was closed first. If the child is not reaped within StopWait,
+// whether the kill failed or the child did not die, the incarnation is lost: the child is dead
+// with kill-failed, its pending turn resolves with that error, and the line is noted. Nothing
+// waits on it longer.
 // @ai:invariant every wait after a kill is bounded by StopWait; past it the incarnation is lost (kill-failed) and its turn resolves in error [T:test conf:0.85 src:go/ixmux/claudestream/s6c_kill_test.go:TestKillThatFailsAtTurnMax]
-// @ai:invariant a killed child that died within StopWait is never lost, however long its exit takes to be noted [T:test conf:0.85 src:go/ixmux/claudestream/kill_reap_test.go:TestAKilledChildIsNotLostWhileItsExitIsStillBeingNoted]
+// @ai:invariant a killed child reaped within StopWait is never lost, however long its exit takes to be noted [T:test conf:0.85 src:go/ixmux/claudestream/kill_reap_test.go:TestAKilledChildIsNotLostWhileItsExitIsStillBeingNoted]
+// @ai:invariant kill returns within two StopWait of the kill even if the exit note never comes [T:test conf:0.85 src:go/ixmux/claudestream/kill_reap_test.go:TestAKillDoesNotWaitForeverOnAnExitNoteThatNeverComes]
 func (c *child) kill() error {
 	kerr := killJob(c.job)
 	// Release a blocked writer even if killing the job failed, without changing
@@ -673,7 +677,10 @@ func (c *child) kill() error {
 	}
 	select {
 	case <-c.reaped:
-		<-c.exited
+		select {
+		case <-c.exited:
+		case <-time.After(c.a.cfg.StopWait):
+		}
 		return nil
 	case <-time.After(c.a.cfg.StopWait):
 	}
