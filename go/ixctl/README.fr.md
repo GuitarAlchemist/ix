@@ -667,6 +667,19 @@ est `unknown`, jamais supposé démarré.
   d'IxForge répond 403 à tout autre hôte). `health_expect` est un texte que le corps doit contenir,
   par exemple `"name":"IxForge"` : un 2xx d'un autre programme ou d'une autre version qui a pris le
   port après un redémarrage est `down`.
+- `health_fields` : les champs texte que le corps de santé, un objet JSON, doit porter avec
+  exactement ces valeurs. Le `/workshop/branding.json` d'IxForge vaut `{"name":"IxForge","short_name":"IxForge","version":"0.1.1"}`
+  (contrat COMPAT-R9), d'où `{"name":"IxForge","version":"0.1.1"}`. Cette `version` est celle du
+  client web du workshop, fixée à la main dans l'asset embarqué ; ce n'est ni celle du binaire
+  ixctl (`ixctl version`, par exemple `0.1.0-ixforge.4`) ni un hachage. Recopiez-la du fichier
+  déployé, comme `listen_image`. Un corps qui n'est pas un objet JSON, un champ absent, une valeur
+  qui n'est pas du texte ou une autre valeur donnent `down`.
+- `receipt` : un reçu de mise à jour IxForge (`<DataDir>\update-<RunID>\receipt.json`), désigné par
+  l'opérateur. Un reçu est un enregistrement, jamais une preuve de l'état actuel : il ne peut
+  qu'abaisser le verdict. `reconciliation_required` donne `down` ; `available`, `backed_up`,
+  `installed` et `failed_before_replacement` donnent `degraded` ; `completed` et `rolled_back`
+  ajoutent seulement une ligne ; un reçu illisible ou un état inconnu donne `unknown`. Un reçu seul
+  n'est pas une observation.
 - `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
 - `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle
   est refusé.

@@ -624,6 +624,17 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
   any other host). `health_expect` is text the body must contain, such as `"name":"IxForge"`: a
   2xx from another program or version that took the port after a reboot is `down`.
+- `health_fields`: string fields the health body, a JSON object, must carry with exactly these
+  values. IxForge's `/workshop/branding.json` is `{"name":"IxForge","short_name":"IxForge","version":"0.1.1"}`
+  (contract COMPAT-R9), so `{"name":"IxForge","version":"0.1.1"}`. That `version` is the workshop
+  web client's, set by hand in the embedded asset; it is not the ixctl binary's (`ixctl version`,
+  such as `0.1.0-ixforge.4`) and not a hash. Pin it from the deployed file, as `listen_image` is.
+  A body that is not a JSON object, a missing field, a non-string value or another value is `down`.
+- `receipt`: an IxForge update receipt (`<DataDir>\update-<RunID>\receipt.json`), named by the
+  operator. A receipt is a record, never proof of the current state: it only lowers the verdict.
+  `reconciliation_required` is `down`; `available`, `backed_up`, `installed` and
+  `failed_before_replacement` are `degraded`; `completed` and `rolled_back` add a line only; an
+  unreadable receipt or an unknown state is `unknown`. A receipt alone is not something to observe.
 - `durable`: where the component's state lives, reported present or missing, never opened.
 - `after`: the start order; a component after one that is down says so. A cycle is refused.
 - `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human

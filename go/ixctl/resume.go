@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -41,6 +42,15 @@ type resumeComponent struct {
 	// matters, its version: a 2xx from another program holding the port after a reboot is not
 	// health.
 	HealthExpect string `json:"health_expect,omitempty"`
+	// HealthFields are the string fields the health body, a JSON object, must carry with exactly
+	// these values. For IxForge's /workshop/branding.json: {"name":"IxForge","version":"0.1.1"}.
+	// That version is the workshop web client's (the PWA asset), not the ixctl binary's
+	// ("ixctl version"): pin it by hand from the deployed branding.json, as listen_image is.
+	HealthFields map[string]string `json:"health_fields,omitempty"`
+	// Receipt is an update receipt (IxForge's <DataDir>\update-<RunID>\receipt.json), named by
+	// the operator. A receipt is a record, never proof of the current state: it can lower the
+	// verdict (reconciliation_required is down), never raise it.
+	Receipt string `json:"receipt,omitempty"`
 	// Listen is a host:port the component listens on, read from the system's TCP table: no
 	// connection is made, so a port nobody may touch can still be observed.
 	Listen string `json:"listen,omitempty"`
@@ -69,6 +79,8 @@ type resumeProbes struct {
 	// imageOf opens a process, which pins its PID until release, and returns its image path.
 	imageOf func(pid uint32) (image string, release func(), err error)
 	exists  func(path string) error
+	// readFile reads a small file (an update receipt), never writes it.
+	readFile func(path string) ([]byte, error)
 }
 
 // listenerImage is the executable file name of the process holding addr, "" when nobody holds
@@ -115,7 +127,73 @@ func realResumeProbesOver(rt http.RoundTripper) resumeProbes {
 			_, err := os.Stat(p)
 			return err
 		},
+		readFile: func(p string) ([]byte, error) {
+			f, err := os.Open(p)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+			return io.ReadAll(io.LimitReader(f, 1<<20))
+		},
 	}
+}
+
+// healthFieldsMismatch is why body does not carry want's fields exactly, "" when it does.
+func healthFieldsMismatch(body []byte, want map[string]string) string {
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil || got == nil {
+		return "body is not a JSON object"
+	}
+	keys := make([]string, 0, len(want))
+	for k := range want {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v, ok := got[k]
+		s, isString := v.(string)
+		switch {
+		case !ok:
+			return "body has no " + k
+		case !isString:
+			return k + " is not a string"
+		case s != want[k]:
+			return fmt.Sprintf("%s is %q, not %q", k, s, want[k])
+		}
+	}
+	return ""
+}
+
+// describeFields prints fields in key order: name "IxForge", version "0.1.1".
+func describeFields(fields map[string]string) string {
+	parts := make([]string, 0, len(fields))
+	for k, v := range fields {
+		parts = append(parts, fmt.Sprintf("%s %q", k, v))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
+}
+
+// receiptVerdict reads an update receipt's State: reconciliation_required is down, a state short
+// of completed or rolled_back is degraded, an unreadable receipt or unknown state is unknown.
+// completed and rolled_back add a line only: a record never raises the verdict.
+func receiptVerdict(b []byte, readErr error) (verdict, line string) {
+	if readErr != nil {
+		return verdictUnknown, readErr.Error()
+	}
+	var rc struct{ State string }
+	if err := json.Unmarshal(b, &rc); err != nil {
+		return verdictUnknown, "is not JSON: " + err.Error()
+	}
+	switch rc.State {
+	case "completed", "rolled_back":
+		return verdictOK, "state " + rc.State + " (a record, not proof of the current state)"
+	case "reconciliation_required":
+		return verdictDown, "state reconciliation_required: identity or health not proven, a human must reconcile"
+	case "available", "backed_up", "installed", "failed_before_replacement":
+		return verdictDegraded, "state " + rc.State + ": the update did not reach an end state"
+	}
+	return verdictUnknown, fmt.Sprintf("unknown state %q", rc.State)
 }
 
 // resumeHealthTimeout bounds one health probe: connection, redirects, headers and body. A server
@@ -202,8 +280,16 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			if err := loopbackURL(c.Health); err != nil {
 				return nil, fmt.Errorf("inventory: %s health: %w", c.Name, err)
 			}
-		} else if c.HealthHost != "" || c.HealthExpect != "" {
-			return nil, fmt.Errorf("inventory: %s has health_host or health_expect without health", c.Name)
+		} else if c.HealthHost != "" || c.HealthExpect != "" || c.HealthFields != nil {
+			return nil, fmt.Errorf("inventory: %s has health_host, health_expect or health_fields without health", c.Name)
+		}
+		if c.HealthFields != nil && len(c.HealthFields) == 0 {
+			return nil, fmt.Errorf("inventory: %s health_fields is empty", c.Name)
+		}
+		for k, v := range c.HealthFields {
+			if k == "" || v == "" {
+				return nil, fmt.Errorf("inventory: %s health_fields %s is empty", c.Name, k)
+			}
 		}
 		if c.Listen != "" {
 			if _, _, err := net.SplitHostPort(c.Listen); err != nil {
@@ -335,9 +421,20 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 				worse(verdictDown, fmt.Sprintf("health %s: %v", c.Health, err))
 			} else if c.HealthExpect != "" && !strings.Contains(string(body), c.HealthExpect) {
 				worse(verdictDown, fmt.Sprintf("health %s answers, but its body lacks %q: another program or version holds it", c.Health, c.HealthExpect))
+			} else if c.HealthFields != nil {
+				if why := healthFieldsMismatch(body, c.HealthFields); why != "" {
+					worse(verdictDown, fmt.Sprintf("health %s answers, but its %s: another program or version holds it", c.Health, why))
+				} else {
+					worse(verdictOK, fmt.Sprintf("health %s answers with %s", c.Health, describeFields(c.HealthFields)))
+				}
 			} else {
 				worse(verdictOK, fmt.Sprintf("health %s answers", c.Health))
 			}
+		}
+		if c.Receipt != "" {
+			b, err := p.readFile(c.Receipt)
+			v, line := receiptVerdict(b, err)
+			worse(v, fmt.Sprintf("update receipt %s: %s", c.Receipt, line))
 		}
 		for _, d := range c.Durable {
 			if err := p.exists(d); err != nil {
