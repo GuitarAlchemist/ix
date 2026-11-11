@@ -223,7 +223,7 @@ func TestMCPMandates(t *testing.T) {
 			t.Errorf("%s: input schema %v", tl.Name, tl.InputSchema)
 		}
 	}
-	if fmt.Sprint(names) != "[ixmux_status ixmux_submit ixmux_result]" {
+	if fmt.Sprint(names) != "[ixmux_status ixmux_submit ixmux_result ixmux_inventory]" {
 		t.Errorf("tools %v", names)
 	}
 

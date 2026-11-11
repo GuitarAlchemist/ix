@@ -339,6 +339,8 @@ func (m *mcp) handle(line []byte) {
 			v, terr = m.submit(p.Arguments)
 		case "ixmux_result":
 			v, terr = m.result(p.Arguments)
+		case "ixmux_inventory":
+			v, terr = m.inventory(p.Arguments)
 		default:
 			m.reply(req.id, nil, &rpcError{-32602, "unknown tool " + *p.Name, map[string]any{"reason": reasonUnknownTool}})
 			return
@@ -831,4 +833,7 @@ var mcpTools = []map[string]any{
 	{"name": "ixmux_result", "title": "Result of a mandate",
 		"description": "The state of a mandate by its mandate_id and, once delivered, its result: receipt, the answer's text (at most 4 KiB, truncated says it was cut), ack_seen. Read from ixmux's command log: it survives a restart of the adapter and of ixmux.",
 		"inputSchema": obj(map[string]any{"mandate_id": idSchema}, "mandate_id")},
+	{"name": "ixmux_inventory", "title": "Inventory after a restart",
+		"description": "Read from ixmux's files, so also while ixmux is down: whether ixmux runs (proven by its pid and creation time, not by its file), and each mandate's status: running, done, or uncertain (the target may have acted: a person decides, nothing is sent again). Says what to do next; does nothing itself.",
+		"inputSchema": obj(map[string]any{})},
 }

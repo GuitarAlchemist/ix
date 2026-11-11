@@ -99,35 +99,11 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 	if _, err := f.ReadAt(data, 0); err != nil && err != io.EOF {
 		return fail(err)
 	}
-	// The first line names the format. With no complete first line (a new log, or a crash while
-	// its header was written) the header is (re)written; any other first line is refused.
-	start, needHeader := int64(0), true
-	if nl := bytes.IndexByte(data, '\n'); nl >= 0 {
-		var h struct {
-			Format string `json:"format"`
-		}
-		if json.Unmarshal(data[:nl], &h) != nil || h.Format != logFormat {
-			return fail(&Refusal{LogFormatUnsupported, fmt.Sprintf("%s does not start with the %s header", path, logFormat)})
-		}
-		start, needHeader = int64(nl)+1, false
-	}
-	var recs []logRecord
-	var torn *Torn
-	for at := start; at < int64(len(data)); {
-		i := bytes.IndexByte(data[at:], '\n')
-		if i < 0 {
-			torn = &Torn{At: at, Bytes: int64(len(data)) - at}
-			break
-		}
-		var r logRecord
-		// A v1 accepted or delivering record carries the mandate's fingerprint (Deliver writes it):
-		// without it, the same mandate would later be refused mandate-id-reuse.
-		if err := json.Unmarshal(data[at:at+int64(i)], &r); err != nil || r.Target == "" || r.MandateID == "" || r.State == "" ||
-			((r.State == Accepted || r.State == Delivering) && r.Fingerprint == "") {
-			return fail(&Refusal{LogCorrupt, fmt.Sprintf("record at offset %d of %s is unreadable", at, path)})
-		}
-		recs = append(recs, r)
-		at += int64(i) + 1
+	// With no complete first line (a new log, or a crash while its header was written) the
+	// header is (re)written.
+	recs, torn, needHeader, err := parseLog(data, path)
+	if err != nil {
+		return fail(err)
 	}
 	if torn != nil {
 		if err := f.Truncate(torn.At); err != nil {
@@ -163,6 +139,42 @@ func openLog(path string, maxBytes int64) (*cmdLog, []logRecord, *Torn, error) {
 		size = torn.At
 	}
 	return &cmdLog{f: af, size: size, max: maxBytes, held: map[key]int64{}}, recs, torn, nil
+}
+
+// parseLog reads the records of a log's bytes. The first line names the format: any other first
+// line is refused (log-format-unsupported); with no complete first line, noHeader. A last record
+// without its '\n' is torn; any other unreadable record is log-corrupt.
+func parseLog(data []byte, path string) (recs []logRecord, torn *Torn, noHeader bool, err error) {
+	nl := bytes.IndexByte(data, '\n')
+	if nl < 0 { // a new log, or a header torn by a crash: cut at 0
+		if len(data) > 0 {
+			torn = &Torn{At: 0, Bytes: int64(len(data))}
+		}
+		return nil, torn, true, nil
+	}
+	var h struct {
+		Format string `json:"format"`
+	}
+	if json.Unmarshal(data[:nl], &h) != nil || h.Format != logFormat {
+		return nil, nil, false, &Refusal{LogFormatUnsupported, fmt.Sprintf("%s does not start with the %s header", path, logFormat)}
+	}
+	for at := int64(nl) + 1; at < int64(len(data)); {
+		i := bytes.IndexByte(data[at:], '\n')
+		if i < 0 {
+			torn = &Torn{At: at, Bytes: int64(len(data)) - at}
+			break
+		}
+		var r logRecord
+		// A v1 accepted or delivering record carries the mandate's fingerprint (Deliver writes it):
+		// without it, the same mandate would later be refused mandate-id-reuse.
+		if err := json.Unmarshal(data[at:at+int64(i)], &r); err != nil || r.Target == "" || r.MandateID == "" || r.State == "" ||
+			((r.State == Accepted || r.State == Delivering) && r.Fingerprint == "") {
+			return nil, nil, false, &Refusal{LogCorrupt, fmt.Sprintf("record at offset %d of %s is unreadable", at, path)}
+		}
+		recs = append(recs, r)
+		at += int64(i) + 1
+	}
+	return recs, torn, false, nil
 }
 
 // setHeld sets the room k keeps for its next records (under l.mu).

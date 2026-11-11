@@ -156,12 +156,42 @@ La session Claude elle-même est gardée par claude sous ton profil, comme toute
 
 `ixmux mcp --state <dossier>` est un serveur MCP local sur stdio, branché sur l'ixmux serve de ce
 dossier d'état. Il y lit l'adresse et le jeton à chaque appel, et suit donc un ixmux redémarré
-entre-temps. Il a trois outils : `ixmux_status`, `ixmux_submit` (un reçu en 2 s, même quand le tour
-dure plus longtemps) et `ixmux_result` (lu dans le journal de commandes). Aucun outil n'arrête
+entre-temps. Il a quatre outils : `ixmux_status`, `ixmux_submit` (un reçu en 2 s, même quand le
+tour dure plus longtemps), `ixmux_result` (lu dans le journal de commandes) et `ixmux_inventory`
+(l'inventaire ci-dessous, de ce seul dossier d'état, lu dans ses fichiers). Aucun outil n'arrête
 ixmux. Il n'envoie le jeton qu'à un serveur qui a répondu à son défi `/v1/hello`, sur la même
 connexion ; un processus qui aurait pris le port sans le jeton n'obtient rien (`ixmux-unverified`).
 Un processus qui peut lire le fichier du jeton est hors de ce modèle. Le contrat, avec la commande
 exacte, les schémas et les erreurs : [MCP.fr.md](MCP.fr.md).
+
+## Inventaire après un redémarrage (`ixmux inventory`)
+
+`ixmux inventory [--state <dossier> ...] [--claude-home <dossier>] [--no-claude] [--json]` ne lit
+que des fichiers et les heures de création des processus. Il n'envoie, ne lance, ne rejoue, ne
+verrouille et n'écrit rien. Après un plantage, une coupure de courant ou un redémarrage de Windows,
+il liste :
+
+- **les sessions Claude Code locales** : Claude Code écrit un enregistrement pour chaque processus
+  en marche dans `<claude-home>/sessions/<pid>.json` (`--claude-home` vaut par défaut
+  `%CLAUDE_CONFIG_DIR%`, sinon `~/.claude`). Ce fichier n'est pas documenté : un enregistrement
+  illisible ou incomplet est signalé `unreadable`, jamais deviné. L'`id` d'une session est son id
+  de session. Son `incarnation` est `pid:<pid>@<heure de création>`. Elle n'est `running` ou
+  `idle` que si c'est prouvé : un processus vivant a ce pid et a été créé à cette heure, exactement
+  sous Windows (`procStart`), à une minute près de `startedAt` ailleurs. Un enregistrement laissé
+  par un plantage est `unreachable`, avec le `claude --resume <id>` à lancer. Un id de session que
+  portent deux enregistrements figure dans `duplicates`. Tant que l'un d'eux est vivant, les autres
+  disent « ne pas reprendre » ;
+- **chaque ixmux donné par `--state`** et ses mandats, tels que les donne `ixmux_inventory`
+  ([MCP.fr.md](MCP.fr.md)).
+
+`last_activity` est la plus récente des heures de l'enregistrement et de la date de modification
+du fichier de transcription, dont le contenu n'est jamais lu. `declared` garde ce que dit un
+fichier, à part de ce qui est prouvé. Une borne (256 enregistrements de session, 64 Kio par
+enregistrement, les 50 mandats terminés les plus récents par ixmux, les 64 Mio du journal) n'est
+jamais silencieuse : `omitted` compte ce qu'elle a laissé de côté. `gaps` nomme ce qui n'est pas
+lu : les sessions cloud, qu'aucun fichier local ne liste et dont aucune n'est montrée active, l'état
+des volets wmux, et les services Windows (`ixctl resume check`). Code de sortie 0 dès que le
+rapport est imprimé.
 
 ## Limites de cette tranche
 

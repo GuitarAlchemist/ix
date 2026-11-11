@@ -49,7 +49,7 @@ Démonstration sans client, depuis PowerShell, une fois `ixmux serve` lancé sur
 | `initialize` | `params` exige `protocolVersion` (une chaîne), `capabilities` (un objet) et `clientInfo` `{name, version}`, sinon -32602. `protocolVersion` : celle demandée si l'adaptateur la tient (`2025-11-25`, `2025-06-18`), sinon `2025-11-25`. Les versions plus anciennes ne sont pas proposées : leurs lots sont refusés ici. `capabilities.tools.listChanged` vaut faux. `serverInfo` est `ixmux` et sa version. Elle marche sans ixmux. |
 | `notifications/initialized` | Une notification : pas de réponse. Toute autre notification est ignorée. |
 | `ping` | `{}`. |
-| `tools/list` | Les trois outils ci-dessous, avec leur `inputSchema`. |
+| `tools/list` | Les quatre outils ci-dessous, avec leur `inputSchema`. |
 | `tools/call` | `{content: [{type: "text", text}], structuredContent, isError}`. `text` est le JSON de `structuredContent`. |
 
 Les erreurs de protocole sont des erreurs JSON-RPC, et l'adaptateur continue de lire :
@@ -175,6 +175,35 @@ Entrée : `{mandate_id}`. Sortie :
   depuis plus que la fenêtre de déduplication d'ixmux (`--dedup-window`, 720 h par défaut) et
   oublié ; cet id est alors un nouveau mandat. Un mandat `uncertain` n'est jamais oublié.
 
+### `ixmux_inventory`
+
+Sans argument. L'outil dit ce qu'on retrouve après un plantage ou un redémarrage. Il le lit dans
+les fichiers du dossier d'état, donc il répond aussi quand ixmux est arrêté (`ixmux_status` échoue
+alors en `ixmux-unavailable`). Le rapport (`ixmux.inventory.v1`, le même que
+`ixmux inventory --json`) contient :
+
+- l'entrée ixmux. `liveness` vaut `proven` seulement si un processus vivant a le pid
+  d'`ixmux.json` et a été créé au moment où ixmux a noté son démarrage. Si `ixmux.json` dit
+  `running` mais que le pid est `absent` ou `pid-reused`, l'entrée est `unreachable` : ixmux ne
+  s'est pas arrêté proprement ;
+- chaque mandat du journal de commandes, selon son `status` :
+  - `running` : accepté ou en livraison sous un ixmux vivant ;
+  - `done` : livré, ou rien n'a été envoyé ;
+  - `uncertain` : la cible a pu agir, et une personne décide. C'est aussi le cas d'un mandat laissé
+    en livraison par un ixmux disparu : son prochain démarrage le note `uncertain`, cause `restart` ;
+- `last_activity` et `age_s` : la dernière transition du mandat. `declared` garde l'état et la
+  cause enregistrés, à part de ce qui est prouvé. `resume` dit ce qu'une personne peut faire ;
+  l'outil ne fait rien lui-même ;
+- `omitted` : les mandats terminés au-delà des 50 plus récents. Un mandat non terminé n'est jamais
+  omis ;
+- `gaps` : ce que l'inventaire ne lit pas.
+
+L'outil ne montre aucune session Claude Code de la machine, ni la `reason` d'un mandat, dont le
+texte peut venir d'une cible. Il ne transporte rien de plus que ce que donnent déjà `ixmux_status`
+et `ixmux_result`. Il lit le journal de commandes sans son verrou. Sous Windows, une compaction d'un
+ixmux en marche échoue pendant cette lecture. C'est sans dommage : le journal reste tel quel, et la
+compaction est retentée une minute plus tard.
+
 ## Arrêt
 
 stdin fermé : l'adaptateur finit l'appel en cours (2 s au plus pour `ixmux_submit`) et sort avec 0.
@@ -185,7 +214,8 @@ ixmux continue de tourner dans tous les cas.
 
 - Il n'arrête pas ixmux : `/v1/shutdown` n'est pas un outil. Il ne réconcilie pas non plus un
   mandat incertain (`/v1/mandates/{id}/reconcile` n'est pas un outil).
-- Aucun shell, aucun accès fichier hors d'`ixmux.json` et `ixmux.token`, aucun contrôle de
+- Aucun shell, aucun accès fichier hors d'`ixmux.json`, d'`ixmux.token` et, en lecture seule pour
+  `ixmux_inventory`, de `commands.jsonl` ; aucun contrôle de
   sessions WMUX, aucun tunnel, aucun service, aucun réseau au-delà de l'adresse loopback
   d'`ixmux.json`.
 - Il ne garde aucun état durable à lui : ce qu'il dit d'un mandat vient d'ixmux. Ses réponses

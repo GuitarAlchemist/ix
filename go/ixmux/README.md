@@ -159,12 +159,37 @@ The Claude session itself is kept by claude under your profile, as any `claude -
 
 `ixmux mcp --state <dir>` is a local MCP server on stdio over the ixmux serve of that state
 directory. It reads the address and the token there at each call, so it follows an ixmux restarted
-since, and has three tools: `ixmux_status`, `ixmux_submit` (a receipt within 2 s, even when the
-turn lasts longer) and `ixmux_result` (read from the command log). It has no tool that stops ixmux.
+since, and has four tools: `ixmux_status`, `ixmux_submit` (a receipt within 2 s, even when the
+turn lasts longer), `ixmux_result` (read from the command log) and `ixmux_inventory` (the inventory
+below, of that state directory alone, read from its files). It has no tool that stops ixmux.
 It sends the token only to a server that answered its `/v1/hello` challenge, on the same
 connection; a process that took the port without the token gets nothing (`ixmux-unverified`). A
 process that can read the token file is outside this model. The contract, with the exact command,
 the schemas and the errors: [MCP.md](MCP.md).
+
+## Inventory after a restart (`ixmux inventory`)
+
+`ixmux inventory [--state <dir> ...] [--claude-home <dir>] [--no-claude] [--json]` reads files and
+process creation times only. It sends, starts, replays, locks and writes nothing. After a crash, a
+power loss or a Windows restart it lists:
+
+- **the local Claude Code sessions**: Claude Code writes a record for each running process in
+  `<claude-home>/sessions/<pid>.json` (`--claude-home` defaults to `%CLAUDE_CONFIG_DIR%`, else
+  `~/.claude`). That file is undocumented: an unreadable or incomplete record is reported
+  `unreadable`, never guessed. A session's `id` is its session id. Its `incarnation` is
+  `pid:<pid>@<creation time>`. It is `running` or `idle` only when proven: a live process has that
+  pid and was created at that time, exactly on Windows (`procStart`), or within a minute of
+  `startedAt` elsewhere. A record left behind by a crash is `unreachable`, with the
+  `claude --resume <id>` to run. A session id held by two records is listed under `duplicates`.
+  While one of them is live, the others say "do not resume";
+- **each `--state` ixmux** and its mandates, as `ixmux_inventory` gives them ([MCP.md](MCP.md)).
+
+`last_activity` is the latest of the record's times and of the transcript file's modification time
+(its content is never read). `declared` keeps what a file says apart from what was proven. A bound
+(256 session records, 64 KiB per record, the 50 newest finished mandates per ixmux, the log's
+64 MiB) is never silent: `omitted` counts what it left out. `gaps` names what is not read: cloud
+sessions, which no local file lists and none of which is shown as active, wmux's pane states, and
+Windows services (`ixctl resume check`). Exit code 0 whenever the report is printed.
 
 ## Limits of this slice
 

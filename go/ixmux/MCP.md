@@ -49,7 +49,7 @@ Demonstration without a client, from PowerShell, once `ixmux serve` runs on that
 | `initialize` | `params` needs `protocolVersion` (a string), `capabilities` (an object) and `clientInfo` `{name, version}`, else -32602. `protocolVersion`: the one asked if the adapter holds it (`2025-11-25`, `2025-06-18`), else `2025-11-25`. Older versions are not offered: their batches are refused here. `capabilities.tools.listChanged` is false. `serverInfo` is `ixmux` and its version. It needs no ixmux. |
 | `notifications/initialized` | A notification: no answer. Any other notification is ignored. |
 | `ping` | `{}`. |
-| `tools/list` | The three tools below, with their `inputSchema`. |
+| `tools/list` | The four tools below, with their `inputSchema`. |
 | `tools/call` | `{content: [{type: "text", text}], structuredContent, isError}`. `text` is the JSON of `structuredContent`. |
 
 Protocol errors are JSON-RPC errors, and the adapter goes on reading:
@@ -169,6 +169,30 @@ Input: `{mandate_id}`. Output:
   than ixmux's deduplication window ago (`--dedup-window`, 720 h by default) and forgotten; that
   id is then a new mandate. An `uncertain` mandate is never forgotten.
 
+### `ixmux_inventory`
+
+No arguments. What can be found again after a crash or a restart, read from the files of the state
+directory, so it also answers while ixmux is down (`ixmux_status` then fails `ixmux-unavailable`).
+The report (`ixmux.inventory.v1`, the same as `ixmux inventory --json`) holds:
+
+- the ixmux entry. `liveness` is `proven` only when a live process has the pid of `ixmux.json` and
+  was created when ixmux recorded its start. `absent` or `pid-reused` with `ixmux.json` saying
+  `running` gives `unreachable`: ixmux did not stop cleanly;
+- each mandate of the command log, by `status`:
+  - `running`: accepted or delivering under a live ixmux;
+  - `done`: delivered, or nothing was sent;
+  - `uncertain`: the target may have acted, and a person decides. That covers a mandate left
+    delivering by an ixmux that is gone, which its next start records `uncertain`, cause `restart`;
+- `last_activity` and `age_s`, the mandate's last transition. `declared` keeps the recorded `state`
+  and `cause` apart from what was proven. `resume` says what a person may do; the tool does nothing;
+- `omitted`: the finished mandates past the 50 newest. An unfinished one is never left out;
+- `gaps`: what the inventory does not read.
+
+It shows no Claude Code session of the machine and no mandate `reason`, whose text may come from a
+target. What it carries is what `ixmux_status` and `ixmux_result` already give. It reads the
+command log without its lock. On Windows a compaction of a running ixmux fails during that read: no
+harm, the log is kept as it was and the compaction is tried again a minute later.
+
 ## Stop
 
 stdin closed: the adapter finishes the call under way (2 s at most for `ixmux_submit`) and exits 0.
@@ -179,7 +203,8 @@ running in every case.
 
 - It does not stop ixmux: `/v1/shutdown` is not a tool. It does not reconcile an uncertain mandate
   either (`/v1/mandates/{id}/reconcile` is not a tool).
-- No shell, no file access outside `ixmux.json` and `ixmux.token`, no WMUX session control, no
+- No shell, no file access outside `ixmux.json`, `ixmux.token` and, read-only for
+  `ixmux_inventory`, `commands.jsonl`; no WMUX session control, no
   tunnel, no service, no network beyond the loopback address of `ixmux.json`.
 - It keeps no durable state of its own: what it says of a mandate comes from ixmux. Its own
   answers are `initialize`, the tool schemas, the protocol and validation errors, the
