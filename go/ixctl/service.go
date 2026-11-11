@@ -281,7 +281,8 @@ func (l *rotatingLog) Close() error {
 
 const serviceUsage = `usage:
   ixctl service run <spec.json> --state DIR [--name NAME] [--addr 127.0.0.1:0] [--stop-timeout 30s] [--service-name ixctl]
-  ixctl service plan --spec FILE --client-user DOMAIN\USER [--service-name ixctl] [--exe PATH] [--dir DIR]`
+  ixctl service plan --spec FILE --client-user DOMAIN\USER [--service-name ixctl] [--exe PATH] [--dir DIR]
+  ixctl service prepare-config --spec FILE --output FILE`
 
 func cmdService(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
@@ -292,6 +293,8 @@ func cmdService(args []string, stdout io.Writer) error {
 		return cmdServiceRun(args[1:])
 	case "plan":
 		return cmdServicePlan(args[1:], stdout)
+	case "prepare-config":
+		return cmdServicePrepareConfig(args[1:])
 	}
 	return errors.New(serviceUsage)
 }
@@ -370,13 +373,47 @@ type planOptions struct {
 	deltaJournal string
 }
 
+// Prepare configuration through the same parser and resolver as service run. The
+// install plan calls this after restricting its new state directory's access.
+func cmdServicePrepareConfig(args []string) error {
+	fs := flag.NewFlagSet("service prepare-config", flag.ContinueOnError)
+	source := fs.String("spec", "", "source configuration")
+	destination := fs.String("output", "", "new normalized configuration file")
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 || *source == "" || *destination == "" {
+		return errors.New(serviceUsage)
+	}
+	spec, err := LoadSpec(*source)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(spec, "", "  ")
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(*destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.Write(append(data, '\n'))
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		os.Remove(*destination)
+		return err
+	}
+	return nil
+}
+
 func cmdServicePlan(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("service plan", flag.ContinueOnError)
 	var o planOptions
 	fs.StringVar(&o.service, "service-name", "ixctl", "service name")
 	fs.StringVar(&o.exe, "exe", `C:\Program Files\ixctl\ixctl.exe`, "where the binary is installed")
 	fs.StringVar(&o.dir, "dir", `C:\ProgramData\ixctl`, "state directory of the service")
-	fs.StringVar(&o.spec, "spec", "", "spec file to copy into the state directory (required)")
+	fs.StringVar(&o.spec, "spec", "", "spec file to normalize into the configuration directory (required)")
 	fs.StringVar(&o.clientUser, "client-user", "", `the one user who may read the state file, DOMAIN\USER (required)`)
 	fs.StringVar(&o.deltaJournal, "delta-journal", "", "Delta's JSONL journal, for the delta@1 probe kind (optional)")
 	if _, err := parseArgs(fs, args); err != nil {
@@ -415,7 +452,8 @@ func installPlan(o planOptions) string {
 	if spec == "" {
 		spec = "spec.json"
 	}
-	svcSpec := o.dir + `\spec.json`
+	configDir := o.dir + `\config`
+	svcSpec := configDir + `\spec.json`
 	acct := `NT SERVICE\` + o.service
 	bin := fmt.Sprintf(`"%s" service run "%s" --state "%s" --addr 127.0.0.1:0 --service-name %s`,
 		o.exe, svcSpec, o.dir, o.service)
@@ -454,11 +492,18 @@ func installPlan(o planOptions) string {
 	}
 	w(`Copy-Item "%s" "%s"`, from, o.exe)
 	w(`New-Item -ItemType Directory "%s"`, o.dir)
-	w(`Copy-Item "%s" "%s"`, spec, svcSpec)
+
 	w(`sc.exe create %s binPath= '%s' obj= "%s" start= demand DisplayName= "IX control plane"`, o.service, bin, acct)
 	w(`sc.exe sidtype %s unrestricted`, o.service)
 	w(`icacls "%s" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "BUILTIN\Administrators:(OI)(CI)F" "%s:(OI)(CI)M" "%s:(OI)(CI)RX"`,
 		o.dir, acct, o.clientUser)
+	// Keep configuration out of <name>.json and preserve the source path base.
+	// Read it during installation rather than printing its potentially private Env values.
+	w("# prepare configuration")
+	w(`New-Item -ItemType Directory "%s"`, configDir)
+	w(`$sourceSpec = '%s'`, strings.ReplaceAll(spec, "'", "''"))
+	w(`& '%s' service prepare-config --spec $sourceSpec --output '%s'`, strings.ReplaceAll(o.exe, "'", "''"), strings.ReplaceAll(svcSpec, "'", "''"))
+	w("# configuration ready")
 	if o.deltaJournal != "" {
 		w(`icacls "%s" /grant "%s:R"   # Delta's journal: read, that one file`, o.deltaJournal, acct)
 	}

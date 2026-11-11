@@ -686,6 +686,12 @@ mais l'hôte écrit ses rapports, ses événements et son journal sur la même g
 écriture du journal qui ne revient jamais retient l'hôte au-delà de la borne. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
 `ixctl up` de la session de l'utilisateur, pair du service.
 
+Le plan refuse un répertoire d'état existant. Il appelle
+`ixctl service prepare-config --spec FICHIER --output FICHIER` pour créer
+`config/spec.json` sous ce répertoire, hors de l'espace des fichiers d'état d'instance.
+Le chargeur Go résout commandes, répertoires de travail et chemins des pairs par rapport
+à la configuration source. Les chaînes des arguments et de l'environnement sont conservées,
+sans être incorporées au plan affiché. La préparation refuse un fichier de sortie existant.
 ## Barrière
 
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -578,7 +579,7 @@ func TestThePlanNamesTheSpecByItsAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	exe, _ := os.Executable()
-	if !strings.Contains(out.String(), `Copy-Item "`+abs+`"`) || !strings.Contains(out.String(), `Copy-Item "`+exe+`"`) {
+	if !strings.Contains(out.String(), `$sourceSpec = '`+strings.ReplaceAll(abs, "'", "''")+`'`) || !strings.Contains(out.String(), `Copy-Item "`+exe+`"`) {
 		t.Fatalf("plan:\n%s", out.String())
 	}
 }
@@ -597,5 +598,49 @@ func TestInstallPlanRefusesExistingStateBeforeChangingAnything(t *testing.T) {
 	}
 	if !strings.Contains(p, `New-Item -ItemType Directory "C:\ProgramData\ixctl"`) || strings.Contains(p, `New-Item -ItemType Directory -Force "C:\ProgramData\ixctl"`) {
 		t.Fatal("state directory creation must fail if another installer created it after the guard")
+	}
+}
+
+func TestPrepareConfigUsesLoadSpecWithoutPrintingOrOverwritingData(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source.json")
+	raw := []byte(`{"name":"spec","services":[{"name":"worker","command":"bin/worker","args":["2026-11-11T00:00:00-05:00"],"env":{"DATE":"2026-11-11T00:00:00-05:00"}}],"peers":[{"name":"desk","state_file":"peer/desk.json"}]}`)
+	if err := os.WriteFile(source, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "normalized.json")
+	var out bytes.Buffer
+	args := []string{"prepare-config", "--spec", source, "--output", destination}
+	if err := cmdService(args, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatal("configuration contents reached stdout")
+	}
+	want, err := LoadSpec(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSpec(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want.Services, got.Services) || !reflect.DeepEqual(want.Peers, got.Peers) {
+		t.Fatal("normalization changed data")
+	}
+	before, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdService(args, &out); err == nil {
+		t.Fatal("existing configuration overwritten")
+	}
+	after, err := os.ReadFile(destination)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("existing configuration changed")
+	}
+	for _, bad := range [][]string{{"prepare-config"}, {"prepare-config", "--spec", source}, {"prepare-config", "--spec", source, "--output", destination, "extra"}} {
+		if err := cmdService(bad, &out); err == nil {
+			t.Fatalf("accepted invalid arguments %v", bad)
+		}
 	}
 }

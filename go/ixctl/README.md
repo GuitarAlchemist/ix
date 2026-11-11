@@ -640,6 +640,12 @@ one file, and takes the grant back at uninstall. Known limit: the stop bound run
 and log lines on the same goroutine, so a log write that never returns holds the host past it. The service account has no Claude credentials, so work that needs them stays in an
 `ixctl up` of the user's session, a peer of the service.
 
+The install plan refuses an existing state directory. It runs
+`ixctl service prepare-config --spec FILE --output FILE` to write a new
+`config/spec.json` under that directory, outside the instance state-file namespace.
+The Go loader makes commands, working directories and peer state paths absolute against
+the source configuration. Argument and environment strings are preserved; their contents
+are not embedded in the printed plan. The preparation command refuses an existing output.
 ## Gate
 
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust

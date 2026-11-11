@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +220,61 @@ func TestInstallPlanExistingDirectoryFailsClosedInPowerShell(t *testing.T) {
 	got, err := os.ReadFile(sentinel)
 	if err != nil || string(got) != "unchanged" {
 		t.Fatalf("existing state changed: %q %v", got, err)
+	}
+}
+
+func TestInstalledConfigurationPreservesPathsAndSurvivesInstanceState(t *testing.T) {
+	shell, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell 7 unavailable")
+	}
+	sourceDir := t.TempDir()
+	source := filepath.Join(sourceDir, "source.json")
+	raw := []byte(`{"name":"spec","services":[{"name":"default-dir","command":"bin/worker.exe","env":{"MARKER":"not copied into plan","TIME":"2026-11-11T00:00:00-05:00"}},{"name":"explicit-dir","command":"tools/other.exe","dir":"work","args":["2026-11-11T00:00:00-05:00"]},{"name":"root-relative","command":"\\bin\\worker.exe"}],"peers":[{"name":"desk","state_file":"peers/desk.json"}]}`)
+	if err := os.WriteFile(source, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	want, err := LoadSpec(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	p := installPlan(planOptions{service: "ixctl", exe: testExe(t), dir: state, spec: source, clientUser: `HOST\stef`, name: "spec"})
+	start, end := strings.Index(p, "# prepare configuration"), strings.Index(p, "# configuration ready")
+	if start < 0 || end <= start {
+		t.Fatal("plan must prepare a normalized configuration")
+	}
+	if strings.Contains(p, "not copied into plan") {
+		t.Fatal("plan embeds environment contents")
+	}
+	script := "$ErrorActionPreference = 'Stop'\n" + p[start:end]
+	cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "IXCTL_TEST_ROLE=main")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("configuration preparation: %v\n%s", err, out)
+	}
+	installed := filepath.Join(state, "config", "spec.json")
+	got, err := LoadSpec(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want.Services, got.Services) || !reflect.DeepEqual(want.Peers, got.Peers) {
+		t.Fatalf("relocation changed paths: want %+v %+v, got %+v %+v", want.Services, want.Peers, got.Services, got.Peers)
+	}
+	before, err := os.ReadFile(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		inst, err := startInstance(got, "", "127.0.0.1:0", state, "memory", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst.close()
+		after, err := os.ReadFile(installed)
+		if err != nil || string(after) != string(before) {
+			t.Fatalf("instance destroyed configuration: %v", err)
+		}
 	}
 }
