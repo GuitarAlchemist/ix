@@ -18,7 +18,6 @@ type LogMandate struct {
 	Reason      string    // of a refused or uncertain state
 	Since       time.Time // its last transition
 	Created     time.Time // its first record
-	Answered    bool      // its record carries the target's answer (delivered, or settled late)
 }
 
 // OpenRegular opens path for reading, refusing anything but a regular file (a FIFO, a device, a
@@ -96,9 +95,6 @@ func ReadLog(path string, maxBytes int64) ([]LogMandate, *Torn, error) {
 			m.Incarnation = r.Incarnation
 		}
 		m.Cause, m.Reason = r.Cause, r.Reason
-		if r.Ack != nil {
-			m.Answered = true
-		}
 	}
 	return out, torn, nil
 }

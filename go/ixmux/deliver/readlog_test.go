@@ -38,7 +38,7 @@ func TestReadLogGivesEachMandateItsLastState(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", p, err)
 		}
-		if len(ms) != 2 || ms[0].MandateID != "m1" || ms[0].State != Delivered || !ms[0].Answered ||
+		if len(ms) != 2 || ms[0].MandateID != "m1" || ms[0].State != Delivered ||
 			ms[1].MandateID != "m2" || ms[1].State != Delivering || ms[1].Incarnation != "i" || ms[1].Created.IsZero() {
 			t.Errorf("%s: %+v", p, ms)
 		}

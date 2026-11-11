@@ -84,6 +84,7 @@ type Report struct {
 	Entries    []Entry        `json:"entries"`
 	Duplicates []Duplicate    `json:"duplicates,omitempty"`
 	Omitted    map[string]int `json:"omitted,omitempty"` // entries left out by a bound, by reason
+	Partial    bool           `json:"partial"`           // a bound left something out or cut a search: see omitted
 	Gaps       []string       `json:"gaps"`              // sources this inventory does not read
 }
 
@@ -106,6 +107,13 @@ type Options struct {
 	MaxFileBytes int64                            // one session or ixmux.json record: 64 KiB
 	MaxDone      int                              // finished mandates listed per ixmux, newest first: 50
 	MaxLogBytes  int64                            // a command log read: deliver.MaxLogBytes
+	// The transcript search, shared by every session of one Collect. It reads no byte of a
+	// transcript, its modification time only; once spent, the rest is "search-cut" and the
+	// report partial.
+	TranscriptFiles int           // paths stat-ed and project directory entries listed: 4096
+	TranscriptTime  time.Duration // time spent searching, by Now: 2 s
+
+	transcripts *transcripts // the search's budget, set by Collect
 }
 
 func (o *Options) defaults() {
@@ -130,6 +138,12 @@ func (o *Options) defaults() {
 	if o.MaxLogBytes <= 0 {
 		o.MaxLogBytes = deliver.MaxLogBytes
 	}
+	if o.TranscriptFiles <= 0 {
+		o.TranscriptFiles = 4096
+	}
+	if o.TranscriptTime <= 0 {
+		o.TranscriptTime = 2 * time.Second
+	}
 }
 
 // Collect reads every source once. A source that cannot be read is an unreadable entry, never an
@@ -137,6 +151,7 @@ func (o *Options) defaults() {
 func Collect(o Options) Report {
 	o.defaults()
 	r := Report{Format: Format, ReadAt: o.Now().UTC(), Omitted: map[string]int{}, Gaps: Gaps}
+	o.transcripts = &transcripts{files: o.TranscriptFiles, deadline: r.ReadAt.Add(o.TranscriptTime), now: o.Now}
 	if o.ClaudeHome != "" {
 		r.claudeSessions(o)
 	}
@@ -159,7 +174,8 @@ func Collect(o Options) Report {
 		}
 		return a.Incarnation < b.Incarnation
 	})
-	if len(r.Omitted) == 0 {
+	r.Partial = len(r.Omitted) > 0
+	if !r.Partial {
 		r.Omitted = nil
 	}
 	return r

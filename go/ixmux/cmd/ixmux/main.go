@@ -3,7 +3,7 @@
 //	ixmux serve --addr 127.0.0.1:0 --state <dir> [--journal name=path ...] [--target name=path ...]
 //	            [--claude-target name ...] [--claude-bin path] [--claude-env NAME ...] [--dedup-window 720h]
 //	ixmux mcp --state <dir>        a local MCP server on stdio over that ixmux (MCP.md)
-//	ixmux inventory [--state <dir> ...] [--claude-home <dir>] [--no-claude] [--json]
+//	ixmux inventory [--state <dir> ...] [--claude-home <dir>] [--no-claude] [--json] [--transcript-files <n>] [--transcript-time <d>]
 //	                               read-only: sessions, ixmux processes and mandates after a restart
 //	ixmux version
 //

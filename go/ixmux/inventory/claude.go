@@ -3,6 +3,7 @@ package inventory
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -59,6 +60,133 @@ func safeID(id string) bool {
 	return true
 }
 
+// What the transcript search found for a session, in its Declared["transcript"].
+const (
+	transcriptFound      = "found"      // its modification time is in the last activity
+	transcriptNone       = "none"       // searched to the end: there is none
+	transcriptCut        = "search-cut" // the budget ran out first: not known
+	transcriptUnreadable = "unreadable" // projects/ or a path in it could not be read: not known
+)
+
+// transcripts is the search for the sessions' transcripts, with one budget for a whole Collect: a
+// count of paths stat-ed and directory entries listed, and a deadline read on Options.Now. It
+// opens no transcript; it lists projects/ at most once.
+type transcripts struct {
+	files    int
+	deadline time.Time
+	now      func() time.Time
+	projects []string // the directories of projects/, sorted
+	listed   bool
+	cut      bool  // the listing stopped on the budget
+	listErr  error // the listing failed
+}
+
+// spend takes one step of the budget, or says it is spent.
+func (t *transcripts) spend() bool {
+	if t.files <= 0 || !t.now().Before(t.deadline) {
+		return false
+	}
+	t.files--
+	return true
+}
+
+// projectDir is the directory Claude Code keeps a cwd's transcripts in: every character but an
+// ASCII letter or digit made '-' (C:\work is C--work). A cwd it names otherwise (a long one) is
+// found by the search of projects/.
+func projectDir(cwd string) string {
+	b := []byte(cwd)
+	for i, c := range b {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+			b[i] = '-'
+		}
+	}
+	return string(b)
+}
+
+// find looks for <home>/projects/*/<id>.jsonl: first in its cwd's directory, then in the others,
+// one stat each, until the budget is spent.
+// @ai:invariant a session's transcript search reads no transcript content and is "search-cut" or "unreadable", never "none", when it did not run to its end [T:test conf:0.85 src:go/ixmux/inventory/transcript_test.go:TestASpentFileBudgetIsPartialNeverComplete]
+func (t *transcripts) find(home string, s sessionRecord) (time.Time, string, string) {
+	direct := ""
+	if s.Cwd != "" {
+		direct = projectDir(s.Cwd)
+		if !t.spend() {
+			return time.Time{}, transcriptCut, ""
+		}
+		if mt, how, why := statTranscript(filepath.Join(home, "projects", direct, s.SessionID+".jsonl")); how != "" {
+			return mt, how, why
+		}
+	}
+	if !t.listed {
+		t.list(filepath.Join(home, "projects"))
+	}
+	if t.listErr != nil {
+		return time.Time{}, transcriptUnreadable, t.listErr.Error()
+	}
+	for _, p := range t.projects {
+		if p == direct {
+			continue
+		}
+		if !t.spend() {
+			return time.Time{}, transcriptCut, ""
+		}
+		if mt, how, why := statTranscript(filepath.Join(home, "projects", p, s.SessionID+".jsonl")); how != "" {
+			return mt, how, why
+		}
+	}
+	if t.cut {
+		return time.Time{}, transcriptCut, ""
+	}
+	return time.Time{}, transcriptNone, ""
+}
+
+// statTranscript: found with its modification time, unreadable, or "" when no transcript is there.
+func statTranscript(p string) (time.Time, string, string) {
+	st, err := os.Stat(p)
+	switch {
+	case err == nil && st.Mode().IsRegular():
+		return st.ModTime(), transcriptFound, ""
+	case err == nil || errors.Is(err, fs.ErrNotExist):
+		return time.Time{}, "", ""
+	default:
+		return time.Time{}, transcriptUnreadable, err.Error()
+	}
+}
+
+// list reads the directory names of projects/ once, one budget step an entry. A missing projects/
+// holds no transcript.
+func (t *transcripts) list(dir string) {
+	t.listed = true
+	d, err := os.Open(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		t.listErr = err
+		return
+	}
+	defer d.Close()
+	defer sort.Strings(t.projects)
+	for {
+		batch, err := d.ReadDir(256)
+		for _, e := range batch {
+			if !t.spend() {
+				t.cut = true
+				return
+			}
+			if e.IsDir() {
+				t.projects = append(t.projects, e.Name())
+			}
+		}
+		if err != nil || len(batch) == 0 {
+			if err != nil && !errors.Is(err, io.EOF) {
+				t.listErr = err
+			}
+			return
+		}
+	}
+}
+
 // claudeSessions reads <home>/sessions/*.json: one record per running Claude Code process, which
 // its process removes when it exits; one left behind by a crash names a process that is gone.
 func (r *Report) claudeSessions(o Options) {
@@ -101,7 +229,14 @@ func (r *Report) claudeSessions(o Options) {
 	sort.Strings(names)
 	first := len(r.Entries)
 	for _, n := range names {
-		r.Entries = append(r.Entries, session(o, filepath.Join(dir, n)))
+		e := session(o, filepath.Join(dir, n))
+		switch e.Declared["transcript"] {
+		case transcriptCut:
+			r.Omitted["transcript searches cut by the budget"]++
+		case transcriptUnreadable:
+			r.Omitted["transcript searches that failed"]++
+		}
+		r.Entries = append(r.Entries, e)
 	}
 	r.sessionDuplicates(r.Entries[first:])
 }
@@ -133,12 +268,15 @@ func session(o Options, path string) Entry {
 		}
 	}
 	// The transcript's last write is activity too: its mtime only, never its content.
-	if m, _ := filepath.Glob(filepath.Join(o.ClaudeHome, "projects", "*", s.SessionID+".jsonl")); len(m) > 0 {
-		for _, p := range m {
-			if st, err := os.Stat(p); err == nil {
-				e.LastActivity = later(e.LastActivity, st.ModTime())
-			}
-		}
+	mt, how, why := o.transcripts.find(o.ClaudeHome, s)
+	e.Declared["transcript"] = how
+	switch how {
+	case transcriptFound:
+		e.LastActivity = later(e.LastActivity, mt)
+	case transcriptCut:
+		e.Problem = "the transcript search ran out of its budget: the last activity is the record's, maybe older than the truth"
+	case transcriptUnreadable:
+		e.Problem = "the transcript search failed (" + why + "): the last activity is the record's, maybe older than the truth"
 	}
 	if i := strings.LastIndexByte(s.PIDDomain, ':'); i >= 0 && o.Hostname != "" && !strings.EqualFold(s.PIDDomain[i+1:], o.Hostname) {
 		e.Status, e.Liveness = Unknown, Unverified

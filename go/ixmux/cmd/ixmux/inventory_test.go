@@ -136,7 +136,7 @@ func mcpInv(t *testing.T, m *mcpProc, state string, pid int) mcpInvSeen {
 	// The pid as a number of its own: a bare substring test is red on Linux, where a pid of 2026
 	// appears in every timestamp of the year, and a short one in any epoch or uuid (hex). A JSON
 	// value (`:2026,`) is still caught: ':' may come before the number, never after it.
-	if regexp.MustCompile(`(^|[^0-9a-fA-F.-])` +strconv.Itoa(pid) + `($|[^0-9a-fA-F.:-])`).MatchString(text) {
+	if regexp.MustCompile(`(^|[^0-9a-fA-F.-])` + strconv.Itoa(pid) + `($|[^0-9a-fA-F.:-])`).MatchString(text) {
 		t.Errorf("ixmux_inventory carries the pid %d: %s", pid, text)
 	}
 	var out mcpInvSeen
@@ -149,4 +149,33 @@ func mcpInv(t *testing.T, m *mcpProc, state string, pid int) mcpInvSeen {
 		}
 	}
 	return out
+}
+
+// The transcript budget is set from the command line: spent, the report says partial, in JSON and
+// in text; a budget of zero is a usage error, not an unbounded search.
+func TestInventoryTranscriptBudgetFlags(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "sessions"), 0o700)
+	os.WriteFile(filepath.Join(home, "sessions", "1.json"), []byte(`{"pid":1,"sessionId":"s1","cwd":"C:\\w","startedAt":1}`), 0o600)
+	for i := 0; i < 10; i++ {
+		os.MkdirAll(filepath.Join(home, "projects", "d"+strconv.Itoa(i)), 0o700)
+	}
+	var out, errb bytes.Buffer
+	if code := runInventory([]string{"--claude-home", home, "--transcript-files", "3", "--json"}, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	var r inventory.Report
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil || !r.Partial || r.Omitted["transcript searches cut by the budget"] != 1 {
+		t.Errorf("partial %v, omitted %v (%v): want the search cut", r.Partial, r.Omitted, err)
+	}
+	out.Reset()
+	runInventory([]string{"--claude-home", home, "--transcript-files", "3"}, &out, &errb)
+	if !strings.Contains(out.String(), "partial: ") {
+		t.Errorf("the text report does not say partial:\n%s", out.String())
+	}
+	for _, bad := range [][]string{{"--transcript-files", "0"}, {"--transcript-time", "0s"}} {
+		if code := runInventory(append(bad, "--claude-home", home), &out, &errb); code != 2 {
+			t.Errorf("%v: exit %d, want 2 (usage)", bad, code)
+		}
+	}
 }

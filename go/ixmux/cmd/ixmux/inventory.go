@@ -41,14 +41,16 @@ func runInventory(args []string, stdout, stderr io.Writer) int {
 	home := fs.String("claude-home", defaultClaudeHome(), "Claude Code's configuration directory, whose sessions/ is read")
 	noClaude := fs.Bool("no-claude", false, "do not read the Claude Code sessions")
 	asJSON := fs.Bool("json", false, "print the report as JSON ("+inventory.Format+")")
+	tFiles := fs.Int("transcript-files", 4096, "the transcript search's budget: paths stat-ed and entries listed")
+	tTime := fs.Duration("transcript-time", 2*time.Second, "the transcript search's budget in time")
 	if err := fs.Parse(args); err != nil {
 		return server.ExitUsage
 	}
-	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: ixmux inventory [--state <dir> ...] [--claude-home <dir>] [--no-claude] [--json]")
+	if fs.NArg() != 0 || *tFiles <= 0 || *tTime <= 0 {
+		fmt.Fprintln(stderr, "usage: ixmux inventory [--state <dir> ...] [--claude-home <dir>] [--no-claude] [--json] [--transcript-files <n> > 0] [--transcript-time <d> > 0]")
 		return server.ExitUsage
 	}
-	o := inventory.Options{IxmuxStates: states, ClaudeHome: *home}
+	o := inventory.Options{IxmuxStates: states, ClaudeHome: *home, TranscriptFiles: *tFiles, TranscriptTime: *tTime}
 	if *noClaude {
 		o.ClaudeHome = ""
 	}
@@ -87,6 +89,9 @@ func printInventory(w io.Writer, r inventory.Report) {
 	}
 	for _, d := range r.Duplicates {
 		fmt.Fprintf(w, "duplicate %s %s: %d incarnations, %d live: %s\n", d.Kind, d.ID, len(d.Incarnations), d.Live, strings.Join(d.Incarnations, ", "))
+	}
+	if r.Partial {
+		fmt.Fprintln(w, "partial: a bound left something out or cut a search; this is not the whole picture")
 	}
 	for why, n := range r.Omitted {
 		fmt.Fprintf(w, "omitted: %d %s\n", n, why)

@@ -189,9 +189,15 @@ power loss or a Windows restart it lists:
   [MCP.md](MCP.md), where `ixmux_inventory` gives a reduced view of them.
 
 `last_activity` is the latest of the record's times and of the transcript file's modification time
-(its content is never read). `declared` keeps what a file says apart from what was proven. A bound
-is never silent: past 256 session records or the 50 newest finished mandates per ixmux, `omitted`
-counts what was left out (an unfinished mandate never is); a record over 64 KiB, a log over 64 MiB,
+(its content is never read). The transcript is looked for at `projects/<cwd, every character but
+an ASCII letter or digit made '->/<id>.jsonl` (one stat), then in the other directories of
+`projects/`, within one budget per read: 4096 paths stat-ed and entries listed, and 2 s
+(`--transcript-files`, `--transcript-time`). Each session says what came of it in
+`declared.transcript`: `found`, `none` (searched to the end), `search-cut` (the budget ran out:
+`last_activity` is the record's, maybe older) or `unreadable`. `declared` keeps what a file says
+apart from what was proven. A bound is never silent: `partial` is true and `omitted` counts what
+was left out, past 256 session records, past the 50 newest finished mandates per ixmux (an
+unfinished mandate never is), or by a cut or failed transcript search; a record over 64 KiB, a log over 64 MiB,
 or anything but a regular file (a FIFO is never waited on) is an `unreadable` entry. `gaps` names what is not read: cloud
 sessions, which no local file lists and none of which is shown as active, wmux's pane states, and
 Windows services (`ixctl resume check`). Exit code 0 whenever the report is printed.

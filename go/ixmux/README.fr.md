@@ -188,10 +188,17 @@ il liste :
   champs sont décrits dans [MCP.fr.md](MCP.fr.md), où `ixmux_inventory` en donne une vue réduite.
 
 `last_activity` est la plus récente des heures de l'enregistrement et de la date de modification
-du fichier de transcription, dont le contenu n'est jamais lu. `declared` garde ce que dit un
-fichier, à part de ce qui est prouvé. Une borne n'est jamais silencieuse : au-delà de 256
-enregistrements de session ou des 50 mandats terminés les plus récents par ixmux, `omitted` compte
-ce qui a été laissé de côté (jamais un mandat non terminé). Un enregistrement de plus de 64 Kio, un
+du fichier de transcription, dont le contenu n'est jamais lu. La transcription est cherchée à
+`projects/<cwd, chaque caractère autre qu'une lettre ou un chiffre ASCII changé en '->/<id>.jsonl`
+(un seul stat), puis dans les autres dossiers de `projects/`, dans un budget par lecture : 4096
+chemins examinés et entrées listées, et 2 s (`--transcript-files`, `--transcript-time`). Chaque
+session dit ce qu'il en est dans `declared.transcript` : `found`, `none` (cherchée jusqu'au bout),
+`search-cut` (budget épuisé : `last_activity` est celle de l'enregistrement, peut-être plus
+ancienne) ou `unreadable`. `declared` garde ce que dit un fichier, à part de ce qui est prouvé. Une
+borne n'est jamais silencieuse : `partial` vaut vrai et `omitted` compte ce qui a été laissé de
+côté, au-delà de 256 enregistrements de session, au-delà des 50 mandats terminés les plus récents
+par ixmux (jamais un mandat non terminé), ou par une recherche de transcription coupée ou en échec.
+Un enregistrement de plus de 64 Kio, un
 journal de plus de 64 Mio, ou tout ce qui n'est pas un fichier ordinaire (une FIFO n'est jamais
 attendue) donne une entrée `unreadable`. `gaps` nomme ce qui n'est pas
 lu : les sessions cloud, qu'aucun fichier local ne liste et dont aucune n'est montrée active, l'état
