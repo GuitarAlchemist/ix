@@ -161,7 +161,13 @@ Le comportement est documenté et testé. L'option d'un renommage POSIX est rés
 
 ## 6. Décisions réservées à l'opérateur
 
-1. **Pousser ou fusionner** `feat/ixmux-fiabilite-r1`, `feat/ixmux-p1-r2` et `feat/ixmux-inventory-r1` dans `feat/ixmux` (#515). Rien n'est poussé.
+1. **Pousser ou fusionner** `feat/ixmux-fiabilite-r1`, `feat/ixmux-p1-r2` et `feat/ixmux-inventory-r1` dans `feat/ixmux` (#515). Rien n'est poussé. État vérifié le 2026-11-11, à `14532df1` :
+   - **`origin/feat/ixmux` a avancé** de deux commits d'une autre session : `c93f1502` (écritures bloquées bornées, reçus de dépôt liés, `fingerprint` renommé `Fingerprint`) et `0da99ee0`.
+   - **Une fusion d'essai** a été faite dans un worktree jetable, en HEAD détaché, puis supprimé. Elle donne un conflit dans `deliver/engine.go`, mécanique : garder mon côté, nommer la fonction `Fingerprint` et sa doc, et porter les deux champs `Fingerprint: r.fp` et `Cause: r.cause` dans `entry()`.
+   - **Un piège que git ne signale pas** : mes tests `logbound_review_test.go`, `logbound_test.go` et `r2_test.go` appellent encore `fingerprint(`. Ils fusionnent sans conflit mais ne compilent plus. Il faut les renommer.
+   - Ainsi résolue, la fusion passe `gofmt`, `go vet` et les 6 paquets sous Windows.
+   - **La CI** : seul `main` (`5c99d6ab`) découvre `go/ixmux` (job `go-modules`, Linux avec `-race` et Windows). Ma branche, partie d'un `main` plus ancien, ne lance que `go/ixctl`. Pour obtenir la preuve Linux, il faut intégrer `main`, ce qui se fait sans conflit en simulation, ou passer par la pull request vers `main`.
+   - Les 8 commits R1 (`1e15c56c` à `96f20e90`) n'ont pas de lien `Claude-Session` ; le résumé de ma session précédente me les attribue.
 2. **Converger avec ixctl.** Faut-il que l'inventaire devienne la source hors ligne de la sonde `claude-sessions@1` et de `ixctl resume check` ? C'est l'affaire du propriétaire IX Service Windows. Les options :
    - (a) les garder séparés ;
    - (b) ixctl lit le rapport `ixmux.inventory.v1` ;
