@@ -163,6 +163,26 @@ jobs:
         if: matrix.rust == 'stable'
         run: python go/ixctl/e2e/e2e.py --build --work "${{ runner.temp }}/ixctl-e2e"
 
+      # The Rust client against a real `ixctl up` (crates/ix-ctl/tests/real_plane.rs):
+      # run markers acknowledged by the plane (#450) and a wait after a hard plane stop
+      # ending unknown/other-epoch (#453 B4). Those tests are #[ignore] because they need
+      # a built plane, so `cargo test --workspace` above never runs them: this step builds
+      # ixctl, names it in IXCTL_BIN and runs them with --ignored. It fails unless both
+      # ran, so a renamed or filtered-out test cannot pass with nothing run.
+      - name: ix-ctl against a real plane
+        if: matrix.rust == 'stable'
+        shell: bash
+        run: |
+          # An `if`, not `$([ ... ] && echo .exe)`: under bash -e that substitution fails
+          # the assignment, and so the step, silently on every OS but Windows.
+          exe="$RUNNER_TEMP/ixctl-real/ixctl"
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          (cd go/ixctl && go build -o "$exe" .)
+          export IXCTL_BIN="$exe"
+          cargo test -p ix-ctl --test real_plane -- --ignored 2>&1 | tee "$RUNNER_TEMP/real-plane.txt"
+          grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/real-plane.txt" \
+            || { echo "::error::the real-plane tests did not both run and pass"; exit 1; }
+
       - uses: actions/upload-artifact@v4
         if: failure() && matrix.rust == 'stable'
         with:
@@ -176,26 +196,51 @@ jobs:
         if: matrix.rust == 'stable'
         run: cargo doc --workspace --no-deps
 
-  # `go/ixctl`, the control plane, is Go: nothing in the job above compiles or
+  # Every Go module under `go/` is Go: nothing in the job above compiles or
   # tests it, and no Rust test wraps `go`. Until this job existed the plane's
-  # Linux process code (`proc_other.go`) had never run anywhere. Fast (under a
-  # minute), so it runs on every push.
-  ixctl-go:
+  # Linux process code (`go/ixctl/proc_other.go`) had never run anywhere. Fast
+  # (under a minute per module), so it runs on every push.
+  #
+  # The modules are discovered, not listed: a second module (`go/ixmux`) once
+  # sat beside `go/ixctl` with its tests run by no gate, its Unix code never
+  # executed and its races never checked. A new `go/<name>/go.mod` is covered
+  # the day it lands. So is a `prototypes/<name>/go.mod`: a prototype with Go
+  # tests (ix#390) ran the whole Rust matrix and not one of its own tests. The
+  # matrix value is the module's directory (`go/ixctl`, `prototypes/probes`).
+  go-modules-discover:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.find.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        shell: bash
+        run: |
+          # An `if`, not `[ -f ] && ...`: a glob with no match (no prototype has a go.mod)
+          # would end the loop on a false test and, under `-eo pipefail`, fail the step.
+          modules=$(for m in go/*/go.mod prototypes/*/go.mod; do if [ -f "$m" ]; then dirname "$m"; fi; done | jq -Rcn '[inputs]')
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+          echo "Go modules: $modules"
+
+  go-modules:
+    needs: go-modules-discover
+    if: needs.go-modules-discover.outputs.modules != '[]'
     strategy:
       fail-fast: false
       matrix:
+        module: ${{ fromJSON(needs.go-modules-discover.outputs.modules) }}
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: go/ixctl
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/ixctl/go.mod
-          cache-dependency-path: go/ixctl/go.sum
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.*
 
       - name: gofmt
         shell: bash
@@ -205,8 +250,8 @@ jobs:
         run: go vet ./...
 
       # The race detector needs cgo, which the Windows runner has no C
-      # toolchain for; the hub, cursors and sessions are the same code on
-      # both, so one row under -race covers them.
+      # toolchain for; the concurrent code is the same on both, so one row
+      # under -race covers it.
       - name: go test
         run: go test ./... -count=1 ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }}
 
