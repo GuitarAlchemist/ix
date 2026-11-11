@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -127,10 +128,16 @@ func mcpInv(t *testing.T, m *mcpProc, state string, pid int) mcpInvSeen {
 	}
 	text := inv.Content[0].Text
 	esc, _ := json.Marshal(state)
-	for _, leak := range []string{string(esc[1 : len(esc)-1]), filepath.Base(state), "127.0.0.1", `"pid"`, strconv.Itoa(pid), "reason", "claude-session", "plantedsession", "addr", "exit_code"} {
+	for _, leak := range []string{string(esc[1 : len(esc)-1]), filepath.Base(state), "127.0.0.1", `"pid"`, "reason", "claude-session", "plantedsession", "addr", "exit_code"} {
 		if strings.Contains(text, leak) {
 			t.Errorf("ixmux_inventory carries %q: %s", leak, text)
 		}
+	}
+	// The pid as a number of its own: a bare substring test is red on Linux, where a pid of 2026
+	// appears in every timestamp of the year, and a short one in any epoch or uuid (hex). A JSON
+	// value (`:2026,`) is still caught: ':' may come before the number, never after it.
+	if regexp.MustCompile(`(^|[^0-9a-fA-F.-])` +strconv.Itoa(pid) + `($|[^0-9a-fA-F.:-])`).MatchString(text) {
+		t.Errorf("ixmux_inventory carries the pid %d: %s", pid, text)
 	}
 	var out mcpInvSeen
 	if err := json.Unmarshal([]byte(text), &out.mcpInventory); err != nil {
