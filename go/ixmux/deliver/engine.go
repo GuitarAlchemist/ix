@@ -4,12 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
+
+// timeNow is the clock of transitions and of the deduplication window; a test replaces it.
+var timeNow = time.Now
 
 type key struct{ target, id string }
 
@@ -23,7 +29,7 @@ type record struct {
 	target, id, inc string
 	fp              string // fingerprint of the mandate first accepted under this id
 	state, prev     State
-	reason          string
+	reason, cause   string
 	ack             *Ack
 	created, since  time.Time
 }
@@ -35,6 +41,13 @@ type Engine struct {
 	notify  func(Transition)
 	timeout time.Duration
 	slots   chan struct{} // one per adapter call not yet returned
+	path    string        // of the log, for a compaction
+	window  time.Duration // DedupWindow
+	// small and big bound a record without and with an Ack: they size the room a mandate holds.
+	small, big int64
+	// nextCompact: no compaction is tried for a new mandate before it, once one failed or freed
+	// too little (under log.mu).
+	nextCompact time.Time
 
 	mu      sync.Mutex
 	targets map[string]*Target // one allocation per Register: a pointer names a registration
@@ -46,6 +59,19 @@ type Engine struct {
 	calling map[key]bool       // keys whose adapter call has not returned, even past its deadline
 	asking  map[key]bool       // keys whose Status call has not returned, even past its deadline
 	closing bool               // Close has begun: no new Deliver or Reconcile
+	// stopping: the process is stopping (Stopping), so an adapter error is the stop's doing.
+	stopping bool
+}
+
+// Stopping says the process is stopping and is about to end its adapters' work (a clean stop
+// closes the claude children before Close). From then on, an adapter call that ends in an error
+// that is not a refusal is recorded uncertain with cause restart, ixmux stopped with the delivery
+// under way, and not adapter-error, which says the target answered an error.
+// @ai:invariant a clean stop during a turn leaves the mandate uncertain with cause restart, never adapter-error [T:test conf:0.85 src:go/ixmux/cmd/ixmux/stopcause_test.go:TestACleanStopDuringATurnIsCauseRestart]
+func (e *Engine) Stopping() {
+	e.mu.Lock()
+	e.stopping = true
+	e.mu.Unlock()
 }
 
 // call is one adapter call, shared by the caller and the goroutine that runs it.
@@ -83,32 +109,83 @@ func Open(path string, opt Options) (*Engine, Recovery, error) {
 	if err != nil {
 		return nil, Recovery{}, err
 	}
+	// A compacted copy left by a crash during a compaction is not the log: removed under the lock.
+	os.Remove(path + ".compact")
 	l, recs, torn, err := openLog(path, opt.MaxLogBytes)
 	if err != nil {
 		lock.Close()
 		return nil, Recovery{}, err
 	}
 	l.lock = lock
+	if opt.DedupWindow <= 0 {
+		opt.DedupWindow = DefaultDedupWindow
+	}
+	// big holds at least two small records: an uncertain late answer and the reconcile after it.
+	big := max(min(int64(MaxRecordBytes), opt.MaxLogBytes/8), 2*SmallRecordBytes)
 	e := &Engine{log: l, notify: opt.Notify, timeout: opt.Timeout, slots: make(chan struct{}, opt.MaxInFlight),
+		path: path, window: opt.DedupWindow, small: SmallRecordBytes, big: big,
 		targets: map[string]*Target{}, recs: map[key]*record{}, ids: map[string]*record{}, idClaim: map[string]idHold{}, claims: map[key]bool{}, running: map[string]bool{},
 		calling: map[key]bool{}, asking: map[key]bool{}}
 	for _, r := range recs {
 		e.apply(r)
 	}
-	rec := Recovery{Records: len(recs), Torn: torn}
+	rec := Recovery{Records: len(recs), Torn: torn, DedupWindow: e.window}
+	l.mu.Lock()
+	for k := range e.recs {
+		e.rehold(k)
+	}
+	// Past three quarters of its bound, or with no room for a new mandate, the log is compacted
+	// before the restart's own transitions are written: one record per mandate, in its current
+	// state, finished mandates past the deduplication window left out, and only if that makes the
+	// log smaller.
+	// @ai:invariant a compaction keeps every mandate's state, fingerprint, incarnation, Ack and reason, so a restart neither forgets an id nor sends a delivered mandate again [T:test conf:0.85 src:go/ixmux/deliver/logbound_test.go:TestARestartCompactsAFullLogAndForgetsNothing]
+	// A new mandate needs its accepted record (a small one) and the room it then holds.
+	if from := l.size; from > opt.MaxLogBytes/4*3 || from+l.reserved+e.small+(2*e.small+e.big) > opt.MaxLogBytes {
+		forgotten, fatal, err := e.compactLocked()
+		switch {
+		case fatal:
+			l.mu.Unlock()
+			l.close()
+			return nil, rec, err
+		case errors.Is(err, errNoGain):
+		case err != nil:
+			rec.CompactFailed = err.Error()
+		default:
+			rec.Compacted = &Compaction{From: from, To: l.size, Forgotten: forgotten}
+		}
+	}
+	l.mu.Unlock()
 	for _, r := range e.sorted() {
 		k := key{r.target, r.id}
+		var lr logRecord
 		switch r.state {
 		case Delivering:
-			err = e.transition(k, r.inc, Uncertain, "restart: delivering without a final state", nil)
+			lr = logRecord{Target: r.target, MandateID: r.id, Incarnation: r.inc, State: Uncertain, Reason: "restart: delivering without a final state", Cause: CauseRestart}
 			rec.MadeUncertain++
 		case Accepted:
-			err = e.transition(k, r.inc, Refused, "restart: the adapter was never called", nil)
+			lr = logRecord{Target: r.target, MandateID: r.id, Incarnation: r.inc, State: Refused, Reason: "restart: the adapter was never called"}
 			rec.MadeRefused++
+		default:
+			continue
+		}
+		err = e.transition(k, lr.Incarnation, lr.State, lr.Reason, lr.Cause, nil)
+		if errors.Is(err, errLogFull) {
+			// The log is full: the transition is applied in memory only. The log already makes it:
+			// every Open finds this delivery delivering (or accepted) and does the same again.
+			// @ai:invariant a restart whose own transitions do not fit in the log still starts, with them in memory [T:test conf:0.85 src:go/ixmux/deliver/logbound_review_test.go:TestARestartWhoseTransitionsDoNotFitStillStarts]
+			lr.At = timeNow().UTC()
+			e.mu.Lock()
+			e.apply(lr)
+			e.mu.Unlock()
+			l.mu.Lock()
+			e.rehold(k)
+			l.mu.Unlock()
+			rec.InMemoryOnly++
+			err = nil
 		}
 		if err != nil {
 			l.close()
-			return nil, Recovery{}, err
+			return nil, rec, err
 		}
 	}
 	return e, rec, nil
@@ -125,13 +202,133 @@ func (e *Engine) apply(lr logRecord) {
 			e.ids[lr.MandateID] = r
 		}
 	}
-	r.prev, r.state, r.reason, r.since, r.ack = r.state, lr.State, lr.Reason, lr.At, lr.Ack
+	r.prev, r.state, r.reason, r.cause, r.since, r.ack = r.state, lr.State, lr.Reason, lr.Cause, lr.At, lr.Ack
+	if lr.Prev != "" { // a compacted record
+		r.prev = lr.Prev
+	}
+	if lr.Created != nil {
+		r.created = *lr.Created
+	}
 	if lr.Incarnation != "" {
 		r.inc = lr.Incarnation
 	}
 	if r.fp == "" {
 		r.fp = lr.Fingerprint
 	}
+}
+
+// snapshot is every mandate as one log record in its current state, for a compaction, but for
+// the finished mandates (delivered or refused, not claimed) whose last transition is older than
+// the deduplication window: those it returns as gone. Under e.log.mu.
+// @ai:invariant a compaction forgets only finished mandates past the window, never an uncertain, accepted or delivering one [T:test conf:0.85 src:go/ixmux/deliver/r2_test.go:TestOldFinishedMandatesAreForgottenAtRestart]
+func (e *Engine) snapshot() (out []logRecord, gone []key) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	cutoff := timeNow().Add(-e.window)
+	out = make([]logRecord, 0, len(e.recs))
+	for _, r := range e.sorted() {
+		k := key{r.target, r.id}
+		if (r.state == Delivered || r.state == Refused) && r.since.Before(cutoff) && !e.claims[k] && e.log.held[k] == 0 {
+			gone = append(gone, k)
+			continue
+		}
+		created := r.created
+		out = append(out, logRecord{At: r.since, Target: r.target, MandateID: r.id, Incarnation: r.inc, State: r.state,
+			Reason: r.reason, Cause: r.cause, Ack: r.ack, Fingerprint: r.fp, Prev: r.prev, Created: &created})
+	}
+	return out, gone
+}
+
+// compactLocked rewrites the log from a snapshot, under e.log.mu, then forgets in memory the
+// mandates the snapshot left out: the same id is a new mandate from then on.
+func (e *Engine) compactLocked() (forgotten int, fatal bool, err error) {
+	recs, gone := e.snapshot()
+	if fatal, err := e.log.rewriteLocked(e.path, recs); err != nil {
+		return 0, fatal, err
+	}
+	e.mu.Lock()
+	for _, k := range gone {
+		r := e.recs[k]
+		delete(e.recs, k)
+		if e.ids[k.id] == r {
+			delete(e.ids, k.id)
+		}
+	}
+	e.mu.Unlock()
+	return len(gone), false, nil
+}
+
+// need is the room k must hold, once in state s, for the records it may still write (under
+// e.mu). Accepted under its claim, it may write delivering, an uncertain final record and a late
+// answer with an Ack; delivering, a final record with an Ack, or an uncertain one and its late
+// answer; uncertain with its call still running, a late answer; uncertain otherwise, the record of
+// a reconcile (no Ack). Found accepted or delivering at an Open, it writes its restart transition,
+// then a reconcile's once uncertain. callDone: the call has answered, no late answer comes.
+func (e *Engine) need(k key, s State, callDone bool) int64 {
+	calling := e.calling[k] && !callDone
+	switch s {
+	case Accepted:
+		if e.claims[k] {
+			return 2*e.small + e.big
+		}
+		return e.small
+	case Delivering:
+		if calling {
+			return e.small + e.big
+		}
+		return 2 * e.small
+	case Uncertain:
+		if calling {
+			return e.big
+		}
+		return e.small
+	}
+	return 0
+}
+
+// rehold sets the room k holds from its state in memory (under e.log.mu).
+func (e *Engine) rehold(k key) {
+	e.mu.Lock()
+	n := int64(0)
+	if r := e.recs[k]; r != nil {
+		n = e.need(k, r.state, false)
+	}
+	e.mu.Unlock()
+	e.log.setHeld(k, n)
+}
+
+// fit marshals lr as one line within limit bytes, cutting its Ack's text (marked Truncated), then
+// its reason, as needed. A record with nothing left to cut is returned whole: the append decides.
+func fit(lr *logRecord, limit int64) ([]byte, error) {
+	for {
+		b, err := json.Marshal(lr)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, '\n')
+		over := int64(len(b)) - limit
+		switch {
+		case over <= 0:
+			return b, nil
+		case lr.Ack != nil && lr.Ack.Text != "":
+			a := *lr.Ack
+			a.Text, a.Truncated = cut(a.Text, over), true
+			lr.Ack = &a
+		case lr.Reason != "":
+			lr.Reason = cut(lr.Reason, over)
+		default:
+			return b, nil
+		}
+	}
+}
+
+// cut drops at least over bytes from the end of s, on a rune boundary.
+func cut(s string, over int64) string {
+	n := max(len(s)-int(over), 0)
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // Fingerprint names what a mandate asks: its target, incarnation and text, each prefixed by its
@@ -147,18 +344,50 @@ func Fingerprint(m Mandate) string {
 
 // transition writes one state change to the log, then applies it; nothing changes if the write
 // fails.
-func (e *Engine) transition(k key, inc string, to State, reason string, ack *Ack) error {
-	return e.transitionFP(k, inc, to, reason, ack, "")
+func (e *Engine) transition(k key, inc string, to State, reason, cause string, ack *Ack) error {
+	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Cause: cause, Ack: ack}, false)
 }
 
 func (e *Engine) transitionFP(k key, inc string, to State, reason string, ack *Ack, fp string) error {
-	lr := logRecord{At: time.Now().UTC(), Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp}
-	if err := e.log.append(lr); err != nil {
+	return e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Ack: ack, Fingerprint: fp}, false)
+}
+
+// write appends lr and applies it, both under e.log.mu: a compaction's snapshot always holds every
+// record written. A new mandate the log has no room for first tries a compaction (at most once a
+// minute once one did not help), which forgets the finished mandates past the window.
+func (e *Engine) write(lr logRecord, callDone bool) error {
+	lr.At = timeNow().UTC()
+	limit := e.small
+	if lr.Ack != nil {
+		limit = e.big
+	}
+	b, err := fit(&lr, limit)
+	if err != nil {
 		return err
 	}
+	k, accept := key{lr.Target, lr.MandateID}, lr.State == Accepted
+	l := e.log
+	l.mu.Lock()
 	e.mu.Lock()
-	e.apply(lr)
+	next := e.need(k, lr.State, callDone)
 	e.mu.Unlock()
+	err = l.appendLocked(b, k, next, accept)
+	if rf := (*Refusal)(nil); accept && errors.As(err, &rf) && rf.Code == LogFull && !timeNow().Before(e.nextCompact) {
+		// At most one compaction a minute: each rewrites the whole log under its lock.
+		e.nextCompact = timeNow().Add(time.Minute)
+		if _, fatal, cerr := e.compactLocked(); cerr == nil || fatal {
+			err = l.appendLocked(b, k, next, accept) // a broken log refuses log-broken: nothing was sent
+		}
+	}
+	if err == nil {
+		e.mu.Lock()
+		e.apply(lr)
+		e.mu.Unlock()
+	}
+	l.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if e.notify != nil {
 		e.notify(Transition{At: lr.At, Target: lr.Target, MandateID: lr.MandateID, State: lr.State, Reason: lr.Reason})
 	}
@@ -200,7 +429,7 @@ func (e *Engine) gate(k key, fp string) (res Result, err error, done bool) {
 }
 
 func (r *record) result() Result {
-	return Result{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason, Ack: r.ack}
+	return Result{Target: r.target, MandateID: r.id, State: r.state, Reason: r.reason, Cause: r.cause, Ack: r.ack}
 }
 
 type callResult struct {
@@ -230,6 +459,12 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		return res, err
 	}
 	e.mu.Unlock()
+	// Every record of a new delivery must fit in a small record, with room left for a reason (a
+	// mandate already known was answered above: replayed, or refused).
+	if probe, _ := json.Marshal(logRecord{At: time.Now().UTC(), Target: m.Target, MandateID: m.MandateID, Incarnation: m.Incarnation,
+		State: Uncertain, Cause: CauseLogWrite, Fingerprint: fp}); int64(len(probe)) > e.small/2 {
+		return Result{}, &Refusal{BadMandate, fmt.Sprintf("its mandate id, target and incarnation take %d bytes of a log record, bound %d", len(probe), e.small/2)}
+	}
 
 	inc, err := t.Incarnation()
 	if err != nil {
@@ -274,16 +509,22 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 	e.idClaim[k.id] = idHold{k, fp}
 	e.mu.Unlock()
 	release := func() {
+		e.log.mu.Lock()
 		e.mu.Lock()
 		delete(e.running, m.Target)
 		delete(e.calling, k)
 		e.mu.Unlock()
+		e.rehold(k) // no late answer can come now
+		e.log.mu.Unlock()
 		<-e.slots
 	}
 	for _, s := range []State{Accepted, Delivering} {
 		if err := e.transitionFP(k, inc, s, "", nil, fp); err != nil {
 			e.unclaim(k)
 			release()
+			if errors.Is(err, errLogFull) { // the adapter was not called: nothing was sent
+				err = &Refusal{LogFull, err.Error()}
+			}
 			return Result{}, err
 		}
 	}
@@ -314,19 +555,27 @@ func (e *Engine) Deliver(ctx context.Context, m Mandate) (Result, error) {
 		if !cl.returned {
 			cl.abandoned = true
 			e.mu.Unlock()
-			res, err := e.finish(k, inc, Uncertain, "no answer within the delivery deadline: "+cctx.Err().Error(), nil)
+			res, err := e.finish(k, inc, Uncertain, "no answer within the delivery deadline: "+cctx.Err().Error(), CauseDeadline, nil)
 			close(cl.finished)
 			return res, err
 		}
 		e.mu.Unlock()
 		<-cl.answered
 	}
-	to, reason, ack := outcome(cl.res)
+	to, reason, cause, ack := outcome(cl.res)
+	if cause == CauseAdapterError {
+		e.mu.Lock()
+		stopping := e.stopping
+		e.mu.Unlock()
+		if stopping {
+			reason, cause = "stop: ixmux stopped with the delivery under way; "+reason, CauseRestart
+		}
+	}
 	if testHookBeforeFinish != nil {
 		testHookBeforeFinish()
 	}
 	// @ai:invariant a call leaves calling only once its final state is written, so Close cannot release the log between an adapter's success and its record [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForTheFinalWrite]
-	res, err := e.finish(k, inc, to, reason, ack)
+	res, err := e.finish(k, inc, to, reason, cause, ack)
 	release()
 	return res, err
 }
@@ -342,20 +591,22 @@ var testHookMandateRead func()
 
 // outcome maps an adapter's answer to a state: an error wrapping ErrRefused is certain, any
 // other error leaves the outcome unknown.
-func outcome(c callResult) (State, string, *Ack) {
+func outcome(c callResult) (to State, reason, cause string, ack *Ack) {
 	switch {
 	case c.err == nil:
-		return Delivered, "", &c.ack
+		return Delivered, "", "", &c.ack
 	case errors.Is(c.err, ErrRefused):
-		return Refused, c.err.Error(), nil
+		return Refused, c.err.Error(), "", nil
 	}
-	return Uncertain, "adapter error, outcome unknown: " + c.err.Error(), nil
+	return Uncertain, "adapter error, outcome unknown: " + c.err.Error(), CauseAdapterError, nil
 }
 
 // observeLate records the answer of an adapter call that returned after its caller's deadline.
 // A certain answer settles the uncertain delivery; an unknown one is logged and leaves it so.
+// @ai:invariant a late error during a stop keeps the uncertain mandate's first transition and cause, compacted or not [T:test conf:0.85 src:go/ixmux/deliver/latestop_test.go:TestALateErrorDuringAStopKeepsTheDeadlineAndItsTransition]
+// @ai:invariant a late error keeps the reason that made the mandate uncertain, compacted or not [T:test conf:0.85 src:go/ixmux/deliver/latestop_test.go:TestALateErrorKeepsTheDeadlinesReasonThroughACompaction]
 func (e *Engine) observeLate(k key, inc string, c callResult) {
-	to, reason, ack := outcome(c)
+	to, reason, cause, ack := outcome(c)
 	if reason == "" {
 		reason = "late answer of the adapter after the deadline"
 	} else {
@@ -364,21 +615,37 @@ func (e *Engine) observeLate(k key, inc string, c callResult) {
 	e.mu.Lock()
 	r := e.recs[k]
 	still := r != nil && r.state == Uncertain && !e.claims[k]
+	var prev State
+	if still && to == Uncertain {
+		// An unknown late answer leaves the mandate uncertain: the record keeps the transition
+		// that made it so (Prev) and its reason, then the late one, compacted or not. During a
+		// stop the error is the stop's, not the target's: the first cause stays.
+		prev = r.prev
+		reason = r.reason + "; then " + reason
+		if e.stopping {
+			cause = r.cause
+		}
+	}
 	e.mu.Unlock()
-	if still {
-		e.transition(k, inc, to, reason, ack) // a failed write leaves it uncertain, as a restart would
+	if still { // a failed write leaves it uncertain, as a restart would
+		e.write(logRecord{Target: k.target, MandateID: k.id, Incarnation: inc, State: to, Reason: reason, Cause: cause, Ack: ack, Prev: prev}, true)
 	}
 }
 
 // finish records the final state of a delivery or reconcile and releases its claim. If the log
-// cannot be written, the delivery is uncertain in memory, as it will be after a restart.
-func (e *Engine) finish(k key, inc string, to State, reason string, ack *Ack) (Result, error) {
-	err := e.transition(k, inc, to, reason, ack)
+// cannot be written, the delivery is uncertain in memory, as it will be after a restart. Its error
+// is then never a refusal: the adapter (or Status) was called, and a refusal says nothing was sent.
+// @ai:invariant a delivery whose adapter was called never answers a refusal, even when another delivery broke the log [T:test conf:0.85 src:go/ixmux/deliver/r2_test.go:TestALogBrokenUnderAnotherDeliveryIsNoRefusalAfterTheCall]
+func (e *Engine) finish(k key, inc string, to State, reason, cause string, ack *Ack) (Result, error) {
+	err := e.transition(k, inc, to, reason, cause, ack)
+	if rf := (*Refusal)(nil); errors.As(err, &rf) {
+		err = fmt.Errorf("the final state was not written: %s", rf.Error())
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	r := e.recs[k]
 	if err != nil {
-		r.prev, r.state, r.reason, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), time.Now().UTC(), nil
+		r.prev, r.state, r.reason, r.cause, r.since, r.ack = r.state, Uncertain, "log write failed: "+err.Error(), CauseLogWrite, timeNow().UTC(), nil
 	}
 	delete(e.claims, k)
 	e.dropIDClaim(k)
@@ -487,9 +754,9 @@ func (e *Engine) Reconcile(ctx context.Context, target, mandateID string) (Resul
 				return Result{}, err
 			}
 			if s.o == NotReceived {
-				return e.finish(k, inc, Refused, "reconciled: the target did not receive it", nil)
+				return e.finish(k, inc, Refused, "reconciled: the target did not receive it", "", nil)
 			}
-			return e.finish(k, inc, Delivered, "reconciled: the target received it", nil)
+			return e.finish(k, inc, Delivered, "reconciled: the target received it", "", nil)
 		default:
 			why = "the target answered " + string(s.o)
 		}
@@ -579,7 +846,7 @@ func (e *Engine) entry(r *record, now time.Time) Entry {
 	if prev == "" {
 		prev = "none"
 	}
-	return Entry{Target: r.target, MandateID: r.id, Fingerprint: r.fp, State: r.state, Reason: r.reason,
+	return Entry{Target: r.target, MandateID: r.id, Fingerprint: r.fp, State: r.state, Reason: r.reason, Cause: r.cause,
 		Age: now.Sub(r.created), Since: r.since, Last: prev + "->" + string(r.state), StillRunning: e.calling[key{r.target, r.id}]}
 }
 
@@ -591,7 +858,10 @@ func (e *Engine) entry(r *record, now time.Time) Entry {
 // log would not know it (it could reconcile not-received and send again). Close may be called
 // again later. It returns log-broken, after closing, if a transition could not be written.
 // @ai:invariant the log's lock is released only once no adapter call of this engine can still take effect [T:test conf:0.85 src:go/ixmux/deliver/s2f_test.go:TestCloseKeepsTheGuardOfARunningCall]
-// @ai:invariant Close returns nil only once every transition of this engine is written [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForAReconcile]
+// @ai:invariant Close returns nil only once no transition of this engine is still being written [T:test conf:0.85 src:go/ixmux/deliver/s3b_test.go:TestCloseWaitsForAReconcile]
+// A transition the full log could not hold (errLogFull) is not written and does not break the log:
+// Close still returns nil; its delivery is uncertain in memory and is found uncertain at the next Open.
+// @ai:invariant a final record refused for lack of room leaves Close nil and its delivery uncertain after a restart [T:test conf:0.85 src:go/ixmux/deliver/logbound_review_test.go:TestAFinalRecordThatDoesNotFitIsNoRefusal]
 func (e *Engine) Close() error {
 	deadline := time.Now().Add(e.timeout)
 	e.mu.Lock()

@@ -25,7 +25,7 @@ func TestMandateReadsOneSnapshot(t *testing.T) {
 	landed := make(chan error, 1)
 	testHookMandateRead = func() {
 		testHookMandateRead = nil
-		go func() { landed <- e.transition(k, "inc", Delivered, "", &Ack{Receipt: "r", Text: "done"}) }()
+		go func() { landed <- e.transition(k, "inc", Delivered, "", "", &Ack{Receipt: "r", Text: "done"}) }()
 		select {
 		case err := <-landed: // it landed between the reads: the snapshot is broken
 			landed <- err
