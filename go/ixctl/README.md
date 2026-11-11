@@ -611,7 +611,8 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   reboot.
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Nothing connects to the port.
-- `health`: a loopback http(s) URL that must answer 2xx; any other host is refused. `health_host`
+- `health`: a loopback http(s) URL that must answer 2xx; any other host is refused, and a redirect
+  is followed only while it stays on loopback (at most 5). `health_host`
   sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
   any other host). `health_expect` is text the body must contain, such as `"name":"IxForge"`: a
   2xx from another program or version that took the port after a reboot is `down`.

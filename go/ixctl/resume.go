@@ -63,33 +63,49 @@ type resumeProbes struct {
 }
 
 func realResumeProbes() resumeProbes {
-	client := &http.Client{Timeout: 2 * time.Second}
 	return resumeProbes{
-		service: queryService,
-		health: func(u, host string) ([]byte, error) {
-			req, err := http.NewRequest(http.MethodGet, u, nil)
-			if err != nil {
-				return nil, err
-			}
-			if host != "" {
-				req.Host = host
-			}
-			resp, err := client.Do(req)
-			if err != nil {
-				return nil, err
-			}
-			defer resp.Body.Close()
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-			if resp.StatusCode/100 != 2 {
-				return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-			}
-			return body, err
-		},
+		service:   queryService,
+		health:    healthProbe(nil),
 		listening: tcpListening,
 		exists: func(p string) error {
 			_, err := os.Stat(p)
 			return err
 		},
+	}
+}
+
+// healthProbe GETs a health URL over rt (nil: the default transport) within 2 s. A redirect is
+// followed only while it stays on loopback (at most 5): the inventory's loopback promise holds
+// for every hop, not only the first.
+func healthProbe(rt http.RoundTripper) func(u, host string) ([]byte, error) {
+	client := &http.Client{Timeout: 2 * time.Second, Transport: rt,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if err := loopbackURL(req.URL.String()); err != nil {
+				return fmt.Errorf("redirect to %s leaves the loopback", req.URL.Redacted())
+			}
+			if len(via) >= 5 {
+				return errors.New("more than 5 redirects")
+			}
+			return nil
+		}}
+	return func(u, host string) ([]byte, error) {
+		req, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		if host != "" {
+			req.Host = host
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		if resp.StatusCode/100 != 2 {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return body, err
 	}
 }
 

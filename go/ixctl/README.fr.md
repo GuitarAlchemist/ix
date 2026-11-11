@@ -652,7 +652,8 @@ est `unknown`, jamais supposé démarré.
   il ne reviendra pas après le prochain redémarrage.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Rien ne se connecte au port.
-- `health` : une URL http(s) en boucle locale qui doit répondre 2xx ; tout autre hôte est refusé.
+- `health` : une URL http(s) en boucle locale qui doit répondre 2xx ; tout autre hôte est refusé, et
+  une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus).
   `health_host` fixe l'en-tête Host de la requête, pour un serveur qui filtre sur lui (le workshop
   d'IxForge répond 403 à tout autre hôte). `health_expect` est un texte que le corps doit contenir,
   par exemple `"name":"IxForge"` : un 2xx d'un autre programme ou d'une autre version qui a pris le

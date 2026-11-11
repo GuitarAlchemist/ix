@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -209,6 +210,47 @@ func TestResumeHealthChecksTheIdentity(t *testing.T) {
 	}
 	if _, err := parseResumeInventory([]byte(`{"components":[{"name":"a","listen":"127.0.0.1:1","health_expect":"x"}]}`)); err == nil {
 		t.Fatal("health_expect without health accepted")
+	}
+}
+
+// roundTrip is an http.RoundTripper made of a function: no socket, no DNS.
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A loopback health URL that redirects off the machine is not followed: the check stays on
+// loopback, as the inventory promises. The transport is a function, so the test makes no request
+// at all; it only records where the client tried to go.
+func TestResumeHealthRefusesARedirectOffLoopback(t *testing.T) {
+	for _, target := range []string{"http://outside.example/x", "http://192.0.2.1/x", "https://[2001:db8::1]/x"} {
+		var tried []string
+		rt := roundTrip(func(r *http.Request) (*http.Response, error) {
+			tried = append(tried, r.URL.Host)
+			if r.URL.Hostname() == "127.0.0.1" {
+				h := http.Header{}
+				h.Set("Location", target)
+				return &http.Response{StatusCode: http.StatusFound, Header: h, Body: http.NoBody, Request: r}, nil
+			}
+			return nil, errors.New("left the machine")
+		})
+		_, err := healthProbe(rt)("http://127.0.0.1:8761/health", "")
+		if len(tried) != 1 || err == nil || !strings.Contains(err.Error(), "leaves the loopback") {
+			t.Errorf("redirect to %s: tried %v, err %v", target, tried, err)
+		}
+	}
+	// A redirect that stays on loopback is followed.
+	var tried []string
+	rt := roundTrip(func(r *http.Request) (*http.Response, error) {
+		tried = append(tried, r.URL.Path)
+		if r.URL.Path == "/old" {
+			h := http.Header{}
+			h.Set("Location", "http://localhost:8761/new")
+			return &http.Response{StatusCode: http.StatusFound, Header: h, Body: http.NoBody, Request: r}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
+	})
+	if body, err := healthProbe(rt)("http://127.0.0.1:8761/old", ""); err != nil || string(body) != "ok" || len(tried) != 2 {
+		t.Errorf("loopback redirect: %q %v %v", body, err, tried)
 	}
 }
 
