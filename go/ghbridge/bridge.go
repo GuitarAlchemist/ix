@@ -16,9 +16,12 @@ import (
 
 // Config says which comments are mandates.
 type Config struct {
-	Secret []byte  // the webhook's secret
-	Repo   string  // "owner/name": deliveries from another repository are ignored
-	Room   int     // the issue number of the dedicated room
+	Secret []byte // the webhook's secret
+	Repo   string // "owner/name": deliveries from another repository are ignored
+	Room   int    // the issue number of the dedicated room
+	// Target is the agent name this bridge delivers to: only a request whose `to` is Target
+	// is a mandate.
+	Target string
 	Allow  []int64 // numeric ids of the accounts whose comments are mandates; a login can change hands
 	// Since, when set (RFC 3339), is when the bridge started: a catch-up leaves out a comment
 	// created before it that the journal does not know.
@@ -152,13 +155,35 @@ func (b *Bridge) take(action string, c Comment, delivery, source string) (Outcom
 		if known {
 			return Duplicate, nil
 		}
-		if !b.Cfg.allowed(c.User.ID) {
+		// Only a valid request addressed to the target is a mandate. A comment without a
+		// coord block is conversation; an ack or a result is never a mandate, whoever
+		// posted it: in this room every agent posts under the operator's account.
+		co, found, perr := ParseCoord(c.Body)
+		if !found {
+			return Ignored, nil
+		}
+		refuse := func(why string) (Outcome, error) {
 			_, err := b.J.Append(Entry{At: now, CommentID: c.ID, State: Refused, Delivery: delivery,
-				Source: source, Author: c.User.Login, Note: "author is not on the allow list"})
+				Source: source, Author: c.User.Login, Note: why})
 			return RefusedBy, err
 		}
+		if perr != nil {
+			if !b.Cfg.allowed(c.User.ID) {
+				return Ignored, nil
+			}
+			return refuse("the coord block is not valid: " + perr.Error())
+		}
+		if co.Type != "request" || co.To != b.Cfg.Target {
+			return Ignored, nil
+		}
+		if !b.Cfg.allowed(c.User.ID) {
+			return refuse("author is not on the allow list")
+		}
+		if other, used := b.J.CoordOwner(co.ID); used {
+			return refuse(fmt.Sprintf("id %s is already the id of comment %d", co.ID, other))
+		}
 		e := Entry{At: now, CommentID: c.ID, State: Received, Delivery: delivery, Source: source,
-			Author: c.User.Login, Body: c.Body, UpdatedAt: c.UpdatedAt}
+			Author: c.User.Login, Body: c.Body, UpdatedAt: c.UpdatedAt, CoordID: co.ID, From: co.From}
 		if source == "catch-up" && c.CreatedAt != c.UpdatedAt {
 			e.Note = "edited before the bridge saw it: the text first posted cannot be reconstructed"
 		}

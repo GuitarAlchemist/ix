@@ -29,7 +29,7 @@ type fetch func(repo string, room int) ([]ghbridge.Comment, error)
 
 func run(args []string, stdout, stderr io.Writer, get fetch) int {
 	if len(args) == 0 || args[0] != "watch" {
-		fmt.Fprintln(stderr, "usage: ghbridge watch -repo owner/name -room N -allow-id ID[,ID] -journal FILE [-since RFC3339] [-interval 30s] [-once]")
+		fmt.Fprintln(stderr, "usage: ghbridge watch -repo owner/name -room N -allow-id ID[,ID] -target NAME -journal FILE [-since RFC3339] [-interval 30s] [-once]")
 		return 2
 	}
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
@@ -37,6 +37,7 @@ func run(args []string, stdout, stderr io.Writer, get fetch) int {
 	repo := fs.String("repo", "", "owner/name of the repository")
 	room := fs.Int("room", 0, "issue or pull request number of the room")
 	allow := fs.String("allow-id", "", "numeric GitHub account ids allowed to give mandates, comma separated")
+	target := fs.String("target", "", "agent name of this bridge in the room: only a request whose `to` is this name is a mandate")
 	journal := fs.String("journal", "", "journal file; keep it outside a public repository")
 	since := fs.String("since", "", "RFC 3339 time the bridge started: older comments it never recorded are left out")
 	interval := fs.Duration("interval", 30*time.Second, "time between two reads")
@@ -56,8 +57,8 @@ func run(args []string, stdout, stderr io.Writer, get fetch) int {
 		}
 		ids = append(ids, id)
 	}
-	if *repo == "" || *room <= 0 || *journal == "" || len(ids) == 0 {
-		fmt.Fprintln(stderr, "ghbridge: -repo, -room, -allow-id and -journal are required")
+	if *repo == "" || *room <= 0 || *journal == "" || *target == "" || len(ids) == 0 {
+		fmt.Fprintln(stderr, "ghbridge: -repo, -room, -allow-id, -target and -journal are required")
 		return 2
 	}
 	if *since != "" {
@@ -83,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer, get fetch) int {
 	for _, id := range j.MadeUncertain {
 		fmt.Fprintf(stdout, "journal: comment %d was being delivered when the bridge stopped: now uncertain\n", id)
 	}
-	b := &ghbridge.Bridge{J: j, Cfg: ghbridge.Config{Repo: *repo, Room: *room, Allow: ids, Since: *since, Now: time.Now}}
+	b := &ghbridge.Bridge{J: j, Cfg: ghbridge.Config{Repo: *repo, Room: *room, Allow: ids, Target: *target, Since: *since, Now: time.Now}}
 
 	for {
 		comments, err := get(*repo, *room)

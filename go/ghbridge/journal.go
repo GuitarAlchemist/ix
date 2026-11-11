@@ -56,15 +56,19 @@ type Entry struct {
 	// Note says why: the reason of a refusal, the ack of a delivery, the text of a result,
 	// what could not be reconstructed.
 	Note string `json:"note,omitempty"`
+	// CoordID and From are the id and the declared sender of the request's coord block.
+	CoordID string `json:"coord_id,omitempty"`
+	From    string `json:"from,omitempty"`
 }
 
 // Journal is an append-only file of entries. Every append is on disk when Append returns.
 type Journal struct {
-	mu   sync.Mutex
-	f    *os.File
-	seq  int64
-	last map[int64]Entry
-	seen map[string]bool // delivery ids
+	mu    sync.Mutex
+	f     *os.File
+	seq   int64
+	last  map[int64]Entry
+	seen  map[string]bool  // delivery ids
+	coord map[string]int64 // coord id -> the comment that holds it
 	// TornTail is true when Open found a last line that was not whole JSON (a crash during
 	// a write) and left it out. The entry it held was never acknowledged.
 	TornTail bool
@@ -80,7 +84,7 @@ func OpenJournal(path string, now func() time.Time) (*Journal, error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &Journal{f: f, last: map[int64]Entry{}, seen: map[string]bool{}}
+	j := &Journal{f: f, last: map[int64]Entry{}, seen: map[string]bool{}, coord: map[string]int64{}}
 	data, err := io.ReadAll(f)
 	if err != nil {
 		f.Close()
@@ -154,10 +158,18 @@ func (j *Journal) apply(e Entry) {
 		if e.UpdatedAt == "" {
 			e.UpdatedAt = prev.UpdatedAt
 		}
+		if e.CoordID == "" {
+			e.CoordID, e.From = prev.CoordID, prev.From
+		}
 	}
 	j.last[e.CommentID] = e
 	if e.Delivery != "" {
 		j.seen[e.Delivery] = true
+	}
+	if e.CoordID != "" && e.State != Refused {
+		if _, ok := j.coord[e.CoordID]; !ok {
+			j.coord[e.CoordID] = e.CommentID
+		}
 	}
 }
 
@@ -222,4 +234,12 @@ func (j *Journal) Close() error {
 	err := j.f.Close()
 	j.f = nil
 	return err
+}
+
+// CoordOwner returns the comment that first carried a coord id, if any did.
+func (j *Journal) CoordOwner(coordID string) (int64, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	id, ok := j.coord[coordID]
+	return id, ok
 }

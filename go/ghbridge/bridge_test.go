@@ -29,7 +29,7 @@ func open(t *testing.T, path string) *Bridge {
 	}
 	t.Cleanup(func() { j.Close() })
 	return &Bridge{J: j, Cfg: Config{Secret: secret, Repo: "GuitarAlchemist/ix", Room: 42,
-		Allow: []int64{1001}, Now: clock}}
+		Allow: []int64{1001}, Target: "claude-pilot", Now: clock}}
 }
 
 func sign(body []byte) string {
@@ -41,7 +41,7 @@ func sign(body []byte) string {
 func event(action string, id int64, login, body, updated string) []byte {
 	return []byte(fmt.Sprintf(`{"action":%q,"issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ix"},
  "comment":{"id":%d,"body":%q,"created_at":"2026-11-11T19:00:00Z","updated_at":%q,"user":{"login":%q,"id":%d}}}`,
-		action, id, body, updated, login, ids[login]))
+		action, id, req(id, body), updated, login, ids[login]))
 }
 
 func post(b *Bridge, delivery string, body []byte, sig string) *httptest.ResponseRecorder {
@@ -118,8 +118,8 @@ func TestAnAuthorNotOnTheListIsRefusedOnRecordWithoutTheText(t *testing.T) {
 
 func TestAnotherRepositoryAnotherIssueOrAnotherEventIsIgnored(t *testing.T) {
 	b := open(t, filepath.Join(t.TempDir(), "j.jsonl"))
-	other := []byte(`{"action":"created","issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ga"},"comment":{"id":9,"user":{"login":"stef"}}}`)
-	elsewhere := []byte(`{"action":"created","issue":{"number":7},"repository":{"full_name":"GuitarAlchemist/ix"},"comment":{"id":9,"user":{"login":"stef"}}}`)
+	other := bytes.Replace(event("created", 9, "stef", "x", "t"), []byte("GuitarAlchemist/ix"), []byte("GuitarAlchemist/ga"), 1)
+	elsewhere := bytes.Replace(event("created", 9, "stef", "x", "t"), []byte(`"number":42`), []byte(`"number":7`), 1)
 	for _, body := range [][]byte{other, elsewhere} {
 		if out, err := b.Take("issue_comment", "d", body); err != nil || out != Ignored {
 			t.Errorf("outcome %q, %v; want ignored", out, err)
@@ -175,13 +175,13 @@ func TestAMandateGoesFromReceivedToDeliveredToResult(t *testing.T) {
 		}
 		return "ack-77", nil
 	})
-	if err != nil || !ok || e.State != Delivered || e.Note != "ack-77" || got != "build it" {
+	if err != nil || !ok || e.State != Delivered || e.Note != "ack-77" || !strings.Contains(got, "build it") {
 		t.Fatalf("delivery: %+v ok=%v err=%v body=%q", e, ok, err, got)
 	}
 	if err := b.RecordResult(4, "built"); err != nil {
 		t.Fatal(err)
 	}
-	if e, _ := b.J.Get(4); e.State != Result || e.Note != "built" || e.Body != "build it" {
+	if e, _ := b.J.Get(4); e.State != Result || e.Note != "built" || !strings.Contains(e.Body, "build it") {
 		t.Errorf("final entry %+v", e)
 	}
 }
@@ -318,13 +318,13 @@ func TestAnEditAfterDeliveryKeepsTheStateAndIsOnRecord(t *testing.T) {
 	b.DeliverNext(context.Background(), func(context.Context, Entry) (string, error) { return "ack", nil })
 	b.Take("issue_comment", "d-f", event("edited", 30, "stef", "rewritten", "2026-11-11T19:09:00Z"))
 	e, _ := b.J.Get(30)
-	if e.State != Delivered || !strings.Contains(e.Note, "after the hand-over began") || e.Body != "sent text" {
+	if e.State != Delivered || !strings.Contains(e.Note, "after the hand-over began") || !strings.Contains(e.Body, "sent text") {
 		t.Errorf("entry %+v: want delivered, the edit noted, the delivered text kept", e)
 	}
 }
 
 func comment(id int64, login, body, created, updated string) Comment {
-	c := Comment{ID: id, Body: body, CreatedAt: created, UpdatedAt: updated}
+	c := Comment{ID: id, Body: req(id, body), CreatedAt: created, UpdatedAt: updated}
 	c.User.Login = login
 	c.User.ID = ids[login]
 	return c
@@ -373,14 +373,12 @@ var ids = map[string]int64{"stef": 1001, "mallory": 2002}
 func TestTheAllowListIsTheAccountIDNotTheLogin(t *testing.T) {
 	b := open(t, filepath.Join(t.TempDir(), "j.jsonl"))
 	// Another account that took the login "stef".
-	body := []byte(`{"action":"created","issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ix"},
- "comment":{"id":50,"body":"I am stef, honest","created_at":"t","updated_at":"t","user":{"login":"stef","id":666}}}`)
+	body := bytes.Replace(event("created", 50, "stef", "I am stef, honest", "t"), []byte(`"id":1001`), []byte(`"id":666`), 1)
 	if out, _ := b.Take("issue_comment", "d-50", body); out != RefusedBy {
 		t.Errorf("same login, another account: %q, want refused", out)
 	}
 	// The allowed account under a new login.
-	body = []byte(`{"action":"created","issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ix"},
- "comment":{"id":51,"body":"renamed","created_at":"t","updated_at":"t","user":{"login":"stef-renamed","id":1001}}}`)
+	body = bytes.Replace(event("created", 51, "stef", "renamed", "t"), []byte(`"login":"stef"`), []byte(`"login":"stef-renamed"`), 1)
 	if out, _ := b.Take("issue_comment", "d-51", body); out != Recorded {
 		t.Errorf("allowed account, new login: %q, want recorded", out)
 	}
@@ -402,4 +400,9 @@ func TestACatchUpLeavesOutWhatWasPostedBeforeTheBridgeStarted(t *testing.T) {
 	if s := state(t, b, 61); s != Received {
 		t.Errorf("comment 61 is %q, want received", s)
 	}
+}
+
+// req is a valid request of the room contract, addressed to the test target, carrying text.
+func req(id int64, text string) string {
+	return fmt.Sprintf("```coord\nv: 1\nid: gaia-%04d\nfrom: gaia\nto: claude-pilot\nreply_to: none\ntype: request\nat: 2026-11-11T19:00:00Z\nstate: open\nnext: claude-pilot posts one ack\neta: unknown\n```\n\n%s", id%10000, text)
 }

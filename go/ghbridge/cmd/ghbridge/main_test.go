@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,8 @@ import (
 )
 
 func c(id, author int64, body, at string) ghbridge.Comment {
-	x := ghbridge.Comment{ID: id, Body: body, CreatedAt: at, UpdatedAt: at}
+	x := ghbridge.Comment{ID: id, CreatedAt: at, UpdatedAt: at}
+	x.Body = fmt.Sprintf("```coord\nv: 1\nid: gaia-%04d\nfrom: gaia\nto: claude-pilot\nreply_to: none\ntype: request\nat: 2026-11-11T19:00:00Z\nstate: open\nnext: claude-pilot posts one ack\neta: unknown\n```\n\n%s", id, body)
 	x.User.ID = author
 	return x
 }
@@ -20,7 +22,7 @@ func c(id, author int64, body, at string) ghbridge.Comment {
 func watch(t *testing.T, journal string, get fetch, extra ...string) (int, string, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	args := append([]string{"watch", "-repo", "o/r", "-room", "388", "-allow-id", "1001", "-journal", journal, "-once"}, extra...)
+	args := append([]string{"watch", "-repo", "o/r", "-room", "388", "-allow-id", "1001", "-target", "claude-pilot", "-journal", journal, "-once"}, extra...)
 	code := run(args, &out, &errOut, get)
 	return code, out.String(), errOut.String()
 }
