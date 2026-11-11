@@ -200,8 +200,8 @@ Le comportement est documenté et testé. L'option d'un renommage POSIX est rés
 ## 8. Limites restantes
 
 - **P3-7** : pendant un arrêt, une vraie erreur d'une autre cible qu'un `claude` (s'il en existe un jour) serait notée avec la cause `restart`. Son `reason` garde le texte d'origine, et la conséquence reste « ne pas renvoyer ». Aucune autre cible n'existe aujourd'hui.
-- **Le glob des transcripts** n'est pas borné : un dossier de projet avec des milliers de fichiers ralentit l'inventaire, sans le rendre faux.
-- **`LogMandate.Answered`** est lu mais pas exposé.
+- ~~Le glob des transcripts n'est pas borné~~ et ~~`LogMandate.Answered` est lu mais pas exposé~~ : traités en R2 (section 9).
+- **P2-5 n'a qu'une preuve Linux** (section 9).
 - **Les sessions cloud, les volets wmux et les services Windows** ne sont pas lus ; `gaps` le dit à chaque rapport.
 - **Le format de `~/.claude/sessions/*.json`** n'est pas un contrat (section 5).
 - **Gaïa n'est pas raccordée** : aucun test réel depuis elle.
@@ -211,3 +211,63 @@ Le comportement est documenté et testé. L'option d'un renommage POSIX est rés
 **READY-FOR-PILOT, côté ixmux, en lecture seule.** L'inventaire ne présente jamais une session injoignable comme active : la preuve d'activité exige un pid vivant créé à l'heure déclarée, sur cette machine, et tout le reste est `unreachable` ou `unknown`. Il ne renvoie ni ne modifie rien ; un mandat incertain n'est jamais omis et le conseil est de ne jamais le renvoyer. Le retour arrière est simple : la sous-commande et l'outil MCP sont nouveaux, et le format du journal n'a pas changé.
 
 Ce que le verdict ne couvre pas : Gaïa (non raccordée), les sessions cloud, wmux, et tout push ou merge, qui attendent l'opérateur (section 6).
+
+## 9. R2 : bornes de la recherche des transcripts (GAIA-IX-INVENTORY-BOUNDS-R2)
+
+[Gaïa] La demande : borner la recherche des transcripts (fichiers, octets, temps, configurables), avec un statut partiel explicite et jamais de faux « complet » ; ne plus lire `LogMandate.Answered` ; tester sur de grosses fixtures, avec erreurs et épuisement, sans fuite de contenu privé ; examiner la preuve de P2-5 ; Windows seulement, sans WSL. [opérateur] Feu vert le 2026-11-10, dans ses propres mots, par AskUserQuestion : « Oui, toute la tranche ». Commit `a6cc36e1`.
+
+### La recherche bornée
+
+- **Chemin direct d'abord.** Un seul `stat`, à `projects/<cwd, tout caractère autre qu'une lettre ou un chiffre ASCII changé en '-'>/<id>.jsonl`. Sur ce poste, cette règle trouve le transcript de 12 sessions sur 12 : PROUVÉ, en ne lisant que les métadonnées.
+- **Repli.** Les autres dossiers de `projects/`, listés une seule fois par lecture, avec un `stat` par dossier.
+- **Budget, un seul par lecture.**
+  - Le budget compte les fichiers : 4096 chemins examinés et entrées listées.
+  - Il compte aussi le temps : 2 s, mesurées par `Options.Now`, ce qui rend le test déterministe.
+  - Les deux se règlent par `--transcript-files` et `--transcript-time`. Une valeur nulle est refusée (code 2).
+- **Octets** : aucun octet de transcript n'est lu, seulement les dates de modification. Le budget en octets vaut donc zéro par construction. Un test place un texte privé dans chaque transcript et vérifie qu'aucun rapport ne le porte. Les enregistrements de session restent bornés à 64 Kio chacun et à 256 au total.
+- **Statut explicite.** `declared.transcript` vaut `found`, `none` (recherche menée jusqu'au bout), `search-cut` ou `unreadable`. Une recherche coupée ou en échec :
+  - pose un `problem` (la dernière activité est celle de l'enregistrement, peut-être plus ancienne) ;
+  - est comptée dans `omitted` ;
+  - et rend `partial: true`. Le rapport ne se dit complet que si rien n'a été laissé de côté.
+
+| Test | Rouge sur l'ancien code |
+|---|---|
+| `TestTheTranscriptAtItsProjectPathIsOneStat` (1000 projets leurres, budget 1) | oui : pas de `declared.transcript` |
+| `TestATranscriptElsewhereIsFoundWithinTheBudget` | oui |
+| `TestASpentFileBudgetIsPartialNeverComplete` (2 sessions, 1000 leurres, budget 100, partagé) | oui : le glob trouvait ce que le budget ne doit pas atteindre |
+| `TestASpentTimeBudgetIsPartial` (horloge qui avance d'1 s par lecture, budget 5 s) | oui |
+| `TestNoTranscriptIsNotPartial` | oui |
+| `TestAnUnreadableProjectsDirectoryIsPartial` (`projects` est un fichier) | oui |
+| `TestACutListingIsNeverNone` (300 fichiers, aucun dossier, budget 50) | oui ; seul à tuer le mutant « coupé pris pour none » |
+| `TestInventoryTranscriptBudgetFlags` (commande, JSON et texte) | oui : option inconnue |
+
+**Mutants** : 6 sur 6 tués (pas de budget, liste coupée prise pour `none`, jamais `partial`, pas d'échéance, coupe non comptée, pas de chemin direct).
+
+**Mesure réelle** : `ixmux inventory` sur ce poste : 12 sessions `found`, `partial: false`, environ 50 ms (266 ms au premier lancement). Avec `--transcript-files 1` : 11 recherches coupées, `partial: true`.
+
+**`LogMandate.Answered`** est retiré : le rapport ne s'en servait pas.
+
+**Validations** : sous Windows, `go vet` et les 6 paquets passent sur `a6cc36e1`. **Linux n'a pas été lancé pour cette tranche** (pas de WSL, par le mandat). La preuve Linux viendra de la CI après un push que l'opérateur autorisera.
+
+### Examen de la preuve P2-5 (le test FIFO)
+
+- **Nom exact** : `TestAFIFOInPlaceOfAFileNeverHangs`, dans `go/ixmux/inventory/fifo_linux_test.go`.
+- **Sous Windows, il n'existe pas.**
+  - Le suffixe `_linux_test.go` l'exclut de la compilation : `go list -f '{{.TestGoFiles}}' ./inventory/` donne `[inventory_test.go transcript_test.go]` sous Windows, `[fifo_linux_test.go …]` avec `GOOS=linux`.
+  - `go test -count=1 -run TestAFIFOInPlaceOfAFileNeverHangs -v ./inventory/` répond `ok … [no tests to run]`. Un résultat Windows « ok » à cet endroit ne prouve donc rien.
+  - `GOOS=linux go vet ./inventory/` passe : cela prouve seulement que le test compile pour Linux.
+- **Sous Linux**, deux preuves, toutes deux par WSL2 le 2026-11-10 :
+  1. **Le rouge puis le vert, avant le commit `94de6b8e`.** La commande, retrouvée mot pour mot dans la transcription de la session : `wsl.exe -d Ubuntu -- bash -lc "… go test -count=1 -timeout 60s -v -run 'TestAFIFO' ./inventory"`, lancée deux fois.
+     - La première fois, `openshared_unix.go` était remplacé à la main par un `os.Open` bloquant. Résultat : `fifo_linux_test.go:36: the inventory hung on a FIFO`, `--- FAIL: TestAFIFOInPlaceOfAFileNeverHangs (10.01s)`, paquet `FAIL` en 10,013 s.
+     - Le fichier a ensuite été restauré (`git diff` vide). Résultat : `--- PASS: TestAFIFOInPlaceOfAFileNeverHangs (0.00s)` et `ok … inventory 0.003s`.
+
+     **Le chiffre de 0,003 s vient de là.** C'est le temps du paquet avec ce seul test sélectionné, sans `-race`. Il est court parce qu'une FIFO ouverte en `O_NONBLOCK` rend la main tout de suite, puis est refusée. La ligne `--- PASS` le nomme : il a vraiment tourné. Ce n'est ni un cache (`-count=1`) ni un « no tests to run ».
+  2. **La suite complète** : `go test -race -count=1 ./...`. Le paquet `inventory` y passe en 2,067 s sur `03d916b0`. Le test n'a pas de `t.Skip`.
+- **Assertions réelles** :
+  - quatre FIFO (`mkfifo`) remplacent un enregistrement de session, `ixmux.json` et `commands.jsonl`, plus un lien symbolique vers une FIFO ;
+  - chacune doit donner une seule entrée `unreadable` ;
+  - le tout doit rendre la main en moins de 10 s, sinon `t.Fatal`.
+
+  Avec une ouverture bloquante, il restait bloqué 10 s, puis échouait.
+- **Unitaire ou intégration** : c'est un test d'intégration du paquet `inventory`. Il passe par `Collect`, avec de vraies FIFO du système de fichiers et une fausse table de processus. Il ne lance ni ixmux ni `claude`. Aucun test unitaire de `deliver.OpenRegular` n'existe seul.
+- **Limite** : sous Windows, la branche « pas un fichier ordinaire » d'`OpenRegular` n'a aucun test, faute de FIFO nommée dans un dossier. Seule la CI Linux, ou une passe WSL autorisée, la vérifie.
