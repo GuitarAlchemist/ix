@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,5 +196,28 @@ func TestASetupFailureUnderTheSCMIsAStartFailure(t *testing.T) {
 	first, ok := <-s
 	if !ok || first.State != svc.StartPending {
 		t.Fatalf("first status %+v %v", first, ok)
+	}
+}
+
+// Execute only the fail-closed install prefix, never SCM or ACL mutations.
+func TestInstallPlanExistingDirectoryFailsClosedInPowerShell(t *testing.T) {
+	shell, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell 7 unavailable")
+	}
+	dir := t.TempDir()
+	sentinel := filepath.Join(dir, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := installPlan(planOptions{service: "ixctl", exe: `C:\unused\ixctl.exe`, dir: dir, clientUser: `HOST\stef`, name: "solo"})
+	prefix := p[strings.Index(p, "# install"):strings.Index(p, "New-Item")]
+	out, err := exec.Command(shell, "-NoProfile", "-NonInteractive", "-Command", prefix+"\nWrite-Output 'UNSAFE_CONTINUE'").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "State directory already exists") || strings.Contains(string(out), "UNSAFE_CONTINUE") {
+		t.Fatalf("guard did not stop installation: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil || string(got) != "unchanged" {
+		t.Fatalf("existing state changed: %q %v", got, err)
 	}
 }

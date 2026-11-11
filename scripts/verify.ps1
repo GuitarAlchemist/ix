@@ -32,5 +32,14 @@ Invoke-Checked 'cargo' @('clippy', '--workspace', '--all-targets', '--', '-D', '
 
 Invoke-Checked 'cargo' @('test', '--workspace')
 
+# Every Go module under go/, the way CI's go-modules job finds them, so a
+# module added later is covered here too. No -race: it needs cgo, which a
+# Windows machine without a C toolchain lacks; CI's ubuntu row runs it.
+foreach ($mod in Get-ChildItem (Join-Path $PSScriptRoot '..\go') -Filter go.mod -Recurse -Depth 1) {
+    Write-Host "[verify] go vet + go test in $($mod.Directory.Name)"
+    Invoke-Checked 'go' @('-C', $mod.DirectoryName, 'vet', './...')
+    Invoke-Checked 'go' @('-C', $mod.DirectoryName, 'test', '-count=1', './...')
+}
+
 Write-Host '[verify] running supervised-loop preflight regression harness'
 Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-supervised-loop-preflight.ps1'))

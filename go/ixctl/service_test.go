@@ -582,3 +582,20 @@ func TestThePlanNamesTheSpecByItsAbsolutePath(t *testing.T) {
 		t.Fatalf("plan:\n%s", out.String())
 	}
 }
+
+func TestInstallPlanRefusesExistingStateBeforeChangingAnything(t *testing.T) {
+	p := installPlan(planOptions{service: "ixctl", exe: `C:\Program Files\ixctl\ixctl.exe`, dir: `C:\ProgramData\ixctl`, clientUser: `HOST\stef`, name: "solo"})
+	guard := `if (Test-Path -LiteralPath "C:\ProgramData\ixctl") { throw 'State directory already exists; choose a new directory or review and remove it manually before installing.' }`
+	at := strings.Index(p, guard)
+	if at < 0 {
+		t.Fatal("install must refuse an existing state directory")
+	}
+	for _, mutation := range []string{"New-Item", "Copy-Item", "sc.exe create"} {
+		if at > strings.Index(p, mutation) {
+			t.Fatalf("state directory guard follows %s", mutation)
+		}
+	}
+	if !strings.Contains(p, `New-Item -ItemType Directory "C:\ProgramData\ixctl"`) || strings.Contains(p, `New-Item -ItemType Directory -Force "C:\ProgramData\ixctl"`) {
+		t.Fatal("state directory creation must fail if another installer created it after the guard")
+	}
+}

@@ -444,13 +444,16 @@ func installPlan(o planOptions) string {
 	w("")
 	w("# install")
 	w("%s", prefs)
+	// Never reuse an existing state tree: /grant:r only replaces the named accounts,
+	// so explicit grants to other users would survive and expose the bearer token.
+	w(`if (Test-Path -LiteralPath "%s") { throw 'State directory already exists; choose a new directory or review and remove it manually before installing.' }`, o.dir)
 	w(`New-Item -ItemType Directory -Force "%s"`, o.exe[:max(strings.LastIndex(o.exe, `\`), 0)])
 	from := o.from
 	if from == "" {
 		from = "ixctl.exe"
 	}
 	w(`Copy-Item "%s" "%s"`, from, o.exe)
-	w(`New-Item -ItemType Directory -Force "%s"`, o.dir)
+	w(`New-Item -ItemType Directory "%s"`, o.dir)
 	w(`Copy-Item "%s" "%s"`, spec, svcSpec)
 	w(`sc.exe create %s binPath= '%s' obj= "%s" start= demand DisplayName= "IX control plane"`, o.service, bin, acct)
 	w(`sc.exe sidtype %s unrestricted`, o.service)
