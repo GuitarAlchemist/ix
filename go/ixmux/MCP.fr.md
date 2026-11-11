@@ -49,7 +49,7 @@ Démonstration sans client, depuis PowerShell, une fois `ixmux serve` lancé sur
 | `initialize` | `params` exige `protocolVersion` (une chaîne), `capabilities` (un objet) et `clientInfo` `{name, version}`, sinon -32602. `protocolVersion` : celle demandée si l'adaptateur la tient (`2025-11-25`, `2025-06-18`), sinon `2025-11-25`. Les versions plus anciennes ne sont pas proposées : leurs lots sont refusés ici. `capabilities.tools.listChanged` vaut faux. `serverInfo` est `ixmux` et sa version. Elle marche sans ixmux. |
 | `notifications/initialized` | Une notification : pas de réponse. Toute autre notification est ignorée. |
 | `ping` | `{}`. |
-| `tools/list` | Les trois outils ci-dessous, avec leur `inputSchema`. |
+| `tools/list` | Les quatre outils ci-dessous, avec leur `inputSchema`. |
 | `tools/call` | `{content: [{type: "text", text}], structuredContent, isError}`. `text` est le JSON de `structuredContent`. |
 
 Les erreurs de protocole sont des erreurs JSON-RPC, et l'adaptateur continue de lire :
@@ -68,7 +68,7 @@ Une requête sans membre `id` est une notification et n'a pas de réponse, sauf 
 Un outil qui échoue répond `isError: true`, avec un `structuredContent` `{error, detail}`. `error`
 est une raison typée : une de celles de l'adaptateur (ci-dessous), ou un code de refus connu
 d'ixmux (`mandate-id-reuse`, `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`,
-`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`…). Un code
+`in-flight`, `target-busy`, `busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, `log-full`…). Un code
 que l'adaptateur ne connaît pas devient `ixmux-error`. `detail` est le texte propre de
 l'adaptateur et s'adresse à une personne : ne jamais l'analyser. Pour un refus d'ixmux,
 l'adaptateur écrit un message par code. Aucun texte libre d'ixmux (le `detail` d'un refus, la
@@ -151,7 +151,17 @@ Entrée : `{mandate_id}`. Sortie :
 
 - `state` : `accepted`, `delivering`, `delivered`, `refused` ou `uncertain`, et `last` la
   transition qui y a mené. La raison d'ixmux n'est pas transmise (texte libre). Un mandat
-  `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`.
+  `uncertain` ne se rejoue jamais : un nouveau dépôt est refusé `uncertain-needs-reconcile`. Un
+  client ne doit pas non plus renvoyer son travail sous un autre id : `uncertain` veut dire que la
+  cible l'a peut-être pris. Rien n'est relancé automatiquement ; une personne décide, d'après la
+  sortie de la session ou une réconciliation.
+- `cause`, sur un mandat `uncertain`, dit pourquoi, dans un ensemble fermé : `deadline` (pas de
+  réponse dans le délai de livraison d'ixmux), `adapter-error` (la cible a répondu une erreur,
+  `is_error` compris), `restart` (ixmux s'est arrêté, proprement ou non, ou a redémarré pendant la livraison), `log-write-failed` (son
+  état final n'a pas pu être écrit). Un mandat passé son délai dont l'appel finit ensuite en erreur
+  pendant l'arrêt d'ixmux garde `deadline`, l'erreur ajoutée à sa `reason` ; hors arrêt il passe
+  à `adapter-error`, sa `reason` commençant toujours par celle de l'échéance. Toute autre valeur venue d'ixmux est écartée. La saturation
+  n'est pas un état : c'est un dépôt refusé, `target-busy` ou `busy`.
 - `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré avec une réponse.
   `text` fait 4 Kio au plus ; `truncated: true` dit que la réponse était plus longue et que sa fin
   manque. Un mandat passé à `delivered` par une réconciliation (la cible a dit l'avoir reçu) n'en a
@@ -163,7 +173,43 @@ Entrée : `{mandate_id}`. Sortie :
   sauf si son résultat était déjà arrivé.
 - Le résultat est lu dans le journal de commandes d'ixmux (`GET /v1/mandates/{id}`) : il survit à
   un redémarrage de l'adaptateur et à un redémarrage d'ixmux.
-- Un id inconnu donne `unknown-mandate`.
+- Un id inconnu donne `unknown-mandate` : jamais déposé, ou terminé (`delivered` ou `refused`)
+  depuis plus que la fenêtre de déduplication d'ixmux (`--dedup-window`, 720 h par défaut) et
+  oublié ; cet id est alors un nouveau mandat. Un mandat `uncertain` n'est jamais oublié.
+
+### `ixmux_inventory`
+
+Sans argument. L'outil dit ce qu'on retrouve après un plantage ou un redémarrage. Il le lit dans
+les fichiers du dossier d'état, donc il répond aussi quand ixmux est arrêté (`ixmux_status` échoue
+alors en `ixmux-unavailable`). Le rapport (`ixmux.inventory.mcp.v1`) est une vue réduite de
+`ixmux inventory --json`. Il contient :
+
+- l'entrée ixmux, avec son `incarnation` (`epoch:…`) et son `status`. `liveness` vaut `proven`
+  seulement si un processus vivant a le pid d'`ixmux.json` et a été créé au moment où ixmux a noté
+  son démarrage, à une minute près dans les deux sens (un saut d'horloge). Si `ixmux.json` dit
+  `running` mais que le pid est `absent` ou `pid-reused`, l'entrée est `unreachable` : ixmux ne
+  s'est pas arrêté proprement. `unknown` avec « read again » signifie qu'`ixmux.json` a changé
+  pendant la lecture ;
+- chaque mandat non terminé du journal de commandes : `mandate_id`, `target`, `incarnation`,
+  l'état enregistré (`state`), la `cause` (prise dans l'ensemble fermé d'`ixmux_result`) et son
+  `status` :
+  - `running` : accepté ou en livraison sous un ixmux vivant ;
+  - `uncertain` : la cible a pu agir, et une personne décide. C'est aussi le cas d'un mandat laissé
+    en livraison par un ixmux disparu : son prochain démarrage le note `uncertain`, cause `restart` ;
+  - `done` : accepté sous un ixmux disparu, donc jamais envoyé (son prochain démarrage le note
+    `refused`) ;
+  - `unknown` : son ixmux n'a pas pu être vérifié, ou a démarré pendant la lecture ;
+- `finished` : le nombre de mandats livrés ou refusés. Ils ne sont pas listés : `ixmux_result`
+  répond pour chaque id ;
+- `last_activity` et `age_s` : la dernière transition. `resume` dit ce qu'une personne peut faire ;
+  l'outil ne fait rien lui-même ;
+- `gaps` : ce que l'inventaire ne lit pas.
+
+L'outil ne transporte ni chemin, ni pid, ni adresse, ni code de sortie, ni heure de création. Il ne
+montre aucune session Claude Code de la machine, ni de `reason`, dont le texte peut venir d'une
+cible. Il lit le journal de commandes sans son verrou. Sous Windows, une compaction d'un ixmux en
+marche échoue pendant cette lecture. C'est sans dommage : le journal reste tel quel, et la compaction
+est retentée une minute plus tard.
 
 ## Arrêt
 
@@ -175,7 +221,8 @@ ixmux continue de tourner dans tous les cas.
 
 - Il n'arrête pas ixmux : `/v1/shutdown` n'est pas un outil. Il ne réconcilie pas non plus un
   mandat incertain (`/v1/mandates/{id}/reconcile` n'est pas un outil).
-- Aucun shell, aucun accès fichier hors d'`ixmux.json` et `ixmux.token`, aucun contrôle de
+- Aucun shell, aucun accès fichier hors d'`ixmux.json`, d'`ixmux.token` et, en lecture seule pour
+  `ixmux_inventory`, de `commands.jsonl` ; aucun contrôle de
   sessions WMUX, aucun tunnel, aucun service, aucun réseau au-delà de l'adresse loopback
   d'`ixmux.json`.
 - Il ne garde aucun état durable à lui : ce qu'il dit d'un mandat vient d'ixmux. Ses réponses

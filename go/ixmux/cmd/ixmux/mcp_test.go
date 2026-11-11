@@ -223,7 +223,7 @@ func TestMCPMandates(t *testing.T) {
 			t.Errorf("%s: input schema %v", tl.Name, tl.InputSchema)
 		}
 	}
-	if fmt.Sprint(names) != "[ixmux_status ixmux_submit ixmux_result]" {
+	if fmt.Sprint(names) != "[ixmux_status ixmux_submit ixmux_result ixmux_inventory]" {
 		t.Errorf("tools %v", names)
 	}
 
@@ -342,8 +342,12 @@ func TestMCPIxmuxKilledDuringATurn(t *testing.T) {
 	os.Remove(hold)
 	q := startClaude(t, state, eff)
 	m.secrets = append(m.secrets, q.token)
+	// The operator reads what the restart did with the log on ixmux's stderr.
+	if out := q.out.String(); !strings.Contains(out, "ixmux: command log: ") || !strings.Contains(out, "1 made uncertain") {
+		t.Errorf("ixmux's start output: %q, want the command log's recovery with 1 made uncertain", out)
+	}
 	res := m.resultOf("k1", "uncertain")
-	if res["mandate_id"] != "k1" {
+	if res["mandate_id"] != "k1" || res["cause"] != "restart" {
 		t.Errorf("result after the ixmux restart: %v", res)
 	}
 	rc := m.tool("ixmux_submit", submit("k1", inc, "A slow one."))

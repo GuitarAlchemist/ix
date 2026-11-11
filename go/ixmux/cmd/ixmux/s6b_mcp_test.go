@@ -374,10 +374,12 @@ func TestReceiptAfterACutPOST(t *testing.T) {
 	for _, tc := range []struct {
 		name, entry string
 		cut         bool // the POST's connection is closed without an answer; else it is held
+		internal    bool // the POST answers 500 internal (its final record could not be written)
 	}{
-		{"cut, then delivered", `{"target":"c","mandate_id":"m1","state":"delivered"}`, true},
-		{"held, uncertain", `{"target":"c","mandate_id":"m1","state":"uncertain"}`, false},
-		{"held, refused", `{"target":"c","mandate_id":"m1","state":"refused"}`, false},
+		{"cut, then delivered", `{"target":"c","mandate_id":"m1","state":"delivered"}`, true, false},
+		{"held, uncertain", `{"target":"c","mandate_id":"m1","state":"uncertain"}`, false, false},
+		{"held, refused", `{"target":"c","mandate_id":"m1","state":"refused"}`, false, false},
+		{"internal, uncertain", `{"target":"c","mandate_id":"m1","state":"uncertain","cause":"log-write-failed"}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var hold chan struct{}
@@ -385,6 +387,9 @@ func TestReceiptAfterACutPOST(t *testing.T) {
 				switch {
 				case r.URL.Path == "/v1/status":
 					w.Write([]byte(statusJSON))
+				case r.Method == "POST" && tc.internal:
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error":"internal","detail":"the command log is full"}`))
 				case r.Method == "POST" && tc.cut:
 					c, _, _ := http.NewResponseController(w).Hijack()
 					c.Close()

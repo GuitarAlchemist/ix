@@ -25,3 +25,6 @@ func syncDir(dir string) error {
 	defer d.Close()
 	return d.Sync()
 }
+
+// renameDurable is os.Rename: its durability comes from the directory sync that follows it.
+func renameDurable(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
