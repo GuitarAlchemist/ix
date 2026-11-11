@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-func queryService(string) (string, string, error) {
-	return "", "", errors.New("service checks read the Windows service manager; this system has none")
+func queryService(string) (string, string, string, error) {
+	return "", "", "", errors.New("service checks read the Windows service manager; this system has none")
 }
 
 // The listener's owner and image are read on Windows only: /proc/net/tcp gives an inode, not a

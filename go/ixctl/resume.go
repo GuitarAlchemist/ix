@@ -74,8 +74,9 @@ type resumeComponent struct {
 // resumeProbes is how a check observes the machine; tests replace it.
 type resumeProbes struct {
 	// service is a Windows service's state ("running", "stopped", …) and start type
-	// ("automatic", "automatic (delayed)", "manual", "disabled").
-	service func(name string) (state, start string, err error)
+	// ("automatic", "automatic (delayed)", "manual", "disabled"), and its configured command line
+	// (BinaryPathName), "" when it is not installed.
+	service func(name string) (state, start, image string, err error)
 	// health GETs url (with Host host when set) and returns the first 64 KiB of a 2xx body.
 	health    func(url, host string) ([]byte, error)
 	listening func(addr string) (bool, error)
@@ -191,11 +192,83 @@ func describeFields(fields map[string]string) string {
 
 // updateReceipt is the part of IxForge's receipt (schema 1) the check correlates and reads.
 type updateReceipt struct {
-	Schema          int
-	RunID           string
-	CandidateSHA256 string
-	State           string
-	UpdatedUTC      string
+	Schema            int
+	RunID             string
+	CandidateSHA256   string
+	Service           string
+	ExpectedImagePath string
+	State             string
+	UpdatedUTC        string
+}
+
+// splitCommandLine splits a Windows service command line into its executable and argument
+// tokens, without the quotes. The executable is quoted, or unquoted and ending in .exe: an
+// unquoted one that does not is ambiguous (Windows tries each prefix up to a space, such as
+// C:\Program for C:\Program Files\x.exe). An unterminated quote, text glued to a closing quote, a
+// backslash before a quote (escape rules) or an empty line is refused, never guessed.
+func splitCommandLine(line string) (exe string, args []string, err error) {
+	var tokens []string
+	var cur strings.Builder
+	quoted, inToken, quotedExe := false, false, false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case ch == '"':
+			if i > 0 && line[i-1] == '\\' {
+				return "", nil, errors.New("a backslash escapes a quote")
+			}
+			if quoted && i+1 < len(line) && line[i+1] != ' ' && line[i+1] != '\t' {
+				return "", nil, errors.New("text follows a closing quote")
+			}
+			if len(tokens) == 0 && !inToken {
+				quotedExe = true
+			}
+			quoted, inToken = !quoted, true
+		case (ch == ' ' || ch == '\t') && !quoted:
+			if inToken {
+				tokens, inToken = append(tokens, cur.String()), false
+				cur.Reset()
+			}
+		default:
+			cur.WriteByte(ch)
+			inToken = true
+		}
+	}
+	switch {
+	case quoted:
+		return "", nil, errors.New("a quote is not closed")
+	case inToken:
+		tokens = append(tokens, cur.String())
+	}
+	switch {
+	case len(tokens) == 0 || tokens[0] == "":
+		return "", nil, errors.New("no executable")
+	case !quotedExe && !strings.HasSuffix(strings.ToLower(tokens[0]), ".exe"):
+		return "", nil, fmt.Errorf("unquoted executable %q is ambiguous", tokens[0])
+	}
+	return tokens[0], tokens[1:], nil
+}
+
+// sameServiceImage is why a receipt's ExpectedImagePath and the service's configured command line
+// differ or cannot be compared, "" when they are the same: the executable compared as a Windows
+// path (case and slash direction ignored), the arguments token by token, exactly.
+func sameServiceImage(expected, configured string) string {
+	wantExe, wantArgs, err := splitCommandLine(expected)
+	if err != nil {
+		return "its ExpectedImagePath cannot be read: " + err.Error()
+	}
+	gotExe, gotArgs, err := splitCommandLine(configured)
+	if err != nil {
+		return "the service's configured command line cannot be read: " + err.Error()
+	}
+	norm := func(p string) string { return strings.ToLower(strings.ReplaceAll(p, "/", `\`)) }
+	switch {
+	case norm(wantExe) != norm(gotExe):
+		return fmt.Sprintf("it expects %s, the service runs %s", wantExe, gotExe)
+	case strings.Join(wantArgs, "\x00") != strings.Join(gotArgs, "\x00") || len(wantArgs) != len(gotArgs):
+		return fmt.Sprintf("it expects the arguments %q, the service has %q", wantArgs, gotArgs)
+	}
+	return ""
 }
 
 var (
@@ -217,9 +290,10 @@ func readReceipt(p resumeProbes, path string) (updateReceipt, error) {
 
 // receiptUncorrelated is why a receipt cannot speak for the current install, "" when it can: its
 // schema is 1, its RunID names its directory (<DataDir>\update-<RunID>), its candidate is the one
-// the inventory expects, and no other run beside it is as recent. Anything it cannot establish
-// (an unreadable neighbour, a missing time) is a reason too.
-func receiptUncorrelated(c resumeComponent, p resumeProbes, rc updateReceipt) string {
+// the inventory expects, it names the component's service and that service's configured command
+// line (svcImage, read with svcErr), and no other run beside it is as recent. Anything it cannot
+// establish (an unreadable service or neighbour, a missing time) is a reason too.
+func receiptUncorrelated(c resumeComponent, p resumeProbes, rc updateReceipt, svcImage string, svcErr error) string {
 	sep := strings.LastIndexAny(c.Receipt, `\/`)
 	if sep < 0 {
 		return "it is not inside an update-<RunID> directory"
@@ -236,8 +310,17 @@ func receiptUncorrelated(c resumeComponent, p resumeProbes, rc updateReceipt) st
 		return fmt.Sprintf("RunID %s does not name its directory %s", rc.RunID, dirName)
 	case !strings.EqualFold(rc.CandidateSHA256, c.ReceiptCandidateSHA256):
 		return "it is about another candidate than receipt_candidate_sha256"
+	case !strings.EqualFold(rc.Service, c.Service):
+		return fmt.Sprintf("it is about service %q, not %s", rc.Service, c.Service)
+	case svcErr != nil:
+		return "the service's configured command line cannot be read: " + svcErr.Error()
+	case svcImage == "":
+		return "the service has no configured command line (not installed)"
 	case parentSep < 0:
 		return "no data directory to compare its run with the others"
+	}
+	if why := sameServiceImage(rc.ExpectedImagePath, svcImage); why != "" {
+		return why
 	}
 	mine, err := time.Parse(time.RFC3339Nano, rc.UpdatedUTC)
 	if err != nil {
@@ -268,12 +351,12 @@ func receiptUncorrelated(c resumeComponent, p resumeProbes, rc updateReceipt) st
 // state short of completed or rolled_back is degraded, an unknown state is unknown. completed
 // and rolled_back add a line only: a record never raises the verdict. An unreadable or
 // uncorrelated receipt is unknown, whatever its state.
-func receiptVerdict(c resumeComponent, p resumeProbes) (verdict, line string) {
+func receiptVerdict(c resumeComponent, p resumeProbes, svcImage string, svcErr error) (verdict, line string) {
 	rc, err := readReceipt(p, c.Receipt)
 	if err != nil {
 		return verdictUnknown, err.Error()
 	}
-	if why := receiptUncorrelated(c, p, rc); why != "" {
+	if why := receiptUncorrelated(c, p, rc, svcImage, svcErr); why != "" {
 		return verdictUnknown, fmt.Sprintf("not correlated with the current install (%s): its state %q is not applied", why, rc.State)
 	}
 	switch rc.State {
@@ -394,6 +477,8 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			return nil, fmt.Errorf("inventory: %s listen_image is a file name, not a path", c.Name)
 		case c.Receipt != "" && !receiptSHA256.MatchString(c.ReceiptCandidateSHA256):
 			return nil, fmt.Errorf("inventory: %s receipt needs receipt_candidate_sha256, 64 hex digits", c.Name)
+		case c.Receipt != "" && c.Service == "":
+			return nil, fmt.Errorf("inventory: %s receipt needs service, whose configured command line it is compared with", c.Name)
 		case c.Receipt == "" && c.ReceiptCandidateSHA256 != "":
 			return nil, fmt.Errorf("inventory: %s has receipt_candidate_sha256 without receipt", c.Name)
 		}
@@ -474,8 +559,10 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 			}
 			r.Checks = append(r.Checks, line)
 		}
+		svcImage, svcErr := "", error(nil)
 		if c.Service != "" {
-			state, start, err := p.service(c.Service)
+			state, start, image, err := p.service(c.Service)
+			svcImage, svcErr = image, err
 			switch {
 			case err != nil:
 				worse(verdictUnknown, fmt.Sprintf("service %s: %v", c.Service, err))
@@ -527,7 +614,7 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 			}
 		}
 		if c.Receipt != "" {
-			v, line := receiptVerdict(c, p)
+			v, line := receiptVerdict(c, p, svcImage, svcErr)
 			worse(v, fmt.Sprintf("update receipt %s: %s", c.Receipt, line))
 		}
 		for _, d := range c.Durable {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -19,15 +20,26 @@ const (
 	otherSHA     = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
 )
 
+// configuredImage is the fake service's configured command line, and what a receipt of this
+// install expects.
+const configuredImage = `"C:\ProgramData\ixctl\ixctl.exe" service run "ixctl-trial" --workshop-config "C:\ProgramData\ixctl\workshop\config.json"`
+
 func receiptJSON(run, sha, state, updated string) string {
-	return `{"Schema":1,"RunID":"` + run + `","CandidateSHA256":"` + sha + `","State":"` + state + `","UpdatedUTC":"` + updated + `"}`
+	return receiptJSONFor(run, sha, "ixctl", configuredImage, state, updated)
+}
+
+func receiptJSONFor(run, sha, service, image, state, updated string) string {
+	img, _ := json.Marshal(image)
+	return `{"Schema":1,"RunID":"` + run + `","CandidateSHA256":"` + sha + `","Service":"` + service +
+		`","ExpectedImagePath":` + string(img) + `,"State":"` + state + `","UpdatedUTC":"` + updated + `"}`
 }
 
 // receiptProbes serves files (path to content; a missing path is os.ErrNotExist), lists the data
 // directory's entries, and answers health with healthErr.
 func receiptProbes(t *testing.T, files map[string]string, entries []string, healthErr error) resumeProbes {
 	return resumeProbes{
-		health: func(string, string) ([]byte, error) { return []byte(`{}`), healthErr },
+		health:  func(string, string) ([]byte, error) { return []byte(`{}`), healthErr },
+		service: func(string) (string, string, string, error) { return "running", "automatic", configuredImage, nil },
 		readFile: func(path string) ([]byte, error) {
 			b, ok := files[path]
 			if !ok {
@@ -44,7 +56,7 @@ func receiptProbes(t *testing.T, files map[string]string, entries []string, heal
 	}
 }
 
-var receiptInventory = `{"components":[{"name":"workshop","health":"` + brandingURL + `","receipt":"` + receiptPath +
+var receiptInventory = `{"components":[{"name":"workshop","service":"ixctl","health":"` + brandingURL + `","receipt":"` + receiptPath +
 	`","receipt_candidate_sha256":"` + candidateSHA + `"}]}`
 
 // The updater's receipt is a record, never proof of the current state: once correlated, it can

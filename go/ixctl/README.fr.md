@@ -684,6 +684,11 @@ est `unknown`, jamais supposé démarré.
   `receipt_candidate_sha256` (obligatoire), et aucune autre exécution `update-*` à côté aussi récente
   ou plus récente. Sinon il donne `unknown`, son état affiché mais pas appliqué : un ancien
   `reconciliation_required` ou le reçu d'un autre candidat ne décide rien.
+  Un reçu demande aussi `service` : son `Service` doit le nommer, et son `ExpectedImagePath` doit être la
+  ligne de commande configurée de ce service (l'exécutable comparé comme un chemin Windows, sans
+  tenir compte de la casse ni du sens des barres ; les arguments un à un, exactement). Un exécutable
+  sans guillemets qui contient une espace, une ligne mal formée ou un service dont la configuration
+  ne se lit pas donnent `unknown`.
 - `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
 - `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle
   est refusé.

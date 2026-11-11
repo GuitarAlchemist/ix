@@ -15,32 +15,33 @@ import (
 
 // queryService reads a service's state and start type with query rights only
 // (SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS|SERVICE_QUERY_CONFIG): no elevation, no control.
-func queryService(name string) (state, start string, err error) {
+// image is the configured command line (BinaryPathName), read from the same configuration.
+func queryService(name string) (state, start, image string, err error) {
 	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer windows.CloseServiceHandle(m)
 	n, err := windows.UTF16PtrFromString(name)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	h, err := windows.OpenService(m, n, windows.SERVICE_QUERY_STATUS|windows.SERVICE_QUERY_CONFIG)
 	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-		return "not installed", "none", nil
+		return "not installed", "none", "", nil
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	s := &mgr.Service{Name: name, Handle: h}
 	defer s.Close()
 	st, err := s.Query()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	cfg, err := s.Config()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	state = map[svc.State]string{
 		svc.Stopped: "stopped", svc.StartPending: "start pending", svc.StopPending: "stop pending",
@@ -60,7 +61,7 @@ func queryService(name string) (state, start string, err error) {
 	default:
 		start = "type " + strconv.Itoa(int(cfg.StartType))
 	}
-	return state, start, nil
+	return state, start, cfg.BinaryPathName, nil
 }
 
 var procGetExtendedTcpTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")

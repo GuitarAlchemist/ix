@@ -639,6 +639,10 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   that names its directory, `CandidateSHA256` equal to `receipt_candidate_sha256` (required), and
   no other `update-*` run beside it as recent or newer. Otherwise it is `unknown`, its state shown
   and not applied: an old `reconciliation_required` or another candidate's receipt decides nothing.
+  A receipt also needs `service`: its `Service` must name it, and its `ExpectedImagePath` must be that
+  service's configured command line (the executable compared as a Windows path, case and slashes
+  ignored; the arguments token by token, exactly). An unquoted executable with a space, a malformed
+  line or a service whose configuration cannot be read is `unknown`.
 - `durable`: where the component's state lives, reported present or missing, never opened.
 - `after`: the start order; a component after one that is down says so. A cycle is refused.
 - `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human

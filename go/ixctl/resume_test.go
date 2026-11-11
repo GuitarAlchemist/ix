@@ -64,12 +64,12 @@ func TestResumeInventoryRefusals(t *testing.T) {
 
 func fakeProbes(services map[string][2]string, listening map[string]bool, healthy map[string]error) resumeProbes {
 	return resumeProbes{
-		service: func(name string) (string, string, error) {
+		service: func(name string) (string, string, string, error) {
 			s, ok := services[name]
 			if !ok {
-				return "", "", errors.New("access is denied")
+				return "", "", "", errors.New("access is denied")
 			}
-			return s[0], s[1], nil
+			return s[0], s[1], "", nil
 		},
 		health:    func(u, _ string) ([]byte, error) { return nil, healthy[u] },
 		listening: func(a string) (bool, error) { return listening[a], nil },
@@ -166,11 +166,11 @@ func TestQueryServiceReadsARealService(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows service manager")
 	}
-	state, start, err := queryService("EventLog")
-	if err != nil || state != "running" || !strings.HasPrefix(start, "automatic") {
-		t.Fatalf("EventLog: %q %q %v", state, start, err)
+	state, start, image, err := queryService("EventLog")
+	if err != nil || state != "running" || !strings.HasPrefix(start, "automatic") || !strings.Contains(strings.ToLower(image), "svchost.exe") {
+		t.Fatalf("EventLog: %q %q %q %v", state, start, image, err)
 	}
-	if state, _, err := queryService("ixctl-resume-check-no-such-service"); err != nil || state != "not installed" {
+	if state, _, _, err := queryService("ixctl-resume-check-no-such-service"); err != nil || state != "not installed" {
 		t.Fatalf("missing service: %q %v", state, err)
 	}
 }
