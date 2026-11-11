@@ -153,7 +153,8 @@ Input: `{mandate_id}`. Output:
 - `cause`, on an `uncertain` mandate, says why, from a closed set: `deadline` (no answer within
   ixmux's delivery deadline), `adapter-error` (the target answered an error, `is_error` included),
   `restart` (ixmux stopped, cleanly or not, or restarted with the delivery under way), `log-write-failed` (its final state
-  could not be written). Any other value from ixmux is left out. Saturation is no state: it is a
+  could not be written). A mandate past its deadline whose call then ends in an error while ixmux
+  stops keeps `deadline`, the error added to its `reason`. Any other value from ixmux is left out. Saturation is no state: it is a
   refused submission, `target-busy` or `busy`.
 - `receipt`, `text`, `ack_seen` and `truncated` appear once delivered with an answer. `text` is at
   most 4 KiB; `truncated: true` says the answer was longer and its end is missing. A mandate made
