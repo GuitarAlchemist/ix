@@ -204,7 +204,9 @@ jobs:
   # The modules are discovered, not listed: a second module (`go/ixmux`) once
   # sat beside `go/ixctl` with its tests run by no gate, its Unix code never
   # executed and its races never checked. A new `go/<name>/go.mod` is covered
-  # the day it lands.
+  # the day it lands. So is a `prototypes/<name>/go.mod`: a prototype with Go
+  # tests (ix#390) ran the whole Rust matrix and not one of its own tests. The
+  # matrix value is the module's directory (`go/ixctl`, `prototypes/probes`).
   go-modules-discover:
     runs-on: ubuntu-latest
     outputs:
@@ -214,7 +216,9 @@ jobs:
       - id: find
         shell: bash
         run: |
-          modules=$(for m in go/*/go.mod; do [ -f "$m" ] && basename "$(dirname "$m")"; done | jq -Rcn '[inputs]')
+          # An `if`, not `[ -f ] && ...`: a glob with no match (no prototype has a go.mod)
+          # would end the loop on a false test and, under `-eo pipefail`, fail the step.
+          modules=$(for m in go/*/go.mod prototypes/*/go.mod; do if [ -f "$m" ]; then dirname "$m"; fi; done | jq -Rcn '[inputs]')
           echo "modules=$modules" >> "$GITHUB_OUTPUT"
           echo "Go modules: $modules"
 
@@ -229,14 +233,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: go/${{ matrix.module }}
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/${{ matrix.module }}/go.mod
-          cache-dependency-path: go/${{ matrix.module }}/go.*
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.*
 
       - name: gofmt
         shell: bash
