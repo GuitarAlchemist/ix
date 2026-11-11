@@ -179,30 +179,35 @@ Entrée : `{mandate_id}`. Sortie :
 
 Sans argument. L'outil dit ce qu'on retrouve après un plantage ou un redémarrage. Il le lit dans
 les fichiers du dossier d'état, donc il répond aussi quand ixmux est arrêté (`ixmux_status` échoue
-alors en `ixmux-unavailable`). Le rapport (`ixmux.inventory.v1`, le même que
-`ixmux inventory --json`) contient :
+alors en `ixmux-unavailable`). Le rapport (`ixmux.inventory.mcp.v1`) est une vue réduite de
+`ixmux inventory --json`. Il contient :
 
-- l'entrée ixmux. `liveness` vaut `proven` seulement si un processus vivant a le pid
-  d'`ixmux.json` et a été créé au moment où ixmux a noté son démarrage. Si `ixmux.json` dit
+- l'entrée ixmux, avec son `incarnation` (`epoch:…`) et son `status`. `liveness` vaut `proven`
+  seulement si un processus vivant a le pid d'`ixmux.json` et a été créé au moment où ixmux a noté
+  son démarrage, à une minute près dans les deux sens (un saut d'horloge). Si `ixmux.json` dit
   `running` mais que le pid est `absent` ou `pid-reused`, l'entrée est `unreachable` : ixmux ne
-  s'est pas arrêté proprement ;
-- chaque mandat du journal de commandes, selon son `status` :
+  s'est pas arrêté proprement. `unknown` avec « read again » signifie qu'`ixmux.json` a changé
+  pendant la lecture ;
+- chaque mandat non terminé du journal de commandes : `mandate_id`, `target`, `incarnation`,
+  l'état enregistré (`state`), la `cause` (prise dans l'ensemble fermé d'`ixmux_result`) et son
+  `status` :
   - `running` : accepté ou en livraison sous un ixmux vivant ;
-  - `done` : livré, ou rien n'a été envoyé ;
   - `uncertain` : la cible a pu agir, et une personne décide. C'est aussi le cas d'un mandat laissé
     en livraison par un ixmux disparu : son prochain démarrage le note `uncertain`, cause `restart` ;
-- `last_activity` et `age_s` : la dernière transition du mandat. `declared` garde l'état et la
-  cause enregistrés, à part de ce qui est prouvé. `resume` dit ce qu'une personne peut faire ;
+  - `done` : accepté sous un ixmux disparu, donc jamais envoyé (son prochain démarrage le note
+    `refused`) ;
+  - `unknown` : son ixmux n'a pas pu être vérifié, ou a démarré pendant la lecture ;
+- `finished` : le nombre de mandats livrés ou refusés. Ils ne sont pas listés : `ixmux_result`
+  répond pour chaque id ;
+- `last_activity` et `age_s` : la dernière transition. `resume` dit ce qu'une personne peut faire ;
   l'outil ne fait rien lui-même ;
-- `omitted` : les mandats terminés au-delà des 50 plus récents. Un mandat non terminé n'est jamais
-  omis ;
 - `gaps` : ce que l'inventaire ne lit pas.
 
-L'outil ne montre aucune session Claude Code de la machine, ni la `reason` d'un mandat, dont le
-texte peut venir d'une cible. Il ne transporte rien de plus que ce que donnent déjà `ixmux_status`
-et `ixmux_result`. Il lit le journal de commandes sans son verrou. Sous Windows, une compaction d'un
-ixmux en marche échoue pendant cette lecture. C'est sans dommage : le journal reste tel quel, et la
-compaction est retentée une minute plus tard.
+L'outil ne transporte ni chemin, ni pid, ni adresse, ni code de sortie, ni heure de création. Il ne
+montre aucune session Claude Code de la machine, ni de `reason`, dont le texte peut venir d'une
+cible. Il lit le journal de commandes sans son verrou. Sous Windows, une compaction d'un ixmux en
+marche échoue pendant cette lecture. C'est sans dommage : le journal reste tel quel, et la compaction
+est retentée une minute plus tard.
 
 ## Arrêt
 

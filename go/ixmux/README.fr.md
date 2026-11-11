@@ -177,18 +177,23 @@ il liste :
   illisible ou incomplet est signalé `unreadable`, jamais deviné. L'`id` d'une session est son id
   de session. Son `incarnation` est `pid:<pid>@<heure de création>`. Elle n'est `running` ou
   `idle` que si c'est prouvé : un processus vivant a ce pid et a été créé à cette heure, exactement
-  sous Windows (`procStart`), à une minute près de `startedAt` ailleurs. Un enregistrement laissé
-  par un plantage est `unreachable`, avec le `claude --resume <id>` à lancer. Un id de session que
-  portent deux enregistrements figure dans `duplicates`. Tant que l'un d'eux est vivant, les autres
-  disent « ne pas reprendre » ;
-- **chaque ixmux donné par `--state`** et ses mandats, tels que les donne `ixmux_inventory`
-  ([MCP.fr.md](MCP.fr.md)).
+  sous Windows (`procStart`), à une minute près dans les deux sens de `startedAt` ailleurs (un saut
+  d'horloge la déplace). Un enregistrement dont le `pidDomain` nomme une autre machine est
+  `unknown`. Un enregistrement laissé par un plantage est `unreachable`, avec le
+  `claude --resume <id>` à lancer. Un id de session que portent deux enregistrements figure dans
+  `duplicates`. Tant que l'un d'eux est vivant, les autres disent « ne pas reprendre » ;
+- **chaque ixmux donné par `--state`** et ses mandats. L'ixmux est `running`, `stopped`, ou
+  `unreachable` (`ixmux.json` dit qu'il tourne et son processus a disparu). Chaque mandat est
+  `running`, `done` ou `uncertain`, avec son `state`, sa `cause` et sa `reason` enregistrés. Leurs
+  champs sont décrits dans [MCP.fr.md](MCP.fr.md), où `ixmux_inventory` en donne une vue réduite.
 
 `last_activity` est la plus récente des heures de l'enregistrement et de la date de modification
 du fichier de transcription, dont le contenu n'est jamais lu. `declared` garde ce que dit un
-fichier, à part de ce qui est prouvé. Une borne (256 enregistrements de session, 64 Kio par
-enregistrement, les 50 mandats terminés les plus récents par ixmux, les 64 Mio du journal) n'est
-jamais silencieuse : `omitted` compte ce qu'elle a laissé de côté. `gaps` nomme ce qui n'est pas
+fichier, à part de ce qui est prouvé. Une borne n'est jamais silencieuse : au-delà de 256
+enregistrements de session ou des 50 mandats terminés les plus récents par ixmux, `omitted` compte
+ce qui a été laissé de côté (jamais un mandat non terminé). Un enregistrement de plus de 64 Kio, un
+journal de plus de 64 Mio, ou tout ce qui n'est pas un fichier ordinaire (une FIFO n'est jamais
+attendue) donne une entrée `unreadable`. `gaps` nomme ce qui n'est pas
 lu : les sessions cloud, qu'aucun fichier local ne liste et dont aucune n'est montrée active, l'état
 des volets wmux, et les services Windows (`ixctl resume check`). Code de sortie 0 dès que le
 rapport est imprimé.

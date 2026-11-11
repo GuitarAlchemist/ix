@@ -1,8 +1,10 @@
 package deliver
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 )
 
@@ -19,6 +21,24 @@ type LogMandate struct {
 	Answered    bool      // its record carries the target's answer (delivered, or settled late)
 }
 
+// OpenRegular opens path for reading, refusing anything but a regular file (a FIFO, a device, a
+// directory: through a symlink too) without ever blocking on it. The caller closes the file.
+func OpenRegular(path string) (*os.File, error) {
+	f, err := openShared(path)
+	if err != nil {
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err == nil && !st.Mode().IsRegular() {
+		err = &os.PathError{Op: "open", Path: path, Err: errors.New("not a regular file")}
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 // testHookReadLogOpen runs in ReadLog while the log is open, before it is read.
 var testHookReadLogOpen func()
 
@@ -32,7 +52,7 @@ func ReadLog(path string, maxBytes int64) ([]LogMandate, *Torn, error) {
 	if maxBytes <= 0 {
 		maxBytes = MaxLogBytes
 	}
-	f, err := openShared(path)
+	f, err := OpenRegular(path)
 	if err != nil {
 		return nil, nil, err
 	}

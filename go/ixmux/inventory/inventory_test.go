@@ -86,6 +86,50 @@ func TestAReusedPIDIsNotTheSession(t *testing.T) {
 	}
 }
 
+// A creation time read from a wall clock (ixmux's Started, a session's startedAt, Linux's btime) moves
+// with a clock step (NTP, a VM resumed): within a minute either way, the live process is still the
+// one recorded. Review P1-1: a +2 s step made a live ixmux pid-reused, so unreachable.
+func TestAClockStepDoesNotKillALiveProcess(t *testing.T) {
+	started := t0.Add(-time.Hour)
+	dir := ixmuxState(t, started)
+	for _, c := range []time.Time{started.Add(-300 * time.Millisecond).Add(2 * time.Second), started.Add(-50 * time.Second), started.Add(50 * time.Second)} {
+		r := collect("", procs{777: c}, dir)
+		if es := find(r, "ixmux", dir); len(es) != 1 || es[0].Status != Running || es[0].Liveness != Proven {
+			t.Errorf("process created at %s, ixmux started at %s: %+v", c, started, es)
+		}
+	}
+	r := collect("", procs{777: started.Add(-2 * time.Minute)}, dir)
+	if es := find(r, "ixmux", dir); len(es) != 1 || es[0].Liveness != PIDReused {
+		t.Errorf("a process created two minutes off: %+v", es)
+	}
+	// A session record without procStart falls back on startedAt, with the same tolerance.
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "sessions"), 0o700)
+	os.WriteFile(filepath.Join(home, "sessions", "4242.json"), []byte(fmt.Sprintf(`{"pid":4242,"sessionId":%q,"startedAt":%d,"status":"idle"}`, sid, started.UnixMilli())), 0o600)
+	for c, want := range map[time.Time]Liveness{started.Add(2 * time.Second): Proven, started.Add(-2 * time.Minute): PIDReused} {
+		if es := find(collect(home, procs{4242: c}), "claude-session", sid); len(es) != 1 || es[0].Liveness != want {
+			t.Errorf("startedAt, process created at %s: %+v, want %s", c, es, want)
+		}
+	}
+}
+
+// A record whose pidDomain names another machine (a shared ~/.claude) is not checked against this
+// machine's pids: unknown, never proven (review P3-10).
+func TestARecordFromAnotherMachineIsNotProvenHere(t *testing.T) {
+	home, c := t.TempDir(), t0.Add(-time.Hour)
+	os.MkdirAll(filepath.Join(home, "sessions"), 0o700)
+	rec := fmt.Sprintf(`{"pid":4242,"sessionId":%q,"procStart":%q,"pidDomain":"win32:other-host","status":"busy"}`, sid, filetime(c))
+	os.WriteFile(filepath.Join(home, "sessions", "4242.json"), []byte(rec), 0o600)
+	r := Collect(Options{ClaudeHome: home, Now: func() time.Time { return t0 }, Created: procs{4242: c}.created, Hostname: "this-host"})
+	if es := find(r, "claude-session", sid); len(es) != 1 || es[0].Liveness != Unverified || es[0].Status != Unknown {
+		t.Fatalf("%+v", es)
+	}
+	r = Collect(Options{ClaudeHome: home, Now: func() time.Time { return t0 }, Created: procs{4242: c}.created, Hostname: "OTHER-HOST"})
+	if es := find(r, "claude-session", sid); len(es) != 1 || es[0].Liveness != Proven {
+		t.Fatalf("the same machine, its name in another case: %+v", es)
+	}
+}
+
 // A live process with the record's pid and creation time proves the session: busy is running,
 // idle is idle, and its resume forbids a second copy.
 func TestALiveSessionIsProven(t *testing.T) {
@@ -302,6 +346,38 @@ func TestAnUncertainMandateIsNeverLeftOut(t *testing.T) {
 	}
 	if done != 5 || unc != 3 || r.Omitted["finished mandates past the bound in "+dir] != 25 {
 		t.Errorf("%d done, %d uncertain, omitted %v; want 5, 3 and 25", done, unc, r.Omitted)
+	}
+}
+
+// A mandate the log leaves accepted or delivering is unfinished, whatever its ixmux: the bound on
+// finished mandates never leaves it out (review P2-3: acc1, accepted under a dead ixmux, was).
+func TestAnUnfinishedMandateIsNeverLeftOut(t *testing.T) {
+	dir := ixmuxState(t, t0.Add(-time.Hour))
+	r := Collect(Options{IxmuxStates: []string{dir}, Now: func() time.Time { return t0 }, Created: procs{}.created, MaxDone: 1})
+	for _, id := range []string{"acc1", "turn1", "unc1"} {
+		if len(find(r, "mandate", id)) != 1 {
+			t.Errorf("%s left out: omitted %v", id, r.Omitted)
+		}
+	}
+}
+
+// A new ixmux starting on the directory between the read of ixmux.json (a dead host) and the read
+// of the log may have accepted a mandate: it must not be called never sent (review P2-4).
+func TestAnIxmuxStartingDuringTheReadIsReadAgain(t *testing.T) {
+	dir := ixmuxState(t, t0.Add(-time.Hour))
+	testHookAfterLog = func() {
+		info, _ := json.Marshal(map[string]any{"addr": "127.0.0.1:5001", "pid": 888, "started": t0, "epoch": "e2", "state": "running"})
+		os.WriteFile(filepath.Join(dir, "ixmux.json"), info, 0o600)
+	}
+	t.Cleanup(func() { testHookAfterLog = nil })
+	r := collect("", procs{888: t0}, dir)
+	for _, id := range []string{"acc1", "turn1"} {
+		if es := find(r, "mandate", id); len(es) != 1 || es[0].Status != Unknown || strings.Contains(es[0].Resume, "send it again once") {
+			t.Errorf("%s read across a start: %+v", id, es)
+		}
+	}
+	if es := find(r, "ixmux", dir); len(es) != 1 || es[0].Status != Unknown {
+		t.Errorf("ixmux read across a start: %+v", es)
 	}
 }
 

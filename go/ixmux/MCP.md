@@ -173,25 +173,31 @@ Input: `{mandate_id}`. Output:
 
 No arguments. What can be found again after a crash or a restart, read from the files of the state
 directory, so it also answers while ixmux is down (`ixmux_status` then fails `ixmux-unavailable`).
-The report (`ixmux.inventory.v1`, the same as `ixmux inventory --json`) holds:
+The report (`ixmux.inventory.mcp.v1`) is a reduced view of `ixmux inventory --json`. It holds:
 
-- the ixmux entry. `liveness` is `proven` only when a live process has the pid of `ixmux.json` and
-  was created when ixmux recorded its start. `absent` or `pid-reused` with `ixmux.json` saying
-  `running` gives `unreachable`: ixmux did not stop cleanly;
-- each mandate of the command log, by `status`:
+- the ixmux entry, with its `incarnation` (`epoch:…`) and its `status`. `liveness` is `proven` only
+  when a live process has the pid of `ixmux.json` and was created when ixmux recorded its start,
+  within a minute either way (a clock step). `absent` or `pid-reused` while `ixmux.json` says
+  `running` gives `unreachable`: ixmux did not stop cleanly. `unknown` with "read again" means
+  `ixmux.json` changed during the read;
+- each unfinished mandate of the command log: `mandate_id`, `target`, `incarnation`, the recorded
+  `state`, `cause` (from the closed set of `ixmux_result`), and its `status`:
   - `running`: accepted or delivering under a live ixmux;
-  - `done`: delivered, or nothing was sent;
   - `uncertain`: the target may have acted, and a person decides. That covers a mandate left
     delivering by an ixmux that is gone, which its next start records `uncertain`, cause `restart`;
-- `last_activity` and `age_s`, the mandate's last transition. `declared` keeps the recorded `state`
-  and `cause` apart from what was proven. `resume` says what a person may do; the tool does nothing;
-- `omitted`: the finished mandates past the 50 newest. An unfinished one is never left out;
+  - `done`: accepted under an ixmux that is gone, so never sent (its next start records it
+    `refused`);
+  - `unknown`: its ixmux could not be checked, or started during the read;
+- `finished`: the number of delivered and refused mandates. They are not listed: `ixmux_result`
+  answers for each id;
+- `last_activity` and `age_s`, the last transition. `resume` says what a person may do; the tool does
+  nothing;
 - `gaps`: what the inventory does not read.
 
-It shows no Claude Code session of the machine and no mandate `reason`, whose text may come from a
-target. What it carries is what `ixmux_status` and `ixmux_result` already give. It reads the
-command log without its lock. On Windows a compaction of a running ixmux fails during that read: no
-harm, the log is kept as it was and the compaction is tried again a minute later.
+It carries no path, pid, address, exit code or creation time, no Claude Code session of the machine,
+and no `reason` (text that may come from a target). It reads the command log without its lock. On
+Windows a compaction of a running ixmux fails during that read: no harm, the log is kept as it was
+and the compaction is tried again a minute later.
 
 ## Stop
 

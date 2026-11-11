@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/GuitarAlchemist/ix/go/ixmux/inventory"
@@ -38,9 +40,14 @@ func entryOf(r inventory.Report, kind, id string) *inventory.Entry {
 // again finds it uncertain and sends nothing again. The inventory changes no file.
 func TestInventoryAcrossAKillDuringATurn(t *testing.T) {
 	dir := t.TempDir()
-	state, eff, hold := filepath.Join(dir, "state"), filepath.Join(dir, "effects"), filepath.Join(dir, "hold")
+	state, eff, hold := filepath.Join(dir, "ixstatedir"), filepath.Join(dir, "effects"), filepath.Join(dir, "hold")
 	os.WriteFile(hold, nil, 0o600)
 	defer os.Remove(hold)
+	// A Claude session record where the adapter would find one, were it to read the machine's.
+	home := filepath.Join(dir, "claude-home")
+	os.MkdirAll(filepath.Join(home, "sessions"), 0o700)
+	os.WriteFile(filepath.Join(home, "sessions", "1.json"), []byte(`{"pid":1,"sessionId":"plantedsession","startedAt":1,"status":"busy"}`), 0o600)
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
 	p := startClaude(t, state, eff, "FAKE_HOLD="+hold)
 	m := startMCP(t, state, p.token)
 	m.initialize()
@@ -49,6 +56,11 @@ func TestInventoryAcrossAKillDuringATurn(t *testing.T) {
 		t.Fatalf("submit k1: %v", rc.Structured)
 	}
 	waitTurn(t, p, eff)
+	var out, errb bytes.Buffer // the CLI does read it: the planted record is there to be leaked
+	runInventory([]string{"--json"}, &out, &errb)
+	if !strings.Contains(out.String(), "plantedsession") {
+		t.Fatalf("the planted session record is not read by the CLI: %s", out.String())
+	}
 
 	logPath := filepath.Join(state, "commands.jsonl")
 	before, _ := os.ReadFile(logPath)
@@ -72,20 +84,8 @@ func TestInventoryAcrossAKillDuringATurn(t *testing.T) {
 	if e := entryOf(r, "mandate", "k1"); e == nil || e.Status != inventory.Uncertain {
 		t.Errorf("the turn of a killed ixmux: %+v", e)
 	}
-	inv := m.tool("ixmux_inventory", map[string]any{})
-	if inv.IsError {
-		t.Fatalf("ixmux_inventory with ixmux down: %v", inv.Structured)
-	}
-	var mr inventory.Report
-	b, _ := json.Marshal(inv.Structured)
-	json.Unmarshal(b, &mr)
-	if e := entryOf(mr, "mandate", "k1"); e == nil || e.Status != inventory.Uncertain || e.Declared["reason"] != "" {
-		t.Errorf("ixmux_inventory's k1: %+v", e)
-	}
-	for _, e := range mr.Entries {
-		if e.Kind == "claude-session" {
-			t.Errorf("ixmux_inventory shows a Claude session of the machine: %+v", e)
-		}
+	if mr := mcpInv(t, m, state, p.cmd.Process.Pid); mr.k1 == nil || mr.k1.Status != inventory.Uncertain || mr.k1.State != "delivering" {
+		t.Errorf("ixmux_inventory's k1 with ixmux down: %+v", mr.k1)
 	}
 
 	os.Remove(hold)
@@ -102,14 +102,44 @@ func TestInventoryAcrossAKillDuringATurn(t *testing.T) {
 	if e := entryOf(r, "mandate", "k1"); e == nil || e.Status != inventory.Uncertain || e.Declared["cause"] != "restart" || e.Declared["reason"] == "" {
 		t.Errorf("k1 after the restart: %+v", e)
 	}
-	inv = m.tool("ixmux_inventory", map[string]any{})
-	b, _ = json.Marshal(inv.Structured)
-	mr = inventory.Report{}
-	json.Unmarshal(b, &mr)
-	if e := entryOf(mr, "mandate", "k1"); e == nil || e.Status != inventory.Uncertain || e.Declared["reason"] != "" {
-		t.Errorf("ixmux_inventory's k1 after the restart, its reason must not pass: %+v", e)
+	if mr := mcpInv(t, m, state, q.cmd.Process.Pid); mr.k1 == nil || mr.k1.Status != inventory.Uncertain || mr.k1.Cause != "restart" {
+		t.Errorf("ixmux_inventory's k1 after the restart: %+v", mr.k1)
 	}
 	if n := lines(t, eff); n != 1 {
 		t.Errorf("%d turns, want 1", n)
 	}
+}
+
+type mcpInvSeen struct {
+	mcpInventory
+	k1 *mcpEntry
+}
+
+// mcpInv calls ixmux_inventory and checks, on its raw text, that nothing passes beyond what
+// ixmux_status and ixmux_result give: no path of the state directory, no pid, no address, no
+// reason, no Claude session (one is planted in the adapter's CLAUDE_CONFIG_DIR, see
+// TestInventoryAcrossAKillDuringATurn).
+func mcpInv(t *testing.T, m *mcpProc, state string, pid int) mcpInvSeen {
+	t.Helper()
+	inv := m.tool("ixmux_inventory", map[string]any{})
+	if inv.IsError {
+		t.Fatalf("ixmux_inventory: %v", inv.Structured)
+	}
+	text := inv.Content[0].Text
+	esc, _ := json.Marshal(state)
+	for _, leak := range []string{string(esc[1 : len(esc)-1]), filepath.Base(state), "127.0.0.1", `"pid"`, strconv.Itoa(pid), "reason", "claude-session", "plantedsession", "addr", "exit_code"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("ixmux_inventory carries %q: %s", leak, text)
+		}
+	}
+	var out mcpInvSeen
+	if err := json.Unmarshal([]byte(text), &out.mcpInventory); err != nil {
+		t.Fatal(err)
+	}
+	for i := range out.Entries {
+		if out.Entries[i].MandateID == "k1" {
+			out.k1 = &out.Entries[i]
+		}
+	}
+	return out
 }

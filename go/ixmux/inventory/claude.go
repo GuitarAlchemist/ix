@@ -27,6 +27,7 @@ type sessionRecord struct {
 	UpdatedAt       int64  `json:"updatedAt"`       // ms
 	StatusUpdatedAt int64  `json:"statusUpdatedAt"` // ms
 	Bridge          string `json:"bridgeSessionId"` // set when the session is also reachable remotely
+	PIDDomain       string `json:"pidDomain"`       // where its pid means something: <os>:<host>
 }
 
 // filetimeEpoch is 1970-01-01 as a FILETIME (100 ns intervals since 1601-01-01).
@@ -37,10 +38,10 @@ const filetimeEpoch = 116444736000000000
 // takes a little after its process was created.
 func (s sessionRecord) declaredStart() (time.Time, time.Duration, bool) {
 	if ft, err := strconv.ParseInt(s.ProcStart, 10, 64); err == nil && ft > filetimeEpoch {
-		return time.Unix(0, (ft-filetimeEpoch)*100).UTC(), time.Millisecond, true
+		return time.Unix(0, (ft-filetimeEpoch)*100).UTC(), ExactTol, true
 	}
 	if s.StartedAt > 0 {
-		return time.UnixMilli(s.StartedAt).UTC(), time.Minute, true
+		return time.UnixMilli(s.StartedAt).UTC(), ClockTol, true
 	}
 	return time.Time{}, 0, false
 }
@@ -138,6 +139,12 @@ func session(o Options, path string) Entry {
 				e.LastActivity = later(e.LastActivity, st.ModTime())
 			}
 		}
+	}
+	if i := strings.LastIndexByte(s.PIDDomain, ':'); i >= 0 && o.Hostname != "" && !strings.EqualFold(s.PIDDomain[i+1:], o.Hostname) {
+		e.Status, e.Liveness = Unknown, Unverified
+		e.Problem = "recorded on another machine (" + s.PIDDomain + "): its pid says nothing here"
+		e.Resume = "look for it on that machine"
+		return e
 	}
 	start, tol, ok := s.declaredStart()
 	if !ok {

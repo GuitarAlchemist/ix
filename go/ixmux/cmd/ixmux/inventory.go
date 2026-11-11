@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GuitarAlchemist/ix/go/ixmux/deliver"
 	"github.com/GuitarAlchemist/ix/go/ixmux/inventory"
 	"github.com/GuitarAlchemist/ix/go/ixmux/server"
 )
@@ -95,18 +96,75 @@ func printInventory(w io.Writer, r inventory.Report) {
 	}
 }
 
-// inventory is the MCP tool ixmux_inventory: the inventory of this adapter's state directory
-// alone, read from its files, so it answers while ixmux is down. It shows no Claude Code session
-// of the machine (their directories are private to their user) and no text that came from a
-// target (a mandate's reason): what the tunnel may carry stays what ixmux_status already shows.
+// mcpInventory is what ixmux_inventory carries: the reduced view of the inventory of the adapter's
+// own state directory. A tool answer may later cross a tunnel, so it carries what ixmux_status and
+// ixmux_result already give and no more: no path, pid, address, exit code or creation time; no
+// Claude Code session of the machine; no text from a target (a reason, an error); a cause only from
+// the closed set; and the finished mandates as a count, their ids being what ixmux_result answers.
+type mcpInventory struct {
+	Format   string     `json:"format"`
+	ReadAt   time.Time  `json:"read_at"`
+	Entries  []mcpEntry `json:"entries"`
+	Finished int        `json:"finished"` // finished mandates (delivered, refused), not listed
+	Gaps     []string   `json:"gaps"`
+}
+
+type mcpEntry struct {
+	Kind         string             `json:"kind"` // ixmux, mandate, mandate-log
+	MandateID    string             `json:"mandate_id,omitempty"`
+	Target       string             `json:"target,omitempty"`
+	Incarnation  string             `json:"incarnation,omitempty"` // a mandate's, or ixmux's epoch
+	Status       inventory.Status   `json:"status"`
+	Liveness     inventory.Liveness `json:"liveness,omitempty"`
+	State        string             `json:"state,omitempty"` // as the command log records it
+	Cause        string             `json:"cause,omitempty"`
+	Problem      string             `json:"problem,omitempty"` // a mandate's, written by the inventory
+	LastActivity *time.Time         `json:"last_activity,omitempty"`
+	AgeSeconds   *int64             `json:"age_s,omitempty"`
+	Resume       string             `json:"resume"`
+}
+
+// mcpInventoryFormat names the reduced report of ixmux_inventory.
+const mcpInventoryFormat = "ixmux.inventory.mcp.v1"
+
+// inventory is the MCP tool ixmux_inventory, read from the files of the adapter's state directory,
+// so it answers while ixmux is down.
+// @ai:invariant ixmux_inventory carries no path, pid, address, Claude session, reason or unknown cause [T:test conf:0.85 src:go/ixmux/cmd/ixmux/inventory_test.go:TestInventoryAcrossAKillDuringATurn]
 func (m *mcp) inventory(raw json.RawMessage) (any, *toolErr) {
 	var a struct{}
 	if terr := args(raw, &a); terr != nil {
 		return nil, terr
 	}
 	r := inventory.Collect(inventory.Options{IxmuxStates: []string{m.state}})
-	for i := range r.Entries {
-		delete(r.Entries[i].Declared, "reason")
+	out := mcpInventory{Format: mcpInventoryFormat, ReadAt: r.ReadAt, Entries: []mcpEntry{}, Gaps: r.Gaps}
+	for _, e := range r.Entries {
+		v := mcpEntry{Kind: e.Kind, Status: e.Status, LastActivity: e.LastActivity, AgeSeconds: e.AgeSeconds, Resume: e.Resume}
+		switch e.Kind {
+		case "ixmux":
+			v.Liveness = e.Liveness
+			if strings.HasPrefix(e.Incarnation, "epoch:") {
+				v.Incarnation = e.Incarnation
+			}
+		case "mandate":
+			if s := e.Declared["state"]; s == string(deliver.Delivered) || s == string(deliver.Refused) {
+				out.Finished++
+				continue
+			}
+			v.MandateID, v.Target, v.Incarnation, v.State, v.Problem = e.ID, e.Name, e.Incarnation, e.Declared["state"], e.Problem
+			if uncertainCauses[e.Declared["cause"]] {
+				v.Cause = e.Declared["cause"]
+			}
+		case "mandate-log":
+			v.Resume = "the command log could not be read here; never delete it"
+		default:
+			continue
+		}
+		out.Entries = append(out.Entries, v)
 	}
-	return r, nil
+	for why, n := range r.Omitted { // only finished mandates are ever left out of an ixmux's
+		if strings.HasPrefix(why, "finished mandates") {
+			out.Finished += n
+		}
+	}
+	return out, nil
 }

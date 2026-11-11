@@ -178,16 +178,21 @@ power loss or a Windows restart it lists:
   `~/.claude`). That file is undocumented: an unreadable or incomplete record is reported
   `unreadable`, never guessed. A session's `id` is its session id. Its `incarnation` is
   `pid:<pid>@<creation time>`. It is `running` or `idle` only when proven: a live process has that
-  pid and was created at that time, exactly on Windows (`procStart`), or within a minute of
-  `startedAt` elsewhere. A record left behind by a crash is `unreachable`, with the
+  pid and was created at that time, exactly on Windows (`procStart`), or within a minute either way
+  of `startedAt` elsewhere (a clock step moves it). A record whose `pidDomain` names another
+  machine is `unknown`. A record left behind by a crash is `unreachable`, with the
   `claude --resume <id>` to run. A session id held by two records is listed under `duplicates`.
   While one of them is live, the others say "do not resume";
-- **each `--state` ixmux** and its mandates, as `ixmux_inventory` gives them ([MCP.md](MCP.md)).
+- **each `--state` ixmux** and its mandates: the ixmux `running`, `stopped`, or `unreachable`
+  (`ixmux.json` says running and its process is gone); each mandate `running`, `done` or
+  `uncertain`, with its recorded `state`, `cause` and `reason`. Its fields are listed in
+  [MCP.md](MCP.md), where `ixmux_inventory` gives a reduced view of them.
 
 `last_activity` is the latest of the record's times and of the transcript file's modification time
 (its content is never read). `declared` keeps what a file says apart from what was proven. A bound
-(256 session records, 64 KiB per record, the 50 newest finished mandates per ixmux, the log's
-64 MiB) is never silent: `omitted` counts what it left out. `gaps` names what is not read: cloud
+is never silent: past 256 session records or the 50 newest finished mandates per ixmux, `omitted`
+counts what was left out (an unfinished mandate never is); a record over 64 KiB, a log over 64 MiB,
+or anything but a regular file (a FIFO is never waited on) is an `unreadable` entry. `gaps` names what is not read: cloud
 sessions, which no local file lists and none of which is shown as active, wmux's pane states, and
 Windows services (`ixctl resume check`). Exit code 0 whenever the report is printed.
 

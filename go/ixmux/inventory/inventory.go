@@ -43,6 +43,12 @@ const (
 	Unverified Liveness = "unverified" // the check could not be made (Problem says why)
 )
 
+// The tolerances of check: ExactTol between two reads of one clock, ClockTol else.
+const (
+	ExactTol = time.Millisecond
+	ClockTol = time.Minute
+)
+
 // ErrNoProcess: no live process has the pid.
 var ErrNoProcess = errors.New("no such process")
 
@@ -95,6 +101,7 @@ type Options struct {
 	IxmuxStates  []string // ixmux state directories
 	Now          func() time.Time
 	Created      func(pid int) (time.Time, error) // a process's creation time, or ErrNoProcess
+	Hostname     string                           // this machine's name, against a record's pidDomain: os.Hostname
 	MaxSessions  int                              // session records read: 256
 	MaxFileBytes int64                            // one session or ixmux.json record: 64 KiB
 	MaxDone      int                              // finished mandates listed per ixmux, newest first: 50
@@ -107,6 +114,9 @@ func (o *Options) defaults() {
 	}
 	if o.Created == nil {
 		o.Created = created
+	}
+	if o.Hostname == "" {
+		o.Hostname, _ = os.Hostname()
 	}
 	if o.MaxSessions <= 0 {
 		o.MaxSessions = 256
@@ -155,8 +165,12 @@ func Collect(o Options) Report {
 	return r
 }
 
-// check decides a pid's liveness against the creation time its record declares: within tol after
-// it (a process records its own start a little after it was created).
+// check decides a pid's liveness against the creation time its record declares, within tol either
+// way. tol is ExactTol for a time read from the same source as the process's (a Windows FILETIME);
+// ClockTol for one read from a wall clock (ixmux's Started, a session's startedAt, Linux's btime),
+// which a process takes a little after its creation and which a clock step (NTP, a VM resumed)
+// moves. A pid reused by a process created within ClockTol of the recorded one is taken for it.
+// @ai:invariant a live process whose wall-clock creation time moved less than ClockTol either way is proven, not pid-reused [T:test conf:0.85 src:go/ixmux/inventory/inventory_test.go:TestAClockStepDoesNotKillALiveProcess]
 func check(o Options, pid int, declared time.Time, tol time.Duration) (Liveness, string) {
 	c, err := o.Created(pid)
 	switch {
@@ -166,15 +180,16 @@ func check(o Options, pid int, declared time.Time, tol time.Duration) (Liveness,
 		return Unverified, "pid " + itoa(pid) + ": " + err.Error()
 	}
 	d := declared.Sub(c)
-	if d < -time.Millisecond || d > tol {
+	if d < -tol || d > tol {
 		return PIDReused, "pid " + itoa(pid) + " is live but was created at " + c.Format(time.RFC3339Nano) + ", not " + declared.Format(time.RFC3339Nano)
 	}
 	return Proven, "pid " + itoa(pid) + " is live, created at " + c.Format(time.RFC3339Nano)
 }
 
-// readBounded reads a whole small file, refusing one over max bytes.
+// readBounded reads a whole small regular file, refusing one over max bytes, and never blocks on a
+// FIFO put in its place (deliver.OpenRegular).
 func readBounded(path string, max int64) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := deliver.OpenRegular(path)
 	if err != nil {
 		return nil, err
 	}

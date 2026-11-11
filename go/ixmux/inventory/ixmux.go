@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -58,11 +59,11 @@ func (r *Report) ixmux(o Options, dir string) {
 		if in.Stopped != nil {
 			e.LastActivity = later(e.LastActivity, *in.Stopped)
 		}
-		e.Liveness, e.Proof = check(o, in.PID, in.Started, time.Minute)
+		e.Liveness, e.Proof = check(o, in.PID, in.Started, ClockTol)
 		switch {
 		case in.State == "running" && e.Liveness == Proven:
 			e.Status = Running
-			e.Resume = "live: reach it with `ixmux mcp --state " + dir + "`; a second ixmux on this directory is refused (its log is locked)"
+			e.Resume = "live: reach it with `ixmux mcp --state` on its directory; a second ixmux there is refused (its log is locked)"
 		case in.State == "running" && (e.Liveness == Absent || e.Liveness == PIDReused):
 			e.Status = Unreachable
 			e.Problem = "ixmux.json says running but its process is gone: ixmux did not stop cleanly (crash, kill, power loss or restart)"
@@ -83,8 +84,29 @@ func (r *Report) ixmux(o Options, dir string) {
 		}
 	}
 	r.Entries = append(r.Entries, e)
+	at := len(r.Entries) - 1
 	r.mandates(o, dir, e.Status)
+	if testHookAfterLog != nil {
+		testHookAfterLog()
+	}
+	// An ixmux that started (or stopped) between the two reads makes the log's unfinished mandates
+	// another host's: a mandate it has just accepted must not be called never sent. ixmux rewrites
+	// ixmux.json before it accepts any mandate, so reading it again after the log closes the window.
+	// @ai:invariant a mandate under way is never advised resendable when ixmux.json changed during the read [T:test conf:0.85 src:go/ixmux/inventory/inventory_test.go:TestAnIxmuxStartingDuringTheReadIsReadAgain]
+	if b2, err2 := readBounded(src, o.MaxFileBytes); (err == nil) != (err2 == nil) || !bytes.Equal(b, b2) {
+		const again = "ixmux.json changed during the read (ixmux started or stopped): read again"
+		r.Entries[at].Status, r.Entries[at].Problem, r.Entries[at].Resume = Unknown, again, "read again"
+		for i := at + 1; i < len(r.Entries); i++ {
+			m := &r.Entries[i]
+			if m.Kind == "mandate" && (m.Declared["state"] == string(deliver.Accepted) || m.Declared["state"] == string(deliver.Delivering)) {
+				m.Status, m.Problem, m.Resume = Unknown, again, "read again; never send it again meanwhile"
+			}
+		}
+	}
 }
+
+// testHookAfterLog runs between the read of a command log and the second read of ixmux.json.
+var testHookAfterLog func()
 
 // mandates lists the mandates of dir's command log. Whether a mandate under way still runs depends
 // on its ixmux (host): only a live ixmux can still be delivering it.
@@ -149,7 +171,7 @@ func (r *Report) mandates(o Options, dir string, host Status) {
 		default:
 			e.Status, e.Problem, e.Resume = Unknown, "unknown state "+string(m.State), "read it by hand"
 		}
-		if e.Status == Done {
+		if m.State == deliver.Delivered || m.State == deliver.Refused { // finished in the log: only these are bounded
 			done = append(done, e)
 		} else {
 			r.Entries = append(r.Entries, e) // an unfinished mandate is never left out
