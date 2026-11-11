@@ -826,7 +826,6 @@ fn successive_runs_accumulate_history() {
 fn an_uninitialized_governance_submodule_is_named_with_its_init_command() {
     let dir = tempfile::tempdir().expect("tempdir");
     let gov = dir.path().join("governance/demerzel");
-    std::fs::create_dir_all(&gov).expect("mkdir");
     let check = |name: &str| {
         doctor::run(dir.path(), doctor::Options::default())
             .checks
@@ -835,6 +834,12 @@ fn an_uninitialized_governance_submodule_is_named_with_its_init_command() {
             .unwrap_or_else(|| panic!("no {name} check"))
     };
 
+    let absent = check("demerzel-governance");
+    assert_eq!(absent.status, Status::Warn, "{absent:?}");
+    assert!(absent.summary.contains("missing"), "{absent:?}");
+    assert_eq!(check("default-constitution").status, Status::Skip);
+
+    std::fs::create_dir_all(&gov).expect("mkdir");
     let empty = check("demerzel-governance");
     assert_eq!(empty.status, Status::Warn, "{empty:?}");
     assert!(empty.summary.contains("not initialized"), "{empty:?}");
