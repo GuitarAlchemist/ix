@@ -679,7 +679,11 @@ est `unknown`, jamais supposé démarré.
   qu'abaisser le verdict. `reconciliation_required` donne `down` ; `available`, `backed_up`,
   `installed` et `failed_before_replacement` donnent `degraded` ; `completed` et `rolled_back`
   ajoutent seulement une ligne ; un reçu illisible ou un état inconnu donne `unknown`. Un reçu seul
-  n'est pas une observation.
+  n'est pas une observation. L'état ne s'applique qu'à un reçu corrélé : `Schema` 1, un `RunID`
+  de 32 chiffres hexadécimaux minuscules qui nomme son dossier, `CandidateSHA256` égal à
+  `receipt_candidate_sha256` (obligatoire), et aucune autre exécution `update-*` à côté aussi récente
+  ou plus récente. Sinon il donne `unknown`, son état affiché mais pas appliqué : un ancien
+  `reconciliation_required` ou le reçu d'un autre candidat ne décide rien.
 - `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
 - `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle
   est refusé.

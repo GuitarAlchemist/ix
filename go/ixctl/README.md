@@ -635,6 +635,10 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   `reconciliation_required` is `down`; `available`, `backed_up`, `installed` and
   `failed_before_replacement` are `degraded`; `completed` and `rolled_back` add a line only; an
   unreadable receipt or an unknown state is `unknown`. A receipt alone is not something to observe.
+  The state applies only to a correlated receipt: `Schema` 1, a `RunID` of 32 lowercase hex digits
+  that names its directory, `CandidateSHA256` equal to `receipt_candidate_sha256` (required), and
+  no other `update-*` run beside it as recent or newer. Otherwise it is `unknown`, its state shown
+  and not applied: an old `reconciliation_required` or another candidate's receipt decides nothing.
 - `durable`: where the component's state lives, reported present or missing, never opened.
 - `after`: the start order; a component after one that is down says so. A cycle is refused.
 - `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human

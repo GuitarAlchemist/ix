@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -49,8 +50,12 @@ type resumeComponent struct {
 	HealthFields map[string]string `json:"health_fields,omitempty"`
 	// Receipt is an update receipt (IxForge's <DataDir>\update-<RunID>\receipt.json), named by
 	// the operator. A receipt is a record, never proof of the current state: it can lower the
-	// verdict (reconciliation_required is down), never raise it.
+	// verdict (reconciliation_required is down), never raise it, and only once it is correlated
+	// (see receiptUncorrelated): an uncorrelated receipt is unknown, whatever its state.
 	Receipt string `json:"receipt,omitempty"`
+	// ReceiptCandidateSHA256 is the SHA-256 of the candidate the operator expects installed,
+	// required with receipt: a receipt whose CandidateSHA256 differs is about another candidate.
+	ReceiptCandidateSHA256 string `json:"receipt_candidate_sha256,omitempty"`
 	// Listen is a host:port the component listens on, read from the system's TCP table: no
 	// connection is made, so a port nobody may touch can still be observed.
 	Listen string `json:"listen,omitempty"`
@@ -81,6 +86,8 @@ type resumeProbes struct {
 	exists  func(path string) error
 	// readFile reads a small file (an update receipt), never writes it.
 	readFile func(path string) ([]byte, error)
+	// listDir names a directory's entries (the other update runs beside a receipt's).
+	listDir func(dir string) ([]string, error)
 }
 
 // listenerImage is the executable file name of the process holding addr, "" when nobody holds
@@ -135,6 +142,14 @@ func realResumeProbesOver(rt http.RoundTripper) resumeProbes {
 			defer f.Close()
 			return io.ReadAll(io.LimitReader(f, 1<<20))
 		},
+		listDir: func(dir string) ([]string, error) {
+			entries, err := os.ReadDir(dir)
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			return names, err
+		},
 	}
 }
 
@@ -174,16 +189,92 @@ func describeFields(fields map[string]string) string {
 	return strings.Join(parts, ", ")
 }
 
-// receiptVerdict reads an update receipt's State: reconciliation_required is down, a state short
-// of completed or rolled_back is degraded, an unreadable receipt or unknown state is unknown.
-// completed and rolled_back add a line only: a record never raises the verdict.
-func receiptVerdict(b []byte, readErr error) (verdict, line string) {
-	if readErr != nil {
-		return verdictUnknown, readErr.Error()
+// updateReceipt is the part of IxForge's receipt (schema 1) the check correlates and reads.
+type updateReceipt struct {
+	Schema          int
+	RunID           string
+	CandidateSHA256 string
+	State           string
+	UpdatedUTC      string
+}
+
+var (
+	receiptRunID  = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	receiptSHA256 = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+)
+
+func readReceipt(p resumeProbes, path string) (updateReceipt, error) {
+	var rc updateReceipt
+	b, err := p.readFile(path)
+	if err != nil {
+		return rc, err
 	}
-	var rc struct{ State string }
 	if err := json.Unmarshal(b, &rc); err != nil {
-		return verdictUnknown, "is not JSON: " + err.Error()
+		return rc, fmt.Errorf("is not JSON: %w", err)
+	}
+	return rc, nil
+}
+
+// receiptUncorrelated is why a receipt cannot speak for the current install, "" when it can: its
+// schema is 1, its RunID names its directory (<DataDir>\update-<RunID>), its candidate is the one
+// the inventory expects, and no other run beside it is as recent. Anything it cannot establish
+// (an unreadable neighbour, a missing time) is a reason too.
+func receiptUncorrelated(c resumeComponent, p resumeProbes, rc updateReceipt) string {
+	sep := strings.LastIndexAny(c.Receipt, `\/`)
+	if sep < 0 {
+		return "it is not inside an update-<RunID> directory"
+	}
+	dir := c.Receipt[:sep]
+	parentSep := strings.LastIndexAny(dir, `\/`)
+	dirName := dir[parentSep+1:]
+	switch {
+	case rc.Schema != 1:
+		return fmt.Sprintf("schema %d, not 1", rc.Schema)
+	case !receiptRunID.MatchString(rc.RunID):
+		return fmt.Sprintf("RunID %q is not 32 lowercase hex digits", rc.RunID)
+	case !strings.EqualFold(dirName, "update-"+rc.RunID):
+		return fmt.Sprintf("RunID %s does not name its directory %s", rc.RunID, dirName)
+	case !strings.EqualFold(rc.CandidateSHA256, c.ReceiptCandidateSHA256):
+		return "it is about another candidate than receipt_candidate_sha256"
+	case parentSep < 0:
+		return "no data directory to compare its run with the others"
+	}
+	mine, err := time.Parse(time.RFC3339Nano, rc.UpdatedUTC)
+	if err != nil {
+		return fmt.Sprintf("UpdatedUTC %q is not a time", rc.UpdatedUTC)
+	}
+	parent, s := dir[:parentSep], string(c.Receipt[sep])
+	names, err := p.listDir(parent)
+	if err != nil {
+		return "the other runs cannot be listed: " + err.Error()
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if !strings.HasPrefix(strings.ToLower(n), "update-") || strings.EqualFold(n, dirName) {
+			continue
+		}
+		other, err := readReceipt(p, parent+s+n+s+"receipt.json")
+		if err != nil {
+			return fmt.Sprintf("run %s cannot be compared: %v", n, err)
+		}
+		if t, err := time.Parse(time.RFC3339Nano, other.UpdatedUTC); err != nil || !t.Before(mine) {
+			return fmt.Sprintf("run %s is as recent or newer", n)
+		}
+	}
+	return ""
+}
+
+// receiptVerdict reads a correlated update receipt's State: reconciliation_required is down, a
+// state short of completed or rolled_back is degraded, an unknown state is unknown. completed
+// and rolled_back add a line only: a record never raises the verdict. An unreadable or
+// uncorrelated receipt is unknown, whatever its state.
+func receiptVerdict(c resumeComponent, p resumeProbes) (verdict, line string) {
+	rc, err := readReceipt(p, c.Receipt)
+	if err != nil {
+		return verdictUnknown, err.Error()
+	}
+	if why := receiptUncorrelated(c, p, rc); why != "" {
+		return verdictUnknown, fmt.Sprintf("not correlated with the current install (%s): its state %q is not applied", why, rc.State)
 	}
 	switch rc.State {
 	case "completed", "rolled_back":
@@ -301,6 +392,10 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			return nil, fmt.Errorf("inventory: %s has listen_image without listen", c.Name)
 		case strings.ContainsAny(c.ListenImage, `\/`):
 			return nil, fmt.Errorf("inventory: %s listen_image is a file name, not a path", c.Name)
+		case c.Receipt != "" && !receiptSHA256.MatchString(c.ReceiptCandidateSHA256):
+			return nil, fmt.Errorf("inventory: %s receipt needs receipt_candidate_sha256, 64 hex digits", c.Name)
+		case c.Receipt == "" && c.ReceiptCandidateSHA256 != "":
+			return nil, fmt.Errorf("inventory: %s has receipt_candidate_sha256 without receipt", c.Name)
 		}
 	}
 	for _, c := range inv.Components {
@@ -432,8 +527,7 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 			}
 		}
 		if c.Receipt != "" {
-			b, err := p.readFile(c.Receipt)
-			v, line := receiptVerdict(b, err)
+			v, line := receiptVerdict(c, p)
 			worse(v, fmt.Sprintf("update receipt %s: %s", c.Receipt, line))
 		}
 		for _, d := range c.Durable {
