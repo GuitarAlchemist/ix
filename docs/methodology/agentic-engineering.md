@@ -20,6 +20,10 @@ and you'll need an expensive model just to cope. ix takes this literally: it *is
 harness substrate — the `ix-harness-{cargo,clippy,github-actions,signing,tars,ga}` crates, `ix-approval`,
 `ix-sentinel`, and the `ix-duck::maintain` gate exist to make the harness measurable and self-correcting.
 
+Measure these harness hypotheses rather than assuming a cost advantage: use the
+[three-strategy baseline protocol](three-strategy-baseline.md) to compare direct
+human prompting, Gaia-prepared prompting and supervised branch/leaves workflows.
+
 ## Strategic over tactical
 
 AI ate **tactical** programming (writing syntax, chasing bugs, making commits) — it's cheaper and

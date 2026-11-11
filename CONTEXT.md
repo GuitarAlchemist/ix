@@ -228,6 +228,95 @@ contracts (see `docs/contracts/`), not runtime coupling.
   from a bookmark (a consumer's) and from the **continuity markers** of a pipe (`live-start`,
   `dropped`, `overflow`). _Avoid_: resync, backfill, lag.
 
+## Agent strategy measurement
+
+- **Declarative agentic plan** — a description of intended work and dependencies,
+  not admission or execution. The [bounded-plan entry point](docs/methodology/agentic-plan-entrypoint.md)
+  anchors intervention, independent verification and parent resumption in a
+  versioned data-only IXQL example; compiling its graph does not enforce its
+  written requirements or prove the work happened.
+- **Strategy baseline** — a matched comparison of A (Stef's direct dictation and usual
+  human loop), B (Gaia prepares the prompt, Claude executes), and C (a supervised
+  branch/leaves workflow). A is the reference control, not the presumed winner.
+- **Trial** — one assigned strategy on one frozen task instance and initial state,
+  including preparation, handoffs, every child, retries, verification and any required
+  parent resumption, until acceptance or the declared stopping condition. A retry is
+  not a new trial that erases a failure. A repeat is a separately assigned fresh trial.
+- **Candidate validated** — the independent, predeclared candidate checks pass on the
+  identified artifact. This does not establish that the blocked parent consumed it.
+- **Parent unblocked** — the identified parent consumes the candidate, performs the
+  previously blocked action, and reaches its predeclared result. A resume receipt,
+  a child exit code or a green build alone is insufficient.
+- **Accepted task** — one task meeting the frozen independent oracle, constraints
+  and regression checks, including parent unblocked when required. Unit: binary
+  0/1 per terminal trial; missing evidence is not an accepted success.
+- **Human attention** — observed active human work attributable to the trial, in
+  person-seconds, including dictation, reading, decisions and manual handoffs.
+  Waiting or the duration of a voice call is not automatically attention.
+- **Intervention** — a discrete human correction, clarification, approval or recovery
+  after the initial assignment. **Clipboard handoff** is one manual transfer across
+  a tool/session boundary; count it separately even if it is also an intervention.
+- **Resource efficiency** — resources consumed for accepted work, reported separately
+  as elapsed seconds, human person-seconds, interventions, handoffs and model usage.
+  Include unsuccessful trials. No weighted intelligence or entropy score substitutes
+  for these units, and tokens on a subscription are not actual marginal currency cost.
+- **Construction cost** — resources used to build or tune a reusable workflow before
+  its evaluated use. **Reuse cost** is the resource use of a frozen workflow on a new
+  trial; amortization must name the actual number of uses and include failed uses.
+- **Transfer evidence** — acceptance on distinct, previously unused real cases without
+  case-specific workflow tuning. One micro-unblock demonstrates neither reusable
+  transfer nor superiority over the other strategies.
+
+Measurement rules, units, empty templates and the launch gate live in
+[the three-strategy baseline protocol](docs/methodology/three-strategy-baseline.md).
+
+## IX hosts and composable capabilities
+
+These names describe the agreed vocabulary and proposed architecture, not a claim
+that the corresponding inventory, packaging or renderer integration exists today.
+Existing `ixctl` **probe** semantics above remain unchanged.
+
+- **IX Node** — a logical host for IX capabilities and their instances. The initial
+  convention is one IX Node per machine, not a verified deployment inventory or a
+  permanent one-to-one constraint. Group the existing service and desktop surface
+  under this logical host; this does not require a new daemon, merge their security
+  boundaries, or grant one component the other's permissions. Distinct from a
+  **task node** or **execution graph node**, which represents work in a graph, not
+  the host where work runs.
+- **Xlet** — a composable backend capability, independent of implementation language.
+  Its **type** defines the capability contract; an **instance** is a configured,
+  identified realization hosted by an IX Node. A Xlet need not own a separate
+  process. Persistence is optional and must be explicit in its durability contract
+  (what survives restart, where, and under whose ownership); the name alone implies
+  neither durable state nor a particular lifecycle. Spelling: **Xlet**.
+- **Observational Xlet** — a Xlet whose role is observation rather than mutation;
+  a **sonde** (probe) is the observational specialization in this proposed model.
+  Calling an existing `ixctl` probe a Xlet is a conceptual mapping, not evidence
+  that a new Xlet runtime or adapter is implemented.
+- **Observation** — source-attributed data with an observation timestamp and stated
+  meaning; distinguish time observed from time received when they differ. An
+  observation describes what was observed, not an instruction, permission, or proof
+  of a broader outcome. Missing data is unknown, not automatically zero.
+- **Channel** — the transport path carrying observations or other messages. It is
+  neither the source capability nor the data itself, and delivery alone does not
+  establish acceptance or successful execution.
+- **Xlet API** — the capability's explicit interface. Query, configuration and
+  subscription are distinct operations: reading a value, changing configuration
+  and receiving updates are not interchangeable permissions. An instance need only
+  expose the operations its contract supports; a channel is not its whole API.
+- **Widget** — a generic presentation component, not specific to IX. A web widget
+  may register a custom HTML element; that is a web capability, not a guarantee
+  that the same DOM component runs in Godot, another 3D engine or an ASCII surface.
+  Cross-surface presentation requires an appropriate renderer adapter.
+- **IXget** — an IX-specialized widget presenting IX object identity, state and
+  allowed actions. Distinct from a **Xlet** (backend capability) and an **IX Node**
+  (logical host). There is no required one-to-one IXget/Xlet pairing: an IXget may
+  compose several capabilities, and several IXgets may present the same object.
+  Proposed 2D/3D/PWA/ASCII adapters reuse object references and shared authoritative
+  state, not necessarily rendering code. A cross-surface drag transfers a reference,
+  not a copied authoritative state; the destination rechecks permissions before
+  reading or invoking actions. Adapter availability is not implied by the name.
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules
