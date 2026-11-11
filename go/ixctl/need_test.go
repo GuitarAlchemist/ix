@@ -1161,3 +1161,138 @@ func TestNeedBudgetOverTheCLI(t *testing.T) {
 		t.Fatalf("settle over the CLI: %+v %v", r, err)
 	}
 }
+
+func TestNeedJSONPersistenceAndRetry(t *testing.T) {
+	for _, body := range []string{`{"text":"<>&"}`, `{"text":"` + strings.Repeat("x", maxNeedBody-11) + `"}`, "{\"text\":\"\u2028\u2029\"}"} {
+		for _, lost := range []bool{false, true} {
+			t.Run(fmt.Sprintf("bytes-%d/lost-%t", len(body), lost), func(t *testing.T) {
+				s, clk, path := newNeedTest(t)
+				sub := submitOf(clk, "html", time.Hour)
+				sub.Body = json.RawMessage(body)
+				want, err := json.Marshal(sub.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if lost {
+					s.failAfterRename = errors.New("lost reply")
+				}
+				_, err = s.submit(sub)
+				if lost {
+					wantStatus(t, err, 503, "unknown")
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				s.failAfterRename = nil
+				retry, err := s.submit(sub)
+				if err != nil || !retry.Duplicate {
+					t.Fatalf("retry: %+v %v", retry, err)
+				}
+				s = newNeedStore(path, clk.now)
+				sub.Body = want // Retry the persisted/transport-escaped spelling, too.
+				retry, err = s.submit(sub)
+				if err != nil || !retry.Duplicate || string(retry.Body) != string(want) {
+					t.Fatalf("restart: %+v %v", retry, err)
+				}
+				c, err := s.claim(sub.ID, "resolver", 60000)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = s.resolve(sub.ID, "resolver", c.Claim.Fence, sub.Body); err != nil {
+					t.Fatal(err)
+				}
+				s = newNeedStore(path, clk.now)
+				r, err := s.status(sub.ID, sub.Requester, sub.Incarnation, "")
+				if err != nil || string(r.Answer) != string(want) {
+					t.Fatalf("answer after restart: %+v %v", r, err)
+				}
+			})
+		}
+	}
+}
+
+func TestNeedTransitionUsesOneClockSample(t *testing.T) {
+	for _, op := range []string{"resolve", "refuse", "reserve", "claim"} {
+		for _, boundary := range []string{"deadline", "lease"} {
+			t.Run(op+"/"+boundary, func(t *testing.T) {
+				s, clk, path := newNeedTest(t)
+				sub := submitOf(clk, "n1", time.Hour)
+				sub.Budget = &needBudget{TotalTokens: 10}
+				if _, err := s.submit(sub); err != nil {
+					t.Fatal(err)
+				}
+				lease := int64(1000)
+				if boundary == "deadline" && op != "claim" {
+					lease = maxNeedLease.Milliseconds()
+				}
+				c, err := s.claim(sub.ID, "resolver", lease)
+				if err != nil {
+					t.Fatal(err)
+				}
+				limit := c.Claim.LeaseUntilMS
+				if boundary == "deadline" || op == "claim" {
+					limit = sub.DeadlineMS
+				}
+				before := limit - 1
+				calls := 0
+				s.now = func() time.Time {
+					calls++
+					if calls == 1 {
+						return time.UnixMilli(before)
+					}
+					return time.UnixMilli(limit)
+				}
+				var r needReply
+				switch op {
+				case "resolve":
+					r, err = s.resolve(sub.ID, "resolver", c.Claim.Fence, json.RawMessage(`true`))
+				case "refuse":
+					r, err = s.refuse(sub.ID, "resolver", c.Claim.Fence, "no")
+				case "reserve":
+					r, err = s.reserve(sub.ID, "resolver", c.Claim.Fence, "r1", "deterministic", 1)
+				case "claim":
+					r, err = s.claim(sub.ID, "other", 1000)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if calls != 1 {
+					t.Fatalf("clock sampled %d times, want one", calls)
+				}
+				if r.Resolution != nil && r.Resolution.AtMS != before {
+					t.Fatalf("resolution: %+v", r.Resolution)
+				}
+				if op == "reserve" && r.Budget.Reservations[0].AtMS != before {
+					t.Fatal("wrong reservation timestamp")
+				}
+				restarted := newNeedStore(path, clk.now)
+				if err := restarted.ready(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestNeedJSONEscapedSizeBound(t *testing.T) {
+	s, clk, path := newNeedTest(t)
+	sub := submitOf(clk, "n1", time.Hour)
+	oversized := json.RawMessage(`{"text":"` + strings.Repeat("<", maxNeedBody-11) + `"}`)
+	sub.Body = oversized
+	_, err := s.submit(sub)
+	wantStatus(t, err, 400, "persisted JSON")
+	sub.Body = json.RawMessage(`true`)
+	if _, err = s.submit(sub); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.claim(sub.ID, "resolver", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.resolve(sub.ID, "resolver", c.Claim.Fence, oversized)
+	wantStatus(t, err, 400, "persisted JSON")
+	restarted := newNeedStore(path, clk.now)
+	r, err := restarted.status(sub.ID, sub.Requester, sub.Incarnation, "")
+	if err != nil || r.State != "claimed" {
+		t.Fatalf("rejected answer changed store: %+v %v", r, err)
+	}
+}

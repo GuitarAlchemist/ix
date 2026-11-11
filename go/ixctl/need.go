@@ -406,7 +406,11 @@ func (s *needStore) writeTemp(tmp string, b []byte) error {
 
 // expire moves a live need past its deadline to expired, persisted, before any op reads it.
 func (s *needStore) expire(i int, n *need) (*need, error) {
-	if n.terminal() || s.now().UnixMilli() < n.DeadlineMS {
+	return s.expireAt(i, n, s.now().UnixMilli())
+}
+
+func (s *needStore) expireAt(i int, n *need, now int64) (*need, error) {
+	if n.terminal() || now < n.DeadlineMS {
 		return n, nil
 	}
 	next := *n
@@ -419,6 +423,10 @@ func (s *needStore) expire(i int, n *need) (*need, error) {
 
 // get finds a need, reconciled and expired as due.
 func (s *needStore) get(id string) (int, *need, error) {
+	return s.getAt(id, s.now().UnixMilli())
+}
+
+func (s *needStore) getAt(id string, now int64) (int, *need, error) {
 	if err := s.ready(); err != nil {
 		return 0, nil, err
 	}
@@ -426,7 +434,7 @@ func (s *needStore) get(id string) (int, *need, error) {
 	if n == nil {
 		return 0, nil, &opError{status: 404, msg: fmt.Sprintf("need %q not found", id)}
 	}
-	n, err := s.expire(i, n)
+	n, err := s.expireAt(i, n, now)
 	return i, n, err
 }
 
@@ -573,11 +581,16 @@ func checkJSON(field string, raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 || len(raw) > maxNeedBody {
 		return nil, badRequest("%s: 1 to %d bytes of JSON", field, maxNeedBody)
 	}
-	var b bytes.Buffer
-	if err := json.Compact(&b, raw); err != nil {
+	// Marshal RawMessage exactly as commit does: compact and escape HTML and JS
+	// separators before hashing, so the file and either spelling of a retry agree.
+	b, err := json.Marshal(raw)
+	if err != nil {
 		return nil, badRequest("%s: not JSON", field)
 	}
-	return b.Bytes(), nil
+	if len(b) > maxNeedBody {
+		return nil, badRequest("%s: persisted JSON exceeds %d bytes", field, maxNeedBody)
+	}
+	return b, nil
 }
 
 func (s *needStore) submit(r needSubmit) (needReply, error) {
@@ -682,11 +695,11 @@ func (s *needStore) claim(id, resolver string, leaseMS int64) (needReply, error)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	i, n, err := s.get(id)
+	now := s.now().UnixMilli()
+	i, n, err := s.getAt(id, now)
 	if err != nil {
 		return needReply{}, err
 	}
-	now := s.now().UnixMilli()
 	switch {
 	case n.terminal():
 		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("need %q is %s", id, n.State)}
@@ -706,8 +719,8 @@ func (s *needStore) claim(id, resolver string, leaseMS int64) (needReply, error)
 }
 
 // answerable checks that resolver holds the live claim fenced by fence.
-func (s *needStore) answerable(id, resolver string, fence uint64) (int, *need, error) {
-	i, n, err := s.get(id)
+func (s *needStore) answerable(id, resolver string, fence uint64, now int64) (int, *need, error) {
+	i, n, err := s.getAt(id, now)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -722,7 +735,7 @@ func (s *needStore) answerable(id, resolver string, fence uint64) (int, *need, e
 		return 0, nil, &opError{status: 409, msg: fmt.Sprintf("stale fence %d for need %q", fence, id)}
 	case resolver != n.Claim.Resolver:
 		return 0, nil, &opError{status: 409, msg: fmt.Sprintf("resolver %q does not hold the claim on %q", resolver, id)}
-	case s.now().UnixMilli() >= n.Claim.LeaseUntilMS:
+	case now >= n.Claim.LeaseUntilMS:
 		return 0, nil, &opError{status: 409, msg: fmt.Sprintf("the lease on %q was lost at %d", id, n.Claim.LeaseUntilMS)}
 	}
 	return i, n, nil
@@ -735,13 +748,14 @@ func (s *needStore) resolve(id, resolver string, fence uint64, answer json.RawMe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	i, n, err := s.answerable(id, resolver, fence)
+	now := s.now().UnixMilli()
+	i, n, err := s.answerable(id, resolver, fence, now)
 	if err != nil {
 		return needReply{}, err
 	}
 	next := *n
 	next.State, next.Rev, next.Answer = "resolved", n.Rev+1, answer
-	next.Resolution = &needResolution{Resolver: resolver, Fence: fence, AtMS: s.now().UnixMilli()}
+	next.Resolution = &needResolution{Resolver: resolver, Fence: fence, AtMS: now}
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
@@ -754,13 +768,14 @@ func (s *needStore) refuse(id, resolver string, fence uint64, reason string) (ne
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	i, n, err := s.answerable(id, resolver, fence)
+	now := s.now().UnixMilli()
+	i, n, err := s.answerable(id, resolver, fence, now)
 	if err != nil {
 		return needReply{}, err
 	}
 	next := *n
 	next.State, next.Rev, next.Reason = "refused", n.Rev+1, reason
-	next.Resolution = &needResolution{Resolver: resolver, Fence: fence, AtMS: s.now().UnixMilli()}
+	next.Resolution = &needResolution{Resolver: resolver, Fence: fence, AtMS: now}
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
@@ -783,7 +798,8 @@ func (s *needStore) reserve(id, resolver string, fence uint64, rid, runner strin
 	digest := reservationDigest(resolver, fence, runner, tokens)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, n, err := s.get(id)
+	now := s.now().UnixMilli()
+	_, n, err := s.getAt(id, now)
 	if err != nil {
 		return needReply{}, err
 	}
@@ -801,7 +817,7 @@ func (s *needStore) reserve(id, resolver string, fence uint64, rid, runner strin
 	if n.Budget == nil {
 		return needReply{}, &opError{status: 409, msg: fmt.Sprintf("need %q has no budget", id)}
 	}
-	i, n, err := s.answerable(id, resolver, fence)
+	i, n, err := s.answerable(id, resolver, fence, now)
 	if err != nil {
 		return needReply{}, err
 	}
@@ -814,7 +830,7 @@ func (s *needStore) reserve(id, resolver string, fence uint64, rid, runner strin
 	next := *n
 	next.Rev = n.Rev + 1
 	next.Reservations = append(append([]needReservation(nil), n.Reservations...), needReservation{ID: rid, Digest: digest,
-		Resolver: resolver, Fence: fence, Runner: runner, Tokens: tokens, AtMS: s.now().UnixMilli(), State: "reserved"})
+		Resolver: resolver, Fence: fence, Runner: runner, Tokens: tokens, AtMS: now, State: "reserved"})
 	if err := s.commit(i, &next, s.fence); err != nil {
 		return needReply{}, err
 	}
