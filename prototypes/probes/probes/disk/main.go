@@ -1,3 +1,5 @@
+//go:build windows
+
 // Command disk reads the free and total space of the machine's local fixed
 // drives from WMI and prints one JSON line per metric and drive, every
 // PROBE_INTERVAL_MS milliseconds (1000 by default): disk_c_free_gb,

@@ -1,3 +1,5 @@
+//go:build windows
+
 // Command sysinfo reads the machine's memory and processor load from WMI and
 // prints one JSON line per metric, every PROBE_INTERVAL_MS milliseconds
 // (1000 by default). It exits when it can no longer write to stdout, that is
