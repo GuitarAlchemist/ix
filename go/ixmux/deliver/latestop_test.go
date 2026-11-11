@@ -110,3 +110,46 @@ func TestALateErrorDuringAStopKeepsTheDeadlineAndItsTransition(t *testing.T) {
 		t.Errorf("%d adapter calls, want 1", g.callCount())
 	}
 }
+
+// Outside a stop a late error is the target's: the cause becomes adapter-error, but the reason
+// keeps what made the mandate uncertain first (the deadline's text), then the error, so that a
+// compacted log still says both (P3-7, case c of ix-ixmux-38's characterization).
+func TestALateErrorKeepsTheDeadlinesReasonThroughACompaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmd.jsonl")
+	e, _, err := Open(path, Options{Timeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := newGated(1)
+	g.err = errors.New("target said no: exit status 3")
+	e.Register("c", g.target())
+	if res, _ := e.Deliver(context.Background(), Mandate{MandateID: "m1", Target: "c", Incarnation: "i", Text: "t"}); res.State != Uncertain || res.Cause != CauseDeadline {
+		t.Fatalf("at the deadline: %s cause %q", res.State, res.Cause)
+	}
+	deadlineReason := lateEntry(e, "m1").Reason
+	close(g.release)
+	for end := time.Now().Add(5 * time.Second); lateEntry(e, "m1").StillRunning; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the late answer was never recorded")
+		}
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := os.Stat(path)
+	e2, rec, err := Open(path, Options{Timeout: 100 * time.Millisecond, MaxLogBytes: st.Size() * 5 / 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := lateEntry(e2, "m1")
+	e2.Close()
+	if rec.Compacted == nil {
+		t.Fatalf("the reopen did not compact (size %d)", st.Size())
+	}
+	if after.Cause != CauseAdapterError || after.Last != "delivering->uncertain" {
+		t.Errorf("compacted: last %q cause %q, want delivering->uncertain, adapter-error", after.Last, after.Cause)
+	}
+	if deadlineReason == "" || !strings.HasPrefix(after.Reason, deadlineReason) || !strings.Contains(after.Reason, "target said no") {
+		t.Errorf("compacted reason %q: want the deadline's %q, then the late error", after.Reason, deadlineReason)
+	}
+}

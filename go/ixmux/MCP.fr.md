@@ -159,7 +159,8 @@ Entrée : `{mandate_id}`. Sortie :
   réponse dans le délai de livraison d'ixmux), `adapter-error` (la cible a répondu une erreur,
   `is_error` compris), `restart` (ixmux s'est arrêté, proprement ou non, ou a redémarré pendant la livraison), `log-write-failed` (son
   état final n'a pas pu être écrit). Un mandat passé son délai dont l'appel finit ensuite en erreur
-  pendant l'arrêt d'ixmux garde `deadline`, l'erreur ajoutée à sa `reason`. Toute autre valeur venue d'ixmux est écartée. La saturation
+  pendant l'arrêt d'ixmux garde `deadline`, l'erreur ajoutée à sa `reason` ; hors arrêt il passe
+  à `adapter-error`, sa `reason` commençant toujours par celle de l'échéance. Toute autre valeur venue d'ixmux est écartée. La saturation
   n'est pas un état : c'est un dépôt refusé, `target-busy` ou `busy`.
 - `receipt`, `text`, `ack_seen` et `truncated` apparaissent une fois livré avec une réponse.
   `text` fait 4 Kio au plus ; `truncated: true` dit que la réponse était plus longue et que sa fin

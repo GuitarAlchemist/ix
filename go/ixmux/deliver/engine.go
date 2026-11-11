@@ -604,6 +604,7 @@ func outcome(c callResult) (to State, reason, cause string, ack *Ack) {
 // observeLate records the answer of an adapter call that returned after its caller's deadline.
 // A certain answer settles the uncertain delivery; an unknown one is logged and leaves it so.
 // @ai:invariant a late error during a stop keeps the uncertain mandate's first transition and cause, compacted or not [T:test conf:0.85 src:go/ixmux/deliver/latestop_test.go:TestALateErrorDuringAStopKeepsTheDeadlineAndItsTransition]
+// @ai:invariant a late error keeps the reason that made the mandate uncertain, compacted or not [T:test conf:0.85 src:go/ixmux/deliver/latestop_test.go:TestALateErrorKeepsTheDeadlinesReasonThroughACompaction]
 func (e *Engine) observeLate(k key, inc string, c callResult) {
 	to, reason, cause, ack := outcome(c)
 	if reason == "" {
@@ -617,11 +618,12 @@ func (e *Engine) observeLate(k key, inc string, c callResult) {
 	var prev State
 	if still && to == Uncertain {
 		// An unknown late answer leaves the mandate uncertain: the record keeps the transition
-		// that made it so (Prev), compacted or not. During a stop the error is the stop's, not
-		// the target's: the first cause stays.
+		// that made it so (Prev) and its reason, then the late one, compacted or not. During a
+		// stop the error is the stop's, not the target's: the first cause stays.
 		prev = r.prev
+		reason = r.reason + "; then " + reason
 		if e.stopping {
-			reason, cause = r.reason+"; then "+reason, r.cause
+			cause = r.cause
 		}
 	}
 	e.mu.Unlock()
