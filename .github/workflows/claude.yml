@@ -59,6 +59,8 @@ jobs:
           # or https://code.claude.com/docs/en/cli-reference for available options
           # cargo and go were refused, so a task pushed tests it could not run (#396).
           # Build, test and lint subcommands only: no `cargo run`, `cargo install` or `go run`.
+          # git fetch and git merge too: a task asked to bring main into its branch was refused
+          # both, twice (#476, #390, 2026-11-11), and left the branch red on a defect main had fixed.
           claude_args: |
-            --allowedTools "Bash(cargo build:*),Bash(cargo check:*),Bash(cargo test:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go vet:*),Bash(go test:*),Bash(gofmt:*)"
+            --allowedTools "Bash(cargo build:*),Bash(cargo check:*),Bash(cargo test:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go vet:*),Bash(go test:*),Bash(gofmt:*),Bash(git fetch:*),Bash(git merge:*)"
 
