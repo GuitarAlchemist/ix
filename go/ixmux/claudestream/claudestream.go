@@ -84,6 +84,8 @@ var (
 	testHookBeforeRelaunch func()
 	// testHookBeforeRelease runs in watch once the turn has ended, before the reservation is freed.
 	testHookBeforeRelease func()
+	// testHookBeforeExitNote runs in router once the child is reaped, before its exit is noted.
+	testHookBeforeExitNote func()
 	// killJob kills a child's job; a test replaces it to make the kill fail.
 	killJob = func(j *job) error { return j.kill() }
 )
@@ -135,6 +137,7 @@ type child struct {
 	stdin   io.WriteCloser
 	initCh  chan struct{}
 	exited  chan struct{}
+	reaped  chan struct{} // closed once the process is reaped, before its exit is noted
 	stopper sync.Once
 	overOne sync.Once
 
@@ -278,7 +281,7 @@ func (a *Adapter) startChild() (*child, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &child{a: a, session: uuid(), initCh: make(chan struct{}), exited: make(chan struct{})}
+	c := &child{a: a, session: uuid(), initCh: make(chan struct{}), exited: make(chan struct{}), reaped: make(chan struct{})}
 	c.cmd = exec.Command(cfg.Bin, Args(c.session)...)
 	c.cmd.Dir = cfg.Dir
 	c.cmd.Env = childEnv(cfg.PassEnv, cfg.Env)
@@ -429,6 +432,7 @@ func (c *child) router(lines <-chan lineMsg, stderr io.Closer) {
 		c.route(l)
 	}
 	werr := c.cmd.Wait()
+	close(c.reaped)
 	stderr.Close()
 	if werr == nil {
 		werr = errors.New("claude exited")
@@ -444,6 +448,9 @@ func (c *child) router(lines <-chan lineMsg, stderr io.Closer) {
 	c.mu.Unlock()
 	if p != nil {
 		p.resolve(turnResult{err: werr})
+	}
+	if testHookBeforeExitNote != nil {
+		testHookBeforeExitNote()
 	}
 	c.a.note(map[string]any{"ixmux": "exit", "incarnation": c.session, "error": werr.Error(), "at": time.Now().UTC()})
 	close(c.exited)
@@ -646,10 +653,14 @@ func (c *child) send(id, text string, gen int, inc string) (*turn, error) {
 	return p, nil
 }
 
-// kill kills the child's job and waits StopWait at most for it to exit. Past it, whether the kill
+// kill kills the child's job and waits StopWait at most for it to die (reaped: the wait is for the
+// process, not for the exit line ixmux then writes and syncs, which a busy disk can hold longer
+// than StopWait). A child that died is then waited for until its exit is noted, so the journal
+// keeps exit before the stop step. Past StopWait, whether the kill
 // failed or the child did not die, the incarnation is lost: the child is dead with kill-failed,
 // its pending turn resolves with that error, and the line is noted. Nothing waits on it longer.
 // @ai:invariant every wait after a kill is bounded by StopWait; past it the incarnation is lost (kill-failed) and its turn resolves in error [T:test conf:0.85 src:go/ixmux/claudestream/s6c_kill_test.go:TestKillThatFailsAtTurnMax]
+// @ai:invariant a killed child that died within StopWait is never lost, however long its exit takes to be noted [T:test conf:0.85 src:go/ixmux/claudestream/kill_reap_test.go:TestAKilledChildIsNotLostWhileItsExitIsStillBeingNoted]
 func (c *child) kill() error {
 	kerr := killJob(c.job)
 	// Release a blocked writer even if killing the job failed, without changing
@@ -661,7 +672,8 @@ func (c *child) kill() error {
 		c.stdin.Close()
 	}
 	select {
-	case <-c.exited:
+	case <-c.reaped:
+		<-c.exited
 		return nil
 	case <-time.After(c.a.cfg.StopWait):
 	}
