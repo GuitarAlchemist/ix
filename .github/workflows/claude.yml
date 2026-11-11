@@ -28,7 +28,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          submodules: recursive
+          # Full history: a shallow checkout has no merge base with main, so
+          # `git diff origin/main...HEAD` fails ("no merge base", #396).
+          fetch-depth: 0
+
+      # Rust as ci.yml prepares it, so a task can build, test and lint what it wrote.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Run Claude Code
         id: claude
@@ -46,5 +57,8 @@ jobs:
           # Optional: Add claude_args to customize behavior and configuration
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+          # cargo and go were refused, so a task pushed tests it could not run (#396).
+          # Build, test and lint subcommands only: no `cargo run`, `cargo install` or `go run`.
+          claude_args: |
+            --allowedTools "Bash(cargo build:*),Bash(cargo check:*),Bash(cargo test:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go vet:*),Bash(go test:*),Bash(gofmt:*)"
 
