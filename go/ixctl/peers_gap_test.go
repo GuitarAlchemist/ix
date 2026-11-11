@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -291,4 +292,112 @@ func nextEnvWithin(t *testing.T, cur *Cursor, d time.Duration) *Envelope {
 		t.Fatalf("cursor: envs %v gap %v err %v", envs, gap, err)
 	}
 	return envs[0]
+}
+
+// keysOf lists the members of a marker's data, sorted: what a marker says, and nothing else.
+func keysOf(e *Envelope) string {
+	d := dataOf(e)
+	keys := make([]string, 0, len(d))
+	for k := range d {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, " ")
+}
+
+// Criterion 5 of ix#408 with a wanted pipe (D4 ix#402 Q6: a gap in the child's history becomes a
+// "continuity not guaranteed" marker on each wanted mirrored channel, distinct from a local gap,
+// without a per-pipe loss count: a gap in B's history does not prove that `cpu` lost samples).
+// The peer's history expires while the link is down, same boot. On the parent, read from one
+// cursor that meets no gap of its own: the mirrored ctl carries the peer's answer
+// (`since-too-old` on the resumed svc/, with the peer's own `from` and `oldest`), and the wanted
+// pipe opens with a marker before its first sample: the boot it reads and the last frame
+// mirrored before, a boundary. Both are envelopes of the parent's own (its origin, no src_seq),
+// not gap frames, and neither says a number of records lost.
+func TestAnExpiredHistoryIsMarkedOnTheWantedPipeAsABoundaryWithoutACount(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	epoch := b.plane.Epoch()
+	cb := dial(t, b)
+	do(t, cb, Request{Op: "probe.create", Probe: node("cpu", "heartbeat@1", 10, map[string]any{"export": true})})
+	do(t, cb, Request{Op: "probe.start", Node: "cpu"})
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"cpu"}}, NewHub("a"))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	up := func(st PeerStatus) bool { return st.State == "up" && st.Probes[0].State == pipeMirrored }
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	go l.run(ctx1)
+	waitLinkStatus(t, l, up)
+	b.plane.Publish("svc/x", event("stats", map[string]any{"n": 0}))
+	var resumed *Envelope // the svc/ frame the link resumes from
+	var lastSample uint64 // the last frame mirrored on the pipe
+	for resumed == nil || lastSample == 0 {
+		switch e := nextEnvWithin(t, cur, 10*time.Second); {
+		case e.Ch == "peer/b/svc/x":
+			resumed = e
+		case e.Ch == "peer/b/probe/cpu" && e.Ev.Kind == "sample":
+			lastSample = e.SrcSeq
+		}
+	}
+	cancel1()
+	waitLink(t, l, "down")
+	for { // what the first session mirrored after that: the marker names the last of it
+		dctx, dcancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		envs, gap, _ := cur.Next(dctx, 64)
+		dcancel()
+		if gap != nil {
+			t.Fatalf("a local gap on the parent's own cursor: %+v", gap)
+		}
+		if len(envs) == 0 {
+			break
+		}
+		for _, e := range envs {
+			if e.Ch == "peer/b/probe/cpu" && e.Ev.Kind == "sample" {
+				lastSample = e.SrcSeq
+			}
+		}
+	}
+
+	for i := 1; i <= ringSize+64; i++ { // b's ring turns over: its history before this is gone
+		b.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
+	}
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go l.run(ctx2)
+	var onCtl, onPipe, sample *Envelope
+	for onCtl == nil || sample == nil {
+		// nextEnvWithin refuses a gap on this cursor: every marker below is an envelope in the
+		// mirrored stream, read without the parent's own stream having lost anything.
+		e := nextEnvWithin(t, cur, 10*time.Second)
+		switch {
+		case e.Ch == "peer/b/ctl" && e.Ev.Kind == linkGapKind:
+			if onCtl != nil {
+				t.Fatalf("a second marker on the mirrored ctl: %s", e.Raw())
+			}
+			onCtl = e
+		case e.Ch != "peer/b/probe/cpu":
+		case onPipe == nil:
+			onPipe = e // the pipe's first envelope of the session, whatever it is
+		case e.Ev.Kind == "sample":
+			sample = e
+		}
+	}
+	g := gapOf(t, onCtl)
+	if onCtl.Origin != "a" || onCtl.SrcSeq != 0 || onCtl.SrcEpoch != "" || g.Peer != "b" || g.Prefix != "svc/" || g.Reason != "since-too-old" ||
+		g.SrcEpoch != epoch || g.From != resumed.SrcSeq+1 || g.Oldest <= g.From {
+		t.Fatalf("the expired history on the mirrored ctl: %s, want the parent's own since-too-old on svc/ from %d", onCtl.Raw(), resumed.SrcSeq+1)
+	}
+	if keys := keysOf(onCtl); keys != "from oldest peer prefix reason src_epoch" {
+		t.Fatalf("the ctl marker says [%s]: want what the peer answered and no count", keys)
+	}
+	m := gapOf(t, onPipe)
+	if onPipe.Origin != "a" || onPipe.SrcSeq != 0 || onPipe.SrcEpoch != "" || m.Peer != "b" || m.Reason != "live-start" ||
+		m.SrcEpoch != epoch || m.LastSrcEpoch != epoch || m.LastSrcSeq != lastSample {
+		t.Fatalf("the wanted pipe's first envelope after the expiry: %s, want the parent's own marker of %s after frame %d", onPipe.Raw(), epoch, lastSample)
+	}
+	if keys := keysOf(onPipe); keys != "last_src_epoch last_src_seq peer reason src_epoch" {
+		t.Fatalf("the pipe marker says [%s]: want a boundary (the boot read, the last frame mirrored) and no count", keys)
+	}
+	if sample.SrcEpoch != epoch || sample.SrcSeq <= lastSample+ringSize {
+		t.Fatalf("the sample after the marker is %d of %s, want the same boot more than a ring past %d", sample.SrcSeq, sample.SrcEpoch, lastSample)
+	}
 }
