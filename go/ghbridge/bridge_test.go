@@ -29,7 +29,7 @@ func open(t *testing.T, path string) *Bridge {
 	}
 	t.Cleanup(func() { j.Close() })
 	return &Bridge{J: j, Cfg: Config{Secret: secret, Repo: "GuitarAlchemist/ix", Room: 42,
-		Allow: []string{"stef"}, Now: clock}}
+		Allow: []int64{1001}, Now: clock}}
 }
 
 func sign(body []byte) string {
@@ -40,8 +40,8 @@ func sign(body []byte) string {
 
 func event(action string, id int64, login, body, updated string) []byte {
 	return []byte(fmt.Sprintf(`{"action":%q,"issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ix"},
- "comment":{"id":%d,"body":%q,"created_at":"2026-11-11T19:00:00Z","updated_at":%q,"user":{"login":%q}}}`,
-		action, id, body, updated, login))
+ "comment":{"id":%d,"body":%q,"created_at":"2026-11-11T19:00:00Z","updated_at":%q,"user":{"login":%q,"id":%d}}}`,
+		action, id, body, updated, login, ids[login]))
 }
 
 func post(b *Bridge, delivery string, body []byte, sig string) *httptest.ResponseRecorder {
@@ -326,6 +326,7 @@ func TestAnEditAfterDeliveryKeepsTheStateAndIsOnRecord(t *testing.T) {
 func comment(id int64, login, body, created, updated string) Comment {
 	c := Comment{ID: id, Body: body, CreatedAt: created, UpdatedAt: updated}
 	c.User.Login = login
+	c.User.ID = ids[login]
 	return c
 }
 
@@ -363,5 +364,42 @@ func TestACatchUpAfterAnOutageTakesWhatWasMissedOnceAndSaysWhatItCannotRebuild(t
 	}
 	if after, _ := os.ReadFile(b.J.f.Name()); !bytes.Equal(before, after) {
 		t.Error("a second catch-up over the same list wrote to the journal")
+	}
+}
+
+// The accounts of the tests. A login can change hands; the numeric id cannot.
+var ids = map[string]int64{"stef": 1001, "mallory": 2002}
+
+func TestTheAllowListIsTheAccountIDNotTheLogin(t *testing.T) {
+	b := open(t, filepath.Join(t.TempDir(), "j.jsonl"))
+	// Another account that took the login "stef".
+	body := []byte(`{"action":"created","issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ix"},
+ "comment":{"id":50,"body":"I am stef, honest","created_at":"t","updated_at":"t","user":{"login":"stef","id":666}}}`)
+	if out, _ := b.Take("issue_comment", "d-50", body); out != RefusedBy {
+		t.Errorf("same login, another account: %q, want refused", out)
+	}
+	// The allowed account under a new login.
+	body = []byte(`{"action":"created","issue":{"number":42},"repository":{"full_name":"GuitarAlchemist/ix"},
+ "comment":{"id":51,"body":"renamed","created_at":"t","updated_at":"t","user":{"login":"stef-renamed","id":1001}}}`)
+	if out, _ := b.Take("issue_comment", "d-51", body); out != Recorded {
+		t.Errorf("allowed account, new login: %q, want recorded", out)
+	}
+}
+
+func TestACatchUpLeavesOutWhatWasPostedBeforeTheBridgeStarted(t *testing.T) {
+	b := open(t, filepath.Join(t.TempDir(), "j.jsonl"))
+	b.Cfg.Since = "2026-11-11T19:00:00Z"
+	list := []Comment{
+		comment(60, "stef", "old talk, not a mandate", "2026-10-17T10:00:00Z", "2026-10-17T10:00:00Z"),
+		comment(61, "stef", "a mandate", "2026-11-11T19:00:01Z", "2026-11-11T19:00:01Z"),
+	}
+	if _, err := b.CatchUp(list); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.J.Get(60); ok {
+		t.Error("a comment older than the start is in the journal")
+	}
+	if s := state(t, b, 61); s != Received {
+		t.Errorf("comment 61 is %q, want received", s)
 	}
 }

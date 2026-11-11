@@ -16,16 +16,19 @@ import (
 
 // Config says which comments are mandates.
 type Config struct {
-	Secret []byte   // the webhook's secret
-	Repo   string   // "owner/name": deliveries from another repository are ignored
-	Room   int      // the issue number of the dedicated room
-	Allow  []string // logins whose comments are mandates
-	Now    func() time.Time
+	Secret []byte  // the webhook's secret
+	Repo   string  // "owner/name": deliveries from another repository are ignored
+	Room   int     // the issue number of the dedicated room
+	Allow  []int64 // numeric ids of the accounts whose comments are mandates; a login can change hands
+	// Since, when set (RFC 3339), is when the bridge started: a catch-up leaves out a comment
+	// created before it that the journal does not know.
+	Since string
+	Now   func() time.Time
 }
 
-func (c Config) allowed(login string) bool {
+func (c Config) allowed(id int64) bool {
 	for _, a := range c.Allow {
-		if strings.EqualFold(a, login) {
+		if a == id && id != 0 {
 			return true
 		}
 	}
@@ -61,6 +64,7 @@ type Comment struct {
 	UpdatedAt string `json:"updated_at"`
 	User      struct {
 		Login string `json:"login"`
+		ID    int64  `json:"id"`
 	} `json:"user"`
 }
 
@@ -148,7 +152,7 @@ func (b *Bridge) take(action string, c Comment, delivery, source string) (Outcom
 		if known {
 			return Duplicate, nil
 		}
-		if !b.Cfg.allowed(c.User.Login) {
+		if !b.Cfg.allowed(c.User.ID) {
 			_, err := b.J.Append(Entry{At: now, CommentID: c.ID, State: Refused, Delivery: delivery,
 				Source: source, Author: c.User.Login, Note: "author is not on the allow list"})
 			return RefusedBy, err
@@ -203,6 +207,8 @@ func (b *Bridge) CatchUp(all []Comment) (lost []string, err error) {
 		present[c.ID] = true
 		prev, known := b.J.Get(c.ID)
 		switch {
+		case !known && b.before(c.CreatedAt):
+			// Posted before the bridge started and never recorded: not a mandate for it.
 		case !known:
 			if _, err := b.take("created", c, "", "catch-up"); err != nil {
 				return lost, err
@@ -272,4 +278,15 @@ func (b *Bridge) RecordResult(commentID int64, result string) error {
 	}
 	_, err := b.J.Append(Entry{At: b.Cfg.Now(), CommentID: commentID, State: Result, Note: result})
 	return err
+}
+
+// before says whether created (RFC 3339) is earlier than Cfg.Since. Without a Since, or
+// with a date it cannot read, nothing is before: a comment is not dropped on a guess.
+func (b *Bridge) before(created string) bool {
+	if b.Cfg.Since == "" {
+		return false
+	}
+	since, err1 := time.Parse(time.RFC3339, b.Cfg.Since)
+	at, err2 := time.Parse(time.RFC3339, created)
+	return err1 == nil && err2 == nil && at.Before(since)
 }
