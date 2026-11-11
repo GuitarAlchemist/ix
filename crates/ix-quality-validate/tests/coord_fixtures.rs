@@ -108,10 +108,16 @@ fn unparseable_blocks_are_rejected() {
     }
 }
 
-#[test]
-fn extra_field_and_mention_are_rejected() {
+/// Line endings are not part of the contract: a Windows checkout may hand the
+/// fixtures over as CRLF, and the edits below must not depend on it.
+fn lf(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+fn assert_extra_field_and_mention_rejected(base: &str) {
     let validator = build_coord_validator().expect("schema compiles");
-    let base = read("valid-request.md");
+    let base = lf(base);
+    assert!(validate_comment(&validator, &base).is_ok(), "base is valid");
     let extra = base.replacen("eta: unknown\n", "eta: unknown\nnote: x\n", 1);
     assert!(validate_comment(&validator, &extra).is_err(), "extra field");
     let mention = base.replacen("to: gaia", "to: @gaia", 1);
@@ -119,4 +125,25 @@ fn extra_field_and_mention_are_rejected() {
         validate_comment(&validator, &mention).is_err(),
         "at-sign in to"
     );
+}
+
+#[test]
+fn extra_field_and_mention_are_rejected() {
+    assert_extra_field_and_mention_rejected(&read("valid-request.md"));
+}
+
+#[test]
+fn extra_field_and_mention_are_rejected_with_crlf_input() {
+    let crlf = lf(&read("valid-request.md")).replace('\n', "\r\n");
+    assert!(crlf.contains("\r\n"));
+    assert_extra_field_and_mention_rejected(&crlf);
+}
+
+#[test]
+fn crlf_block_parses_like_lf() {
+    let lf_text = lf(&read("valid-request.md"));
+    let crlf = lf_text.replace('\n', "\r\n");
+    assert_eq!(parse_block(&crlf), parse_block(&lf_text));
+    let validator = build_coord_validator().expect("schema compiles");
+    assert!(validate_comment(&validator, &crlf).is_ok());
 }
