@@ -233,7 +233,7 @@ func TestResumeHealthRefusesARedirectOffLoopback(t *testing.T) {
 			}
 			return nil, errors.New("left the machine")
 		})
-		_, err := healthProbe(rt)("http://127.0.0.1:8761/health", "")
+		_, err := healthProbe(rt, resumeHealthTimeout)("http://127.0.0.1:8761/health", "")
 		if len(tried) != 1 || err == nil || !strings.Contains(err.Error(), "leaves the loopback") {
 			t.Errorf("redirect to %s: tried %v, err %v", target, tried, err)
 		}
@@ -249,7 +249,7 @@ func TestResumeHealthRefusesARedirectOffLoopback(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
 	})
-	if body, err := healthProbe(rt)("http://127.0.0.1:8761/old", ""); err != nil || string(body) != "ok" || len(tried) != 2 {
+	if body, err := healthProbe(rt, resumeHealthTimeout)("http://127.0.0.1:8761/old", ""); err != nil || string(body) != "ok" || len(tried) != 2 {
 		t.Errorf("loopback redirect: %q %v %v", body, err, tried)
 	}
 }

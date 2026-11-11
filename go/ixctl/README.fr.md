@@ -660,7 +660,8 @@ est `unknown`, jamais supposé démarré.
   fichier, pas son contenu (ni empreinte ni signature), donc un programme renommé passe ; un
   processus qui refuse la consultation, comme un service sous son propre compte (c'est le cas de
   l'ixctl installé) ou le PID 4 de HTTP.sys, donne `unknown` ; Linux donne `unknown`.
-- `health` : une URL http(s) en boucle locale qui doit répondre 2xx ; tout autre hôte est refusé, et
+- `health` : une URL http(s) en boucle locale qui doit répondre 2xx en 2 s, en-têtes et corps (un
+  serveur qui bloque donne `down`) ; tout autre hôte est refusé, et
   une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus).
   `health_host` fixe l'en-tête Host de la requête, pour un serveur qui filtre sur lui (le workshop
   d'IxForge répond 403 à tout autre hôte). `health_expect` est un texte que le corps doit contenir,

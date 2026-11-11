@@ -100,10 +100,14 @@ func listenerImage(p resumeProbes, addr string) (string, error) {
 	return image[strings.LastIndexAny(image, `\/`)+1:], nil
 }
 
-func realResumeProbes() resumeProbes {
+func realResumeProbes() resumeProbes { return realResumeProbesOver(nil) }
+
+// realResumeProbesOver is realResumeProbes with health requests sent over rt (nil: the default
+// transport), so a test can stall them without a socket.
+func realResumeProbesOver(rt http.RoundTripper) resumeProbes {
 	return resumeProbes{
 		service:     queryService,
-		health:      healthProbe(nil),
+		health:      healthProbe(rt, resumeHealthTimeout),
 		listening:   tcpListening,
 		listenOwner: tcpListenOwner,
 		imageOf:     processImage,
@@ -114,11 +118,16 @@ func realResumeProbes() resumeProbes {
 	}
 }
 
-// healthProbe GETs a health URL over rt (nil: the default transport) within 2 s. A redirect is
-// followed only while it stays on loopback (at most 5): the inventory's loopback promise holds
-// for every hop, not only the first.
-func healthProbe(rt http.RoundTripper) func(u, host string) ([]byte, error) {
-	client := &http.Client{Timeout: 2 * time.Second, Transport: rt,
+// resumeHealthTimeout bounds one health probe: connection, redirects, headers and body. A server
+// that accepts and never answers, or stalls inside its body, is down after it, never ok.
+const resumeHealthTimeout = 2 * time.Second
+
+// healthProbe GETs a health URL over rt (nil: the default transport) within the given time (the
+// check passes resumeHealthTimeout; tests pass a shorter one). A redirect is followed only while
+// it stays on loopback (at most 5): the inventory's loopback promise holds for every hop, not
+// only the first.
+func healthProbe(rt http.RoundTripper, within time.Duration) func(u, host string) ([]byte, error) {
+	client := &http.Client{Timeout: within, Transport: rt,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if err := loopbackURL(req.URL.String()); err != nil {
 				return fmt.Errorf("redirect to %s leaves the loopback", req.URL.Redacted())

@@ -618,7 +618,8 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   `unknown`. Trust limits: it is the file's name, not its content (no hash, no signature), so a
   renamed program passes; a process that refuses the query, such as a service under its own
   account (the installed ixctl does) or HTTP.sys's PID 4, is `unknown`; Linux is `unknown`.
-- `health`: a loopback http(s) URL that must answer 2xx; any other host is refused, and a redirect
+- `health`: a loopback http(s) URL that must answer 2xx within 2 s, headers and body (a server that
+  stalls is `down`); any other host is refused, and a redirect
   is followed only while it stays on loopback (at most 5). `health_host`
   sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
   any other host). `health_expect` is text the body must contain, such as `"name":"IxForge"`: a
