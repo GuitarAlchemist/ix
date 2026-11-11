@@ -628,6 +628,141 @@ enregistrements les enfreignent est refusé au démarrage. Chaque op `bookmark.*
 à un pair (`peer`), dans la séquence duquel le signet pointe alors ; le rejeu reste local à ce
 pair.
 
+## Besoins (needs)
+
+Un besoin est une question qu'une tâche en attente pose au plan (issue #486) : `information`,
+`authorization` ou `capacity`. Il porte une échéance absolue, `deadline_ms`, qui ne bouge jamais. Le
+plan le garde dans `<state>/<name>.needs.json`, à part de l'anneau d'événements. Il survit au
+processus qui l'a posé, et un redémarrage du plan garde chaque besoin, échéance, prise en charge et
+jeton de fencing tels qu'écrits.
+
+```text
+ixctl need submit  --name desk < q.json   # {"id","kind","requester","incarnation","body","deadline_ms"}
+ixctl need claim   --name desk < c.json   # {"id","resolver","lease_ms"} -> claim.fence
+ixctl need resolve --name desk < r.json   # {"id","resolver","fence","answer"}  (refuse : "reason")
+ixctl need wait    --name desk < w.json   # {"id","requester","incarnation","timeout_ms"}
+ixctl need status  --name desk < s.json   # {"id","requester","incarnation"}
+```
+
+Chaque op est `POST /v1/need/<op>`, ou une trame `need.<op>` sur le WebSocket, avec le jeton
+bearer. Chacune répond avec le besoin à sa `rev`, que chaque transition augmente de un.
+
+- **Submit** est idempotent sur `id`.
+  - Le même contenu rend le même besoin avec `duplicate: true`, même après un redémarrage ou passé
+    l'échéance. Son `digest` sha256 couvre kind, requester, incarnation, échéance et body.
+  - Un autre contenu sous le même `id` est un 409.
+  - Les bornes sont vérifiées avant toute écriture :
+    - `id` suit la règle des noms d'instance ;
+    - body et réponse font au plus 4096 octets de JSON ;
+    - l'échéance est après maintenant et dans les 7 jours ;
+    - un plan garde au plus 256 besoins.
+- **Claim** donne à un seul répondant un bail, d'au plus une heure, et un nouveau `fence`.
+  - Seul ce répondant peut `resolve` ou `refuse`. Il doit utiliser ce fence, tant que le bail tient
+    et avant l'échéance.
+  - Toute autre réponse est un 409 qui dit pourquoi : fence périmé, bail perdu, expiré, ou déjà
+    résolu. Une réponse tardive ne résout jamais.
+  - Une fois un bail échu, un autre répondant peut prendre le besoin, et reçoit un fence plus grand.
+- **Wait** rend l'issue `resolved`, `refused` ou `expired`. Il rend `wait-timeout` quand son propre
+  `timeout_ms` passe d'abord.
+  - Une attente expirée ou annulée laisse le besoin tel quel.
+  - Un besoin expiré ne dit rien de la tâche, ni des effets déjà produits.
+- **Status** montre l'état, la prise en charge et la résolution à tout détenteur du jeton.
+  - La question (`body`) va au requester et à l'incarnation qui l'ont posée, et au répondant qui
+    détient une prise en charge vivante : la réponse au claim la porte, de même que `status` avec
+    `resolver`.
+  - La `answer` ne va qu'au requester et à l'incarnation qui ont posé le besoin.
+
+**Les identités sont déclarées, pas authentifiées.**
+- `requester`, `incarnation` et `resolver` sont des noms que l'appelant déclare. Le plan ne les
+  authentifie pas.
+- Tout détenteur du jeton bearer du plan a la même confiance. Réserver la question et la réponse
+  comme ci-dessus est une corrélation chez un seul propriétaire de confiance, pas une isolation.
+
+**Un besoin `authorization` n'accorde rien.**
+- C'est un enregistrement pour les propres contrôles du demandeur, jamais une permission.
+- Le demandeur ne peut pas prendre son propre besoin `authorization`.
+- Les ops need ne sont jamais relayées à un pair.
+
+**Durabilité.** Chaque transition écrit le fichier entier dans un temporaire, le synchronise, puis
+le renomme par-dessus l'ancien. L'op ne répond qu'une fois le renommage revenu.
+- Les tests interrompent une écriture avant le renommage, pendant, et après. Dans chaque cas, une
+  réouverture trouve l'état précédent ou l'état committé, ou répond `unknown`.
+  - Un commit dont la réponse s'est perdue est retrouvé à la réouverture, et une réponse rejouée est
+    refusée.
+  - Ce sont des interruptions injectées : elles prouvent le modèle, pas le système d'exploitation.
+- Non couvert : une coupure de courant, et l'atomicité du renommage lui-même sous Windows.
+  `os.Rename` ne promet pas d'atomicité hors Unix, et rien ici ne synchronise le dossier. Quand une
+  réouverture ne peut pas trancher, elle répond `unknown` (fail-closed), jamais un magasin vide.
+- Chaque op need répond 503 `unknown` jusqu'à réconciliation quand le fichier :
+  - est illisible ;
+  - enfreint les invariants des enregistrements ;
+  - dépasse sa borne en octets ;
+  - ou manque alors que son temporaire reste.
+
+  Un tel fichier n'est jamais vidé ni réécrit.
+- Quand un renommage échoue, l'issue de l'op est inconnue (503). L'op suivante relit le fichier ;
+  rien n'est rejoué de mémoire.
+
+**Aucun répondant ne tourne ici.** Les ops need enregistrent une question, sa réponse et ses
+comptes de tokens. Aucune ne lance ni n'appelle un répondant : le répondant est le processus,
+quel qu'il soit, qui prend le besoin.
+
+### Budget de tokens : comptabilité et admission, pas un plafond fournisseur
+
+Une échéance borne le temps ; un budget borne les tokens. Ce sont deux limites distinctes,
+vérifiées à part.
+
+```text
+ixctl need submit  --name desk < q.json   # ... "budget":{"total_tokens":1000}  (enfant : "parent":"<id de besoin>")
+ixctl need reserve --name desk < v.json   # {"id","resolver","fence","reservation_id","runner":"deterministic","tokens"}
+ixctl need settle  --name desk < u.json   # {"id","resolver","reservation_id","usage":{...}}
+```
+
+- **Un total par besoin.** Il entre dans le digest du besoin. Un resubmit avec un autre total sous
+  le même `id` est un 409. Un nouvel essai, un redémarrage, un bail renouvelé ou une nouvelle prise
+  en charge ne le remettent jamais à zéro.
+- **Un enfant est prélevé sur son parent.**
+  - Un besoin soumis avec `budget.parent` prend son total sur ce qui reste au parent, au submit.
+    S'il reste trop peu, le submit est un 409.
+  - Le parent compte chaque enfant une fois : à son total, ou à ce que l'enfant a réellement
+    consommé quand c'est plus. Le dépassement d'un enfant se voit aussi sur son parent.
+  - Le parent doit être un besoin budgété du même magasin. Un parent ailleurs est refusé (404,
+    non supporté).
+- **Réserver avant de lancer.**
+  - Seul le répondant de la prise en charge vivante, avec son fence, peut réserver.
+  - Une réservation n'est admise que si les engagements du besoin laissent de la place. Deux
+    réservations concurrentes ne peuvent pas prendre toutes deux les derniers tokens.
+  - `reservation_id` rend un nouvel essai idempotent : le même contenu est un doublon, un autre
+    contenu un 409.
+- **Régler après le lancement.**
+  - Un règlement porte l'`usage` de ce seul lancement, jamais un total cumulé : `unit` `tokens`,
+    une `source`, et quatre comptes disjoints : `input_tokens` (hors cache), `output_tokens`,
+    `cache_write_tokens` et `cache_read_tokens`, chacun un entier de 0 à 2⁴⁰.
+  - Le même usage une seconde fois est un doublon. Un autre usage est un 409 : un compteur
+    cumulatif ne peut pas être compté deux fois.
+  - Des comptes négatifs, fractionnaires, absents ou trop grands sont refusés avant toute écriture.
+  - Un règlement n'exige ni prise en charge vivante ni échéance future : la consommation est un fait.
+- **Inconnu n'est pas zéro.**
+  - Une réservation pas encore réglée, ou réglée avec `"unknown": true`, garde tous ses tokens
+    engagés.
+  - Seul un usage connu avec `"effects_clarified": true` remplace un usage inconnu.
+- **Tokens engagés.** Engagé = réservé + inconnu + réglé + enfants. Chaque réponse montre ces
+  sommes, le reste et un éventuel dépassement.
+- **Durabilité.** Budgets et réservations vivent dans l'enregistrement du besoin et s'écrivent
+  comme toute transition. Les tests interrompent une réservation et un règlement au renommage et
+  après, puis rouvrent : rien n'est réservé ni crédité deux fois.
+- **Ce qui est imposé.**
+  - `enforcement` vaut `accounting`. Le plan admet ou refuse des réservations ; il n'arrête aucun
+    lanceur et n'impose le plafond d'aucun fournisseur.
+  - `runner` doit valoir `deterministic`. Toute autre valeur, comme `model`, est un 501
+    `unsupported` : aucun adaptateur ici n'impose de plafond total dur, donc un lancement de
+    modèle est refusé plutôt que promis borné.
+  - Aucun fournisseur, modèle ni API n'est branché. Les tests utilisent des fixtures : ils prouvent
+    le noyau comptable, pas qu'une consommation réelle de modèle est bornée.
+- **Aucune autorité.** Le total d'un besoin racine est ce que déclare celui qui le soumet, avec le
+  même jeton bearer que toute op, pas une autorisation authentifiée. Un budget n'accorde rien.
+- Un champ inconnu, comme `token_budget`, est refusé en 400 avant toute écriture.
+
 ## Journal
 
 `<nom>.journal.jsonl` ajoute, en lignes JSON, un en-tête `boot` par démarrage (`schema:
