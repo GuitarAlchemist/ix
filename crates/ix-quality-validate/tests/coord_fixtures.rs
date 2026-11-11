@@ -115,5 +115,8 @@ fn extra_field_and_mention_are_rejected() {
     let extra = base.replacen("eta: unknown\n", "eta: unknown\nnote: x\n", 1);
     assert!(validate_comment(&validator, &extra).is_err(), "extra field");
     let mention = base.replacen("to: gaia", "to: @gaia", 1);
-    assert!(validate_comment(&validator, &mention).is_err(), "at-sign in to");
+    assert!(
+        validate_comment(&validator, &mention).is_err(),
+        "at-sign in to"
+    );
 }
