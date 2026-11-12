@@ -109,21 +109,28 @@ func tcpListenOwner(addr string) (uint32, error) {
 			return 0, errors.New("GetExtendedTcpTable: the table kept growing")
 		}
 	}
+	return listenerRowOwner(buf, ip, port), nil
+}
+
+// listenerRowOwner reads a MIB_TCPTABLE_OWNER_PID listener table and returns the PID of the first
+// row with port on ip or on 0.0.0.0 (a wildcard bind holds every address), 0 when there is none.
+// The table is dwNumEntries, then rows of six DWORDs: state, local address, local port (network
+// order in the low 16 bits), remote address, remote port, owning pid. Rows the buffer does not
+// hold are not read.
+func listenerRowOwner(buf []byte, ip net.IP, port int) uint32 {
 	if len(buf) < 4 {
-		return 0, nil
+		return 0
 	}
-	// MIB_TCPTABLE_OWNER_PID: dwNumEntries, then rows of six DWORDs: state, local address,
-	// local port (network order in the low 16 bits), remote address, remote port, owning pid.
 	n := binary.LittleEndian.Uint32(buf)
-	for i := uint32(0); i < n; i++ {
+	for i := uint32(0); i < n && 4+24*(int(i)+1) <= len(buf); i++ {
 		row := buf[4+24*i : 4+24*(i+1)]
 		local := net.IP(row[4:8])
 		p := int(row[8])<<8 | int(row[9])
 		if p == port && (local.Equal(ip) || local.Equal(net.IPv4zero)) {
-			return binary.LittleEndian.Uint32(row[20:24]), nil
+			return binary.LittleEndian.Uint32(row[20:24])
 		}
 	}
-	return 0, nil
+	return 0
 }
 
 // processImage opens pid with PROCESS_QUERY_LIMITED_INFORMATION only and returns its image path.

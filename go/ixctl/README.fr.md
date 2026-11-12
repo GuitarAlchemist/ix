@@ -657,7 +657,8 @@ est `unknown`, jamais supposé démarré.
   `receipt`) ou un fichier illisible donne `unknown`. Recopiez-le du fichier déployé
   (`Get-FileHash`), et de nouveau après chaque mise à jour.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
-  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Rien ne se connecte au port.
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Un bind joker (`0.0.0.0`) sur le port le
+  tient aussi. Rien ne se connecte au port.
 - `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui
   écoute, par exemple `delta-remote-v0.6.0-21-g2ca5e6c.exe` (sans chemin, casse ignorée) : quelle
   version est revenue. Le PID vient de la table TCP ; le processus est ouvert avec les seuls droits

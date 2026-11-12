@@ -616,7 +616,8 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   that cannot be read is `unknown`. Pin it from the deployed file (`Get-FileHash`), and again after
   each update.
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
-  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Nothing connects to the port.
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). A wildcard bind (`0.0.0.0`) on the port
+  holds it too. Nothing connects to the port.
 - `listen_image` (Windows): the file name the listening process's executable must have, such as
   `delta-remote-v0.6.0-21-g2ca5e6c.exe` (no path, case ignored): which build came back. The PID
   comes from the TCP table; the process is opened with query rights only, which keeps its PID

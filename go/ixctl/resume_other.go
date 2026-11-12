@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -47,7 +48,13 @@ func tcpListening(addr string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	return procNetTCPHolds(f, ip, port)
+}
+
+// procNetTCPHolds reads a /proc/net/tcp table: true when a LISTEN row (state 0A) has port on ip
+// or on 0.0.0.0 (a wildcard bind holds every address).
+func procNetTCPHolds(r io.Reader, ip net.IP, port uint64) (bool, error) {
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) < 4 || fields[3] != "0A" {
