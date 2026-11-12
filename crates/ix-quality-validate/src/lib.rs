@@ -12,6 +12,8 @@
 //! - [`validate_path`]     — reads a single `*.json` file from disk and validates it.
 //! - [`walk_and_validate`] — recursively walks a directory, validating every `*.json`.
 
+pub mod coord;
+
 use std::path::{Path, PathBuf};
 
 use jsonschema::Validator;

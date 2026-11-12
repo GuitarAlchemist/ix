@@ -1,0 +1,12 @@
+{
+  "schema": "../../2026-10-17-pr-coordination-room.schema.json",
+  "fixtures": [
+    { "file": "valid-request.md", "valid": true, "reason": "request: state open, reply_to none; free text follows the block" },
+    { "file": "valid-ack.md", "valid": true, "reason": "ack: state received, replies to the request, measured eta" },
+    { "file": "valid-result.md", "valid": true, "reason": "result: state done, replies to the request" },
+    { "file": "invalid-missing-id.md", "valid": false, "reason": "the required field id is missing" },
+    { "file": "invalid-ack-state-done.md", "valid": false, "reason": "an ack must have state received; an ack never means done" },
+    { "file": "invalid-result-no-reply-to.md", "valid": false, "reason": "the required field reply_to is missing; a result answers a request" },
+    { "file": "invalid-unknown-type.md", "valid": false, "reason": "type notify is not request, ack or result" }
+  ]
+}
