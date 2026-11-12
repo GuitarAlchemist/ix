@@ -779,6 +779,72 @@ appends are not `fsync`ed, write errors are ignored, and a crash can cut the las
 boot's header then starts a line of its own), so no record is a commit point; durable restoration would be a separate contract that announces itself
 (door 3).
 
+## Resume after a reboot
+
+`ixctl resume check <inventory.json> [--json]` says what came back after a reboot or a power cut,
+in start order, and exits 1 until everything is ready. It only observes: it starts, stops and
+replays nothing, and a component it cannot observe is `unknown`, never assumed up.
+
+```json
+{"components": [
+  {"name": "plane", "service": "ixctl", "durable": ["C:\\ProgramData\\ixctl\\spec.json"],
+   "owner": "…", "remedy": "elevated: sc.exe config ixctl start= delayed-auto"},
+  {"name": "voice", "after": ["plane"], "listen": "127.0.0.1:59126", "remedy": "…"}
+]}
+```
+
+- `service`: a Windows service's state and start type, read with query rights only. A running
+  service whose start type is not automatic is `degraded`: it will not come back after the next
+  reboot.
+- `service_image_sha256` (with `service`): the SHA-256 of the executable the service's configured
+  command line names, such as `ixctl.exe` under `C:\Program Files\ixctl`: which build the SCM
+  starts, by content. The file is read, not the process, so it works for a service under its own
+  account. Another hash is `down`; a command line that cannot be read (see `receipt`) or a file
+  that cannot be read is `unknown`. Pin it from the deployed file (`Get-FileHash`), and again after
+  each update.
+- `listen`: whether a listener holds the address, read from the system's TCP table (Windows
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). A wildcard bind (`0.0.0.0`) on the port
+  holds it too. Nothing connects to the port.
+- `listen_image` (Windows): the file name the listening process's executable must have, such as
+  `delta-remote-v0.6.0-21-g2ca5e6c.exe` (no path, case ignored): which build came back. The PID
+  comes from the TCP table; the process is opened with query rights only, which keeps its PID
+  from being reused, then the table is read again, and an owner that changed meanwhile is
+  `unknown`. Trust limits: it is the file's name, not its content (no hash, no signature), so a
+  renamed program passes; a process that refuses the query, such as a service under its own
+  account (the installed ixctl does) or HTTP.sys's PID 4, is `unknown`; Linux is `unknown`.
+- `health`: a loopback http(s) URL that must answer 2xx within 2 s, headers and body (a server that
+  stalls is `down`, and so is a body over 64 KiB); any other host is refused, and a redirect
+  is followed only while it stays on loopback (at most 5). A health request that fails (refused,
+  stalled, an error status) is `down`, not `unknown`: the URL was asked and did not serve, which is
+  an observation. `health_host`
+  sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
+  any other host). `health_expect` is text the body must contain, such as `"name":"IxForge"`: a
+  2xx from another program or version that took the port after a reboot is `down`.
+- `health_fields`: string fields the health body, a JSON object, must carry with exactly these
+  values. IxForge's `/workshop/branding.json` is `{"name":"IxForge","short_name":"IxForge","version":"0.1.1"}`
+  (contract COMPAT-R9), so `{"name":"IxForge","version":"0.1.1"}`. That `version` is the workshop
+  web client's, set by hand in the embedded asset; it is not the ixctl binary's (`ixctl version`,
+  such as `0.1.0-ixforge.4`) and not a hash. Pin it from the deployed file, as `listen_image` is.
+  A body that is not a JSON object, a missing field, a non-string value or another value is `down`.
+- `receipt`: an IxForge update receipt (`<DataDir>\update-<RunID>\receipt.json`), named by the
+  operator. A receipt is a record, never proof of the current state: it only lowers the verdict.
+  `reconciliation_required` is `down`; `available`, `backed_up`, `installed` and
+  `failed_before_replacement` are `degraded`; `completed` and `rolled_back` add a line only; an
+  unreadable receipt (a file over 1 MiB included) or an unknown state is `unknown`. A receipt alone
+  is not something to observe. The state applies only to a correlated receipt: a file named
+  `receipt.json`, `Schema` 1, a `RunID` of 32 lowercase hex digits
+  that names its directory, `CandidateSHA256` equal to `receipt_candidate_sha256` (required), and
+  no other `update-*` run beside it as recent or newer. Otherwise it is `unknown`, its state shown
+  and not applied: an old `reconciliation_required` or another candidate's receipt decides nothing.
+  A receipt also needs `service`: its `Service` must name it, and its `ExpectedImagePath` must be that
+  service's configured command line (the executable compared as a Windows path, case and slashes
+  ignored; the arguments token by token, exactly). An unquoted executable with a space, a line that
+  starts with a blank, a malformed line or a service whose configuration cannot be read is `unknown`.
+- `durable`: where the component's state lives, reported present or missing, never opened.
+- `after`: the start order; a component after one that is down says so. A cycle is refused.
+- `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human
+  to run.
+
 ## Windows service
 
 `ixctl service run <spec.json> --state DIR` hosts one instance for a service manager: the Windows

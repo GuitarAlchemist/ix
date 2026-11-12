@@ -28,6 +28,7 @@ const usage = `usage:
   ixctl bench <spec.json>
   ixctl service run|plan    # host under the Windows SCM (or the console); print the install plan
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
+  ixctl resume check <inventory.json> [--json]   # after a reboot: what came back, in start order (observes only; exit 1 when not ready)
   ixctl need submit|status|claim|resolve|refuse|reserve|settle|wait --name NAME [--state DIR]   # the op's JSON on stdin
   ixctl version`
 
@@ -52,6 +53,11 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(kindsReply(defaultProbeBudget))
+	case "resume":
+		var ready bool
+		if ready, err = cmdResume(args[1:], stdout, realResumeProbes()); err == nil && !ready {
+			return 1
+		}
 	case "need":
 		err = cmdNeed(args[1:], os.Stdin, stdout)
 	case "help", "-h", "--help":

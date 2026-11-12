@@ -830,6 +830,80 @@ synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash pe
 ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
 un contrat distinct qui s'annoncerait lui-même (porte 3).
 
+## Reprise après un redémarrage
+
+`ixctl resume check <inventory.json> [--json]` dit ce qui est revenu après un redémarrage ou une
+coupure de courant, dans l'ordre de démarrage, et sort en 1 tant que tout n'est pas prêt. Il ne fait
+qu'observer : il ne démarre, n'arrête et ne rejoue rien, et un composant qu'il ne peut pas observer
+est `unknown`, jamais supposé démarré.
+
+```json
+{"components": [
+  {"name": "plane", "service": "ixctl", "durable": ["C:\\ProgramData\\ixctl\\spec.json"],
+   "owner": "…", "remedy": "elevated: sc.exe config ixctl start= delayed-auto"},
+  {"name": "voice", "after": ["plane"], "listen": "127.0.0.1:59126", "remedy": "…"}
+]}
+```
+
+- `service` : l'état et le type de démarrage d'un service Windows, lus avec les seuls droits de
+  consultation. Un service démarré dont le type de démarrage n'est pas automatique est `degraded` :
+  il ne reviendra pas après le prochain redémarrage.
+- `service_image_sha256` (avec `service`) : le SHA-256 de l'exécutable que nomme la ligne de commande
+  configurée du service, par exemple `ixctl.exe` sous `C:\Program Files\ixctl` : quel build le SCM
+  démarre, par son contenu. Le fichier est lu, pas le processus, donc cela marche pour un service
+  sous son propre compte. Un autre hachage donne `down` ; une ligne de commande illisible (voir
+  `receipt`) ou un fichier illisible donne `unknown`. Recopiez-le du fichier déployé
+  (`Get-FileHash`), et de nouveau après chaque mise à jour.
+- `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Un bind joker (`0.0.0.0`) sur le port le
+  tient aussi. Rien ne se connecte au port.
+- `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui
+  écoute, par exemple `delta-remote-v0.6.0-21-g2ca5e6c.exe` (sans chemin, casse ignorée) : quelle
+  version est revenue. Le PID vient de la table TCP ; le processus est ouvert avec les seuls droits
+  de consultation, ce qui empêche la réutilisation de son PID, puis la table est relue, et un
+  propriétaire qui a changé entre-temps donne `unknown`. Limites de confiance : c'est le nom du
+  fichier, pas son contenu (ni empreinte ni signature), donc un programme renommé passe ; un
+  processus qui refuse la consultation, comme un service sous son propre compte (c'est le cas de
+  l'ixctl installé) ou le PID 4 de HTTP.sys, donne `unknown` ; Linux donne `unknown`.
+- `health` : une URL http(s) en boucle locale qui doit répondre 2xx en 2 s, en-têtes et corps (un
+  serveur qui bloque donne `down`, un corps de plus de 64 Kio aussi) ; tout autre hôte est refusé, et
+  une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus). Une requête de
+  santé qui échoue (refusée, bloquée, statut d'erreur) donne `down`, pas `unknown` : l'URL a été
+  interrogée et n'a pas servi, c'est une observation.
+  `health_host` fixe l'en-tête Host de la requête, pour un serveur qui filtre sur lui (le workshop
+  d'IxForge répond 403 à tout autre hôte). `health_expect` est un texte que le corps doit contenir,
+  par exemple `"name":"IxForge"` : un 2xx d'un autre programme ou d'une autre version qui a pris le
+  port après un redémarrage est `down`.
+- `health_fields` : les champs texte que le corps de santé, un objet JSON, doit porter avec
+  exactement ces valeurs. Le `/workshop/branding.json` d'IxForge vaut `{"name":"IxForge","short_name":"IxForge","version":"0.1.1"}`
+  (contrat COMPAT-R9), d'où `{"name":"IxForge","version":"0.1.1"}`. Cette `version` est celle du
+  client web du workshop, fixée à la main dans l'asset embarqué ; ce n'est ni celle du binaire
+  ixctl (`ixctl version`, par exemple `0.1.0-ixforge.4`) ni un hachage. Recopiez-la du fichier
+  déployé, comme `listen_image`. Un corps qui n'est pas un objet JSON, un champ absent, une valeur
+  qui n'est pas du texte ou une autre valeur donnent `down`.
+- `receipt` : un reçu de mise à jour IxForge (`<DataDir>\update-<RunID>\receipt.json`), désigné par
+  l'opérateur. Un reçu est un enregistrement, jamais une preuve de l'état actuel : il ne peut
+  qu'abaisser le verdict. `reconciliation_required` donne `down` ; `available`, `backed_up`,
+  `installed` et `failed_before_replacement` donnent `degraded` ; `completed` et `rolled_back`
+  ajoutent seulement une ligne ; un reçu illisible (dont un fichier de plus de 1 Mio) ou un état
+  inconnu donne `unknown`. Un reçu seul n'est pas une observation. L'état ne s'applique qu'à un reçu
+  corrélé : un fichier nommé `receipt.json`, `Schema` 1, un `RunID`
+  de 32 chiffres hexadécimaux minuscules qui nomme son dossier, `CandidateSHA256` égal à
+  `receipt_candidate_sha256` (obligatoire), et aucune autre exécution `update-*` à côté aussi récente
+  ou plus récente. Sinon il donne `unknown`, son état affiché mais pas appliqué : un ancien
+  `reconciliation_required` ou le reçu d'un autre candidat ne décide rien.
+  Un reçu demande aussi `service` : son `Service` doit le nommer, et son `ExpectedImagePath` doit être la
+  ligne de commande configurée de ce service (l'exécutable comparé comme un chemin Windows, sans
+  tenir compte de la casse ni du sens des barres ; les arguments un à un, exactement). Un exécutable
+  sans guillemets qui contient une espace, une ligne qui commence par un blanc, une ligne mal formée
+  ou un service dont la configuration
+  ne se lit pas donnent `unknown`.
+- `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
+- `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle
+  est refusé.
+- `owner` et `remedy` s'affichent pour un composant qui n'est pas prêt : le remède est à lancer par
+  un humain.
+
 ## Service Windows
 
 `ixctl service run <spec.json> --state DIR` héberge une instance pour un gestionnaire de services :
