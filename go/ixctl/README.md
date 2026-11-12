@@ -493,7 +493,10 @@ which a pid reused by a later process fails; it does not prove that process is C
 it trusts the list as Claude Code wrote it. `availability` is `idle` or `busy` for a verified incarnation
 only, `blocked` for a declared wait, and otherwise `unknown` with a `reason`: `no-pid`,
 `no-started-at`, `process-unreadable`, `pid-reused` (a process created after the session
-started holds the pid), `start-mismatch`, or `declared "…"`. A `null` answer or a list naming one session twice is an error record,
+started holds the pid), `start-mismatch`, `declared "…"`, or `listed-twice`: Claude Code lists a session more than once while it
+has a background entry and a live interactive one, and the kind does not guess which entry speaks
+for it. That session is one record with `listed` (how many times) and no `kind`, `declared`, `pid`
+or incarnation; the other sessions are published as usual. A `null` answer is an error record,
 never an empty list. A session missing from a later
 read is said once in `gone` (`unknown`, `absent`, its `last_incarnation`). A failed or slow
 read is an error record with no availability, and no earlier one is repeated: silence, an error
@@ -507,16 +510,18 @@ the plane's loopback `addr`: `GET http://<addr>/v1/events?ch=probe/c&since=0` wi
 `token` field of the plane's state file (the `state_file` of `ixctl up`'s ready line; the ready
 line itself never carries it). `since=0` replays what the ring still holds, then the stream
 follows; each `data:` line is an envelope (`ch`, `seq`, `epoch`, `origin`, `t`) whose `ev` is
-`{"kind": "sample", "data": {...}}` with the fields above. Key on the envelope's (`origin`, `epoch`,
+`{"kind": "sample", "data": {...}}` with the fields above, or, for a failed read, an error record:
+the same `sample` event whose `data` holds only `node`, `kind`, `seq` and `error`, with no
+`sessions` and no `read_at_ms`. Key on the envelope's (`origin`, `epoch`,
 `seq`), not on `data`'s `seq`, which is the node's own counter, and resume with `Last-Event-ID`,
 the `id:` line (`epoch:seq`). A `since=0` read replays the whole ring, each record with the full
 list. The envelope's `t` is the plane's clock when it published the sample, in Unix milliseconds,
 at or after `data`'s `read_at_ms` (the same clock when the read ended); it is not the `t` a service
 may put in its own event (`ev.t`, on the emitter's clock, see `svc/<name>`). To tell a sample
 published during your read from a replayed one, note your own clock in Unix milliseconds just
-before the request: a sample whose `t` is later was published after that moment, the others are
+before the request: a sample whose `t` is later was published after that moment, the others (an equal `t` included) are
 replay. ixctl synchronises no clock: the comparison holds because the reader runs on the plane's
-machine (`addr` is loopback) and reads the same system clock. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
+machine (`addr` is loopback) and reads the same system clock. The stream does not carry `every_ms`: it is in the node's entry of `GET /v1/probe`. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
 bound); past that, the node says nothing, which is never idle.
 
 A **node** is one instance of a kind in the tree:

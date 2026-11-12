@@ -303,25 +303,70 @@ func TestAProbeStopCancelsTheReadInFlight(t *testing.T) {
 	}
 }
 
-// `null`, or a list naming one session twice, is not a list of sessions: an error record, and
-// nothing said absent because of it.
-func TestANullOrDuplicatedListIsAnErrorAndFabricatesNoAbsence(t *testing.T) {
+// `null` is not a list of sessions: an error record, and nothing said absent because of it.
+func TestANullListIsAnErrorAndFabricatesNoAbsence(t *testing.T) {
 	f := (&fakeAgents{starts: map[int]int64{100: 1000000 - startedAfter, 200: 2000000 - startedAfter}}).
 		then(`[`+idleSession+`,`+busySession+`]`, nil).
 		then(`null`, nil).
-		then(`[`+idleSession+`,`+idleSession+`]`, nil).
 		then(`[`+idleSession+`,`+busySession+`]`, nil)
 	s := f.sampler()
 	s.sample()
 	if rec, err := s.sample(); err == nil || rec != nil {
 		t.Fatalf("null: %v %v", rec, err)
 	}
-	if rec, err := s.sample(); err == nil || rec != nil || !strings.Contains(err.Error(), "s-a") {
-		t.Fatalf("duplicate: %v %v", rec, err)
-	}
 	rec, err := s.sample()
 	if err != nil || len(sessionsOf(t, rec, "gone")) != 0 || len(sessionsOf(t, rec, "sessions")) != 2 {
-		t.Fatalf("after the bad reads: %v %v", rec, err)
+		t.Fatalf("after the bad read: %v %v", rec, err)
+	}
+}
+
+// Claude Code lists a session twice while it has a background entry and a live interactive one
+// (seen on 2026-11-11: every read of the node was an error for as long as it lasted). Which of
+// the two entries speaks for the session is not ours to guess: it is one record, `unknown`,
+// reason `listed-twice`, with no incarnation; the other sessions are published as usual, and
+// nothing is said gone.
+func TestASessionListedTwiceIsUnknownAndTheOthersArePublished(t *testing.T) {
+	const backgroundA = `{"name":"a","sessionId":"s-a","kind":"background","state":"blocked"}`
+	f := (&fakeAgents{starts: map[int]int64{100: 1000000 - startedAfter, 200: 2000000 - startedAfter}}).
+		then(`[`+idleSession+`,`+busySession+`]`, nil).
+		then(`[`+backgroundA+`,`+idleSession+`,`+busySession+`]`, nil).
+		then(`[`+idleSession+`,`+busySession+`]`, nil)
+	s := f.sampler()
+	s.sample()
+
+	rec, err := s.sample()
+	if err != nil {
+		t.Fatalf("a doubled session refused the whole read: %v", err)
+	}
+	list, _ := rec["sessions"].([]map[string]any)
+	if len(list) != 2 || rec["count"] != 2 {
+		t.Fatalf("want one record per session: count %v, %v", rec["count"], list)
+	}
+	got := sessionsOf(t, rec, "sessions")
+	a := got["s-a"]
+	if a["availability"] != "unknown" || a["reason"] != "listed-twice" || a["listed"] != 2 || a["identity"] != "unknown" {
+		t.Fatalf("the doubled session: %v", a)
+	}
+	for _, guessed := range []string{"incarnation", "pid", "declared", "kind"} {
+		if _, ok := a[guessed]; ok {
+			t.Fatalf("the doubled session carries %q, taken from one of its two entries: %v", guessed, a)
+		}
+	}
+	if b := got["s-b"]; b["availability"] != "busy" || b["identity"] != "verified" {
+		t.Fatalf("the other session: %v", b)
+	}
+	if n := len(sessionsOf(t, rec, "gone")); n != 0 {
+		t.Fatalf("%d said gone", n)
+	}
+
+	// Listed once again: verified and idle, and not a new incarnation of what was never verified.
+	rec, err = s.sample()
+	a = sessionsOf(t, rec, "sessions")["s-a"]
+	if err != nil || a["availability"] != "idle" || a["identity"] != "verified" || a["incarnation_changed"] != nil {
+		t.Fatalf("after the doubled read: %v %v", a, err)
+	}
+	if n := len(sessionsOf(t, rec, "gone")); n != 0 {
+		t.Fatalf("%d said gone", n)
 	}
 }
 

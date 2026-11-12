@@ -23,7 +23,8 @@ import (
 // incarnationSlack before the session's `startedAt` (a process created after it holds a reused
 // pid; a correlation, not an authentication: it does not prove the process is Claude Code, and
 // it trusts the list as written). `availability` is `idle` or `busy` only for a verified
-// incarnation, `blocked` for a declared wait, and `unknown` with a `reason` otherwise. A session missing from a later list
+// incarnation, `blocked` for a declared wait, and `unknown` with a `reason` otherwise (a session listed more than
+// once is one such record, reason `listed-twice`). A session missing from a later list
 // is said once under `gone`, `unknown`, reason `absent`. A failed or slow read is an error
 // record: it carries no availability, and no earlier one is repeated. Availability grants no
 // authority to dispatch work: it is an observation, read_at_ms says how old.
@@ -127,18 +128,26 @@ func (c *claudeSessions) sampleCtx(parent context.Context) (map[string]any, erro
 	if agents == nil { // `null`: no list at all, which must not read as every session gone
 		return nil, errors.New("claude agents --json: null, not a list of sessions")
 	}
-	ids := make(map[string]bool, len(agents))
+	// Claude Code lists a session more than once while it has a background entry and a live
+	// interactive one. Which entry speaks for the session is not guessed: it is one record,
+	// unknown, and the other sessions are published.
+	listed := make(map[string]int, len(agents))
 	for _, a := range agents {
-		if a.SessionID != "" && ids[a.SessionID] {
-			return nil, fmt.Errorf("claude agents --json: session %s listed twice", a.SessionID)
-		}
-		ids[a.SessionID] = true
+		listed[a.SessionID]++
 	}
 	readAt := time.Now()
 
 	sessions := make([]map[string]any, 0, len(agents))
 	now := make(map[string]claudeSeen, len(agents))
 	for _, a := range agents {
+		if n := listed[a.SessionID]; a.SessionID != "" && n > 1 {
+			if _, done := now[a.SessionID]; !done {
+				now[a.SessionID] = claudeSeen{name: a.Name}
+				sessions = append(sessions, map[string]any{"session_id": a.SessionID, "name": a.Name,
+					"identity": "unknown", "availability": "unknown", "reason": "listed-twice", "listed": n})
+			}
+			continue
+		}
 		s := c.observe(a)
 		if prev, ok := c.seen[a.SessionID]; ok && prev.incarnation != "" && s["incarnation"] != nil &&
 			prev.incarnation != s["incarnation"] {

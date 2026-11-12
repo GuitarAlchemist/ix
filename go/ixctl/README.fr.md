@@ -526,8 +526,11 @@ confiance à la liste telle que Claude Code l'a écrite. `availability`
 vaut `idle` ou `busy` pour une incarnation vérifiée seulement, `blocked` pour une attente
 déclarée, et sinon `unknown` avec une `reason` : `no-pid`, `no-started-at`,
 `process-unreadable`, `pid-reused` (un processus créé après le début de la session tient le
-pid), `start-mismatch` ou `declared "…"`. Une réponse `null` ou une liste qui nomme deux fois la même session est un enregistrement
-d'erreur, jamais une liste vide. Une session absente d'une lecture suivante est dite
+pid), `start-mismatch`, `declared "…"` ou `listed-twice` : Claude Code liste une session plus d'une fois tant
+qu'elle a une entrée d'arrière-plan et une entrée interactive vivante, et le kind ne devine pas
+laquelle parle pour elle. Cette session est un seul enregistrement, avec `listed` (combien de fois)
+et sans `kind`, `declared`, `pid` ni incarnation ; les autres sessions sont publiées comme
+d'habitude. Une réponse `null` est un enregistrement d'erreur, jamais une liste vide. Une session absente d'une lecture suivante est dite
 une fois dans `gone` (`unknown`, `absent`, sa `last_incarnation`). Une lecture ratée ou trop
 lente est un enregistrement d'erreur sans disponibilité, et aucune ancienne n'est répétée : un
 silence, une erreur ou un `read_at_ms` ancien ne veulent jamais dire libre. Le plan doit tourner
@@ -540,7 +543,9 @@ avec `Authorization: Bearer <jeton>`, le jeton étant le
 champ `token` du fichier d'état du plan (le `state_file` de la ligne ready d'`ixctl up` ; la
 ligne ready elle-même ne le porte jamais). `since=0` rejoue ce que l'anneau garde encore, puis le
 flux suit ; chaque ligne `data:` est une enveloppe (`ch`, `seq`, `epoch`, `origin`, `t`) dont
-l'`ev` vaut `{"kind": "sample", "data": {...}}` avec les champs ci-dessus. On indexe sur
+l'`ev` vaut `{"kind": "sample", "data": {...}}` avec les champs ci-dessus ou, pour une lecture ratée, un
+enregistrement d'erreur : le même événement `sample`, dont `data` ne porte que `node`, `kind`, `seq`
+et `error`, sans `sessions` ni `read_at_ms`. On indexe sur
 (`origin`, `epoch`, `seq`) de l'enveloppe, pas sur le `seq` de `data`, qui est le compteur propre
 du nœud, et on reprend avec `Last-Event-ID`, qui vaut la ligne `id:` (`epoch:seq`). Un `since=0`
 rejoue tout l'anneau, chaque enregistrement avec la liste complète. Le `t` de l'enveloppe est
@@ -549,9 +554,9 @@ au `read_at_ms` de `data` (la même horloge à la fin de la lecture) ; ce n'est 
 service peut mettre dans son propre événement (`ev.t`, sur l'horloge de l'émetteur, voir
 `svc/<name>`). Pour distinguer un échantillon publié pendant votre lecture d'un échantillon rejoué,
 notez votre propre horloge en millisecondes Unix juste avant la requête : un échantillon dont le `t`
-est postérieur a été publié après ce moment, les autres sont rejoués. ixctl ne synchronise aucune
+est postérieur a été publié après ce moment, les autres (un `t` égal compris) sont rejoués. ixctl ne synchronise aucune
 horloge : la comparaison tient parce que le lecteur tourne sur la machine du plan (`addr` est en
-bouclage) et lit la même horloge système. Un échantillon est frais pendant
+bouclage) et lit la même horloge système. Le flux ne porte pas `every_ms` : il est dans l'entrée du nœud de `GET /v1/probe`. Un échantillon est frais pendant
 environ `every_ms` + 20 s (un tick plus la borne de lecture) ; au-delà, le nœud ne dit rien, ce
 qui ne veut jamais dire libre.
 
