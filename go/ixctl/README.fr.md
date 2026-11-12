@@ -494,6 +494,7 @@ noyau figé d'`ixctl.v1`.
 | `cpu@1` | `busy_pct`, `cores` | La part d'occupation du processeur de l'hôte sur le dernier intervalle (`GetSystemTimes` ; `/proc/stat`). Le premier intervalle n'émet rien. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | La mémoire physique de l'hôte (`GlobalMemoryStatusEx` ; `/proc/meminfo`). |
 | `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, et ceux de l'événement (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | Le journal JSONL de Delta, le robot vocal, nommé par `ixctl up --delta-journal FICHIER` : une ligne par tick, chaque champ de premier niveau de la ligne tel quel, plus `offset`, la position en octets de la ligne. Sans le flag, le kind est listé et refusé à la création. |
+| `claude-sessions@1` | `read_at_ms`, `read_ms`, `count`, `sessions`, `gone` | Les sessions Claude Code vivantes de l'utilisateur du plan, lues par `claude agents --json` (le CLI que nomme `ixctl up --claude-bin`). Sans l'option, le kind est listé et refusé à la création ; `every_ms` vaut au moins 5000. |
 | `mux@1` | (ceux de ses enfants) | Pas d'échantillonneur : il porte ce que ses enfants lui passent. |
 
 `delta@1`, c'est le plan qui *lit* un fichier qu'un autre programme écrit (le `brain.exe` de
@@ -507,6 +508,60 @@ relu depuis l'offset 0. `node`, `kind` et `seq` sont les estampilles de l'arbre 
 sur un champ de ligne du même nom. Un consommateur dédoublonne sur la paire de l'écrivain
 (`pid`, `journal_seq`), qui repart à chaque brain, et reprend sur `offset`, qui appartient au
 fichier.
+
+`claude-sessions@1` dit quelles sessions Claude Code pourraient prendre du travail, sans jamais
+le dire sur une supposition. Un enregistrement par tick est un instantané de
+`claude agents --json` (aucun appel de modèle). Une lecture prend des secondes ; elle tourne dans
+un arbre de processus à elle (un job object sous Windows, un groupe de processus sous Linux), tué
+avec tout ce qu'il a lancé à 20 s, à l'arrêt de la sonde ou du plan, et dès que le CLI a fini ;
+une sortie qu'un descendant garde ouverte plus d'1 s après la fin du CLI est refusée. Chaque entrée de `sessions` sépare ce que Claude Code déclare de ce que le plan a
+vérifié : `session_id` (l'identité stable), `name`, `kind`, `declared` (le statut listé, sinon
+l'état), `pid`, `started_at_ms` et, seulement quand le processus de ce pid a été créé au plus
+60 s avant le début de la session, `identity: "verified"`, `proc_start_ms` et `incarnation`
+(`pid:creation_ms`, qui change à une reprise : `incarnation_changed: true`). Ce rapprochement est
+une corrélation, pas une authentification : il montre qu'un processus vivant (pas un zombie) au
+pid listé a été créé au plus 60 s avant le début listé, ce qu'un pid repris par un processus
+plus récent ne passe pas ; il ne prouve pas que ce processus est Claude Code, et il fait
+confiance à la liste telle que Claude Code l'a écrite. `availability`
+vaut `idle` ou `busy` pour une incarnation vérifiée seulement, `blocked` pour une attente
+déclarée, et sinon `unknown` avec une `reason` : `no-pid`, `no-started-at`,
+`process-unreadable`, `pid-reused` (un processus créé après le début de la session tient le
+pid), `start-mismatch`, `declared "…"` ou `listed-twice` : Claude Code liste une session plus d'une fois tant
+qu'elle a une entrée d'arrière-plan et une entrée interactive vivante, et le kind ne devine pas
+laquelle parle pour elle. Cette session est un seul enregistrement, avec `listed` (combien de fois)
+et sans `kind`, `declared`, `pid` ni incarnation ; les autres sessions sont publiées comme
+d'habitude. Une réponse `null` est un enregistrement d'erreur, jamais une liste vide. Une session absente d'une lecture suivante est dite
+une fois dans `gone` (`unknown`, `absent`, sa `last_incarnation`). Une lecture ratée ou trop
+lente est un enregistrement d'erreur sans disponibilité, et aucune ancienne n'est répétée : un
+silence, une erreur ou un `read_at_ms` ancien ne veulent jamais dire libre. Le plan doit tourner
+dans la session de cet utilisateur (un pair desk) ; un service en session 0 ne voit aucune
+session. La disponibilité est une observation, pas une autorité pour confier du travail.
+
+Un consommateur (Gaia, par exemple) lit un nœud `claude-sessions@1` `c` par une seule requête
+SSE en HTTP simple sur l'`addr` de bouclage du plan : `GET http://<addr>/v1/events?ch=probe/c&since=0`
+avec `Authorization: Bearer <jeton>`, le jeton étant le
+champ `token` du fichier d'état du plan (le `state_file` de la ligne ready d'`ixctl up` ; la
+ligne ready elle-même ne le porte jamais). `since=0` rejoue ce que l'anneau garde encore, puis le
+flux suit ; chaque ligne `data:` est une enveloppe (`ch`, `seq`, `epoch`, `origin`, `t`) dont
+l'`ev` vaut `{"kind": "sample", "data": {...}}` avec les champs ci-dessus ou, pour une lecture ratée, un
+enregistrement d'erreur : le même événement `sample`, dont `data` ne porte que `node`, `kind`, `seq`
+et `error`, sans `sessions` ni `read_at_ms`. On indexe sur
+(`origin`, `epoch`, `seq`) de l'enveloppe, pas sur le `seq` de `data`, qui est le compteur propre
+du nœud, et on reprend avec `Last-Event-ID`, qui vaut la ligne `id:` (`epoch:seq`). Un `since=0`
+rejoue tout l'anneau, chaque enregistrement avec la liste complète. Le `t` de l'enveloppe est
+l'horloge du plan au moment où il publie l'échantillon, en millisecondes Unix, égal ou postérieur
+au `read_at_ms` de `data` (la même horloge à la fin de la lecture) ; ce n'est pas le `t` qu'un
+service peut mettre dans son propre événement (`ev.t`, sur l'horloge de l'émetteur, voir
+`svc/<name>`). Pour distinguer un échantillon publié pendant votre lecture d'un échantillon rejoué,
+notez votre propre horloge en millisecondes Unix juste avant la requête : un échantillon dont le `t`
+est postérieur a été publié après ce moment, les autres (un `t` égal compris) sont rejoués. ixctl ne synchronise aucune
+horloge : la comparaison tient parce que le lecteur tourne sur la machine du plan (`addr` est en
+bouclage) et lit la même horloge système. Le flux ne porte pas `every_ms` : `GET /v1/probe` répond `{"nodes": [...]}`, et l'entrée dont le
+`name` est celui du nœud le porte. Un échantillon est frais tant que votre horloge a moins de
+`every_ms` + 20 s (un tick plus la borne de lecture) d'avance sur le `t` de son enveloppe ; au-delà,
+le nœud ne dit rien, ce qui ne veut jamais dire libre. Une entrée non vérifiée porte
+`identity: "unknown"`. Le flux peut aussi porter un événement `gap` (voir `GET /v1/events`) : des
+échantillons ont été perdus, ce qui n'est pas une absence de sessions.
 
 Un **nœud** est une instance d'un kind dans l'arbre :
 

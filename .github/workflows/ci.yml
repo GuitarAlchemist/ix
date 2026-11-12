@@ -29,6 +29,8 @@ on:
   # No `paths` here: the workflow always starts on a pull request, and the `changes` job
   # applies the list above to what the PR changes. See `changes` and `ci-ok`.
   pull_request:
+  # The merge queue on main runs the required jobs on each merge group.
+  merge_group:
 
 # The matrix runs the pull request's code; nothing in it writes to the repository, and the
 # repository's default token is a write token.
