@@ -17,7 +17,10 @@ func TestSplitCommandLine(t *testing.T) {
 	}{
 		{`"C:\Program Files\ixctl\ixctl.exe" service run "ixctl-trial"`, `C:\Program Files\ixctl\ixctl.exe`, []string{"service", "run", "ixctl-trial"}, ""},
 		{`C:\ixctl\ixctl.exe service   run`, `C:\ixctl\ixctl.exe`, []string{"service", "run"}, ""},
-		{`  "C:\ixctl\ixctl.exe"  `, `C:\ixctl\ixctl.exe`, []string{}, ""},
+		{`"C:\ixctl\ixctl.exe"  `, `C:\ixctl\ixctl.exe`, []string{}, ""},
+		// CommandLineToArgvW makes a leading blank an empty first argument: refused, not trimmed.
+		{`  "C:\ixctl\ixctl.exe"`, "", nil, "starts with a blank"},
+		{"\t" + `C:\ixctl\ixctl.exe service`, "", nil, "starts with a blank"},
 		{`"C:\ixctl\ixctl.exe" --config "C:\a b\c.json"`, `C:\ixctl\ixctl.exe`, []string{"--config", `C:\a b\c.json`}, ""},
 		{`C:\Program Files\ixctl\ixctl.exe service`, "", nil, `unquoted executable "C:\\Program" is ambiguous`},
 		{`"C:\ixctl\ixctl.exe service`, "", nil, "a quote is not closed"},

@@ -141,7 +141,7 @@ func realResumeProbesOver(rt http.RoundTripper) resumeProbes {
 				return nil, err
 			}
 			defer f.Close()
-			return io.ReadAll(io.LimitReader(f, 1<<20))
+			return readAllCapped(f, 1<<20)
 		},
 		listDir: func(dir string) ([]string, error) {
 			entries, err := os.ReadDir(dir)
@@ -205,8 +205,12 @@ type updateReceipt struct {
 // tokens, without the quotes. The executable is quoted, or unquoted and ending in .exe: an
 // unquoted one that does not is ambiguous (Windows tries each prefix up to a space, such as
 // C:\Program for C:\Program Files\x.exe). An unterminated quote, text glued to a closing quote, a
-// backslash before a quote (escape rules) or an empty line is refused, never guessed.
+// backslash before a quote (escape rules), a leading blank (CommandLineToArgvW then reads an empty
+// first argument) or an empty line is refused, never guessed.
 func splitCommandLine(line string) (exe string, args []string, err error) {
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		return "", nil, errors.New("the line starts with a blank")
+	}
 	var tokens []string
 	var cur strings.Builder
 	quoted, inToken, quotedExe := false, false, false
@@ -298,6 +302,9 @@ func receiptUncorrelated(c resumeComponent, p resumeProbes, rc updateReceipt, sv
 	if sep < 0 {
 		return "it is not inside an update-<RunID> directory"
 	}
+	if !strings.EqualFold(c.Receipt[sep+1:], "receipt.json") {
+		return "it is not named receipt.json"
+	}
 	dir := c.Receipt[:sep]
 	parentSep := strings.LastIndexAny(dir, `\/`)
 	dirName := dir[parentSep+1:]
@@ -384,7 +391,7 @@ func healthProbe(rt http.RoundTripper, within time.Duration) func(u, host string
 			if err := loopbackURL(req.URL.String()); err != nil {
 				return fmt.Errorf("redirect to %s leaves the loopback", req.URL.Redacted())
 			}
-			if len(via) >= 5 {
+			if len(via) > 5 { // via holds the original request and every hop so far
 				return errors.New("more than 5 redirects")
 			}
 			return nil
@@ -402,12 +409,23 @@ func healthProbe(rt http.RoundTripper, within time.Duration) func(u, host string
 			return nil, err
 		}
 		defer resp.Body.Close()
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		body, err := readAllCapped(resp.Body, 64<<10)
 		if resp.StatusCode/100 != 2 {
 			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 		}
 		return body, err
 	}
+}
+
+// readAllCapped reads r whole, or fails once it holds more than max bytes: a prefix that happens
+// to parse is never handed back as the whole body or file.
+// @ai:invariant a capped read never returns a prefix as the whole [T:test conf:0.9 src:resume_capped_test.go]
+func readAllCapped(r io.Reader, max int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err == nil && int64(len(b)) > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	}
+	return b, err
 }
 
 type resumeResult struct {

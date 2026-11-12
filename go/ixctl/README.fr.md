@@ -661,8 +661,10 @@ est `unknown`, jamais supposé démarré.
   processus qui refuse la consultation, comme un service sous son propre compte (c'est le cas de
   l'ixctl installé) ou le PID 4 de HTTP.sys, donne `unknown` ; Linux donne `unknown`.
 - `health` : une URL http(s) en boucle locale qui doit répondre 2xx en 2 s, en-têtes et corps (un
-  serveur qui bloque donne `down`) ; tout autre hôte est refusé, et
-  une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus).
+  serveur qui bloque donne `down`, un corps de plus de 64 Kio aussi) ; tout autre hôte est refusé, et
+  une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus). Une requête de
+  santé qui échoue (refusée, bloquée, statut d'erreur) donne `down`, pas `unknown` : l'URL a été
+  interrogée et n'a pas servi, c'est une observation.
   `health_host` fixe l'en-tête Host de la requête, pour un serveur qui filtre sur lui (le workshop
   d'IxForge répond 403 à tout autre hôte). `health_expect` est un texte que le corps doit contenir,
   par exemple `"name":"IxForge"` : un 2xx d'un autre programme ou d'une autre version qui a pris le
@@ -678,8 +680,9 @@ est `unknown`, jamais supposé démarré.
   l'opérateur. Un reçu est un enregistrement, jamais une preuve de l'état actuel : il ne peut
   qu'abaisser le verdict. `reconciliation_required` donne `down` ; `available`, `backed_up`,
   `installed` et `failed_before_replacement` donnent `degraded` ; `completed` et `rolled_back`
-  ajoutent seulement une ligne ; un reçu illisible ou un état inconnu donne `unknown`. Un reçu seul
-  n'est pas une observation. L'état ne s'applique qu'à un reçu corrélé : `Schema` 1, un `RunID`
+  ajoutent seulement une ligne ; un reçu illisible (dont un fichier de plus de 1 Mio) ou un état
+  inconnu donne `unknown`. Un reçu seul n'est pas une observation. L'état ne s'applique qu'à un reçu
+  corrélé : un fichier nommé `receipt.json`, `Schema` 1, un `RunID`
   de 32 chiffres hexadécimaux minuscules qui nomme son dossier, `CandidateSHA256` égal à
   `receipt_candidate_sha256` (obligatoire), et aucune autre exécution `update-*` à côté aussi récente
   ou plus récente. Sinon il donne `unknown`, son état affiché mais pas appliqué : un ancien
@@ -687,7 +690,8 @@ est `unknown`, jamais supposé démarré.
   Un reçu demande aussi `service` : son `Service` doit le nommer, et son `ExpectedImagePath` doit être la
   ligne de commande configurée de ce service (l'exécutable comparé comme un chemin Windows, sans
   tenir compte de la casse ni du sens des barres ; les arguments un à un, exactement). Un exécutable
-  sans guillemets qui contient une espace, une ligne mal formée ou un service dont la configuration
+  sans guillemets qui contient une espace, une ligne qui commence par un blanc, une ligne mal formée
+  ou un service dont la configuration
   ne se lit pas donnent `unknown`.
 - `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
 - `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle

@@ -70,8 +70,8 @@ func TestResumeHealthDeadlineIsTwoSeconds(t *testing.T) {
 		t.Fatalf("resumeHealthTimeout = %v, the documented contract is 2 s", resumeHealthTimeout)
 	}
 	_, err, took := probeWithin(t, realResumeProbesOver(stallHeaders).health, 4*time.Second)
-	if err == nil || took < resumeHealthTimeout {
-		t.Fatalf("stalled headers: %v after %v, want an error after 2 s", err, took)
+	if err == nil || took < resumeHealthTimeout || took > resumeHealthTimeout+time.Second {
+		t.Fatalf("stalled headers: %v after %v, want an error after 2 s, before 3 s", err, took)
 	}
 }
 

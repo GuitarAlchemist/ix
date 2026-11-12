@@ -619,8 +619,10 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   renamed program passes; a process that refuses the query, such as a service under its own
   account (the installed ixctl does) or HTTP.sys's PID 4, is `unknown`; Linux is `unknown`.
 - `health`: a loopback http(s) URL that must answer 2xx within 2 s, headers and body (a server that
-  stalls is `down`); any other host is refused, and a redirect
-  is followed only while it stays on loopback (at most 5). `health_host`
+  stalls is `down`, and so is a body over 64 KiB); any other host is refused, and a redirect
+  is followed only while it stays on loopback (at most 5). A health request that fails (refused,
+  stalled, an error status) is `down`, not `unknown`: the URL was asked and did not serve, which is
+  an observation. `health_host`
   sets the request's Host header, for a server that gates on it (IxForge's workshop answers 403 to
   any other host). `health_expect` is text the body must contain, such as `"name":"IxForge"`: a
   2xx from another program or version that took the port after a reboot is `down`.
@@ -634,15 +636,16 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   operator. A receipt is a record, never proof of the current state: it only lowers the verdict.
   `reconciliation_required` is `down`; `available`, `backed_up`, `installed` and
   `failed_before_replacement` are `degraded`; `completed` and `rolled_back` add a line only; an
-  unreadable receipt or an unknown state is `unknown`. A receipt alone is not something to observe.
-  The state applies only to a correlated receipt: `Schema` 1, a `RunID` of 32 lowercase hex digits
+  unreadable receipt (a file over 1 MiB included) or an unknown state is `unknown`. A receipt alone
+  is not something to observe. The state applies only to a correlated receipt: a file named
+  `receipt.json`, `Schema` 1, a `RunID` of 32 lowercase hex digits
   that names its directory, `CandidateSHA256` equal to `receipt_candidate_sha256` (required), and
   no other `update-*` run beside it as recent or newer. Otherwise it is `unknown`, its state shown
   and not applied: an old `reconciliation_required` or another candidate's receipt decides nothing.
   A receipt also needs `service`: its `Service` must name it, and its `ExpectedImagePath` must be that
   service's configured command line (the executable compared as a Windows path, case and slashes
-  ignored; the arguments token by token, exactly). An unquoted executable with a space, a malformed
-  line or a service whose configuration cannot be read is `unknown`.
+  ignored; the arguments token by token, exactly). An unquoted executable with a space, a line that
+  starts with a blank, a malformed line or a service whose configuration cannot be read is `unknown`.
 - `durable`: where the component's state lives, reported present or missing, never opened.
 - `after`: the start order; a component after one that is down says so. A cycle is refused.
 - `owner` and `remedy` are printed for a component that is not ready: the remedy is for a human
