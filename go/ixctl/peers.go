@@ -68,12 +68,13 @@ type peerLink struct {
 
 	// replay is what is left of the allowance (frames and bytes) and when it was last refilled;
 	// allowFrames and allowBytes its capacity: replayAllowFrames / replayAllowBytes, set lower by
+	// tests; allowFor the longest one catch-up may last, in nanoseconds: replayFor, set lower by
 	// tests.
 	replay struct {
 		frames, bytes float64
 		at            time.Time
 	}
-	allowFrames, allowBytes atomic.Int64
+	allowFrames, allowBytes, allowFor atomic.Int64
 
 	// pipeDelay and ctlDelay are test knobs: nanoseconds the mirroring loop spends on each pipe
 	// frame, or on each control frame, a durably slow parent (zero in production).
@@ -163,6 +164,7 @@ func newPeerLink(spec PeerSpec, hub *Hub) *peerLink {
 	}
 	l.allowFrames.Store(replayAllowFrames)
 	l.allowBytes.Store(replayAllowBytes)
+	l.allowFor.Store(int64(replayFor))
 	l.replay.frames, l.replay.bytes, l.replay.at = replayAllowFrames, replayAllowBytes, time.Now()
 	return l
 }
@@ -906,7 +908,7 @@ func (l *peerLink) grantReplay(prefix string, sub int64, bytes int) bool {
 	if sub == 0 || cs == nil || cs.sub != sub || cs.live {
 		return true
 	}
-	if time.Since(cs.since) > replayFor {
+	if time.Since(cs.since) > time.Duration(l.allowFor.Load()) {
 		return false
 	}
 	l.refillLocked()

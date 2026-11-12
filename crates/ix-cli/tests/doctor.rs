@@ -818,3 +818,40 @@ fn successive_runs_accumulate_history() {
     ids.dedup();
     assert_eq!(ids.len(), 3, "each run gets its own id");
 }
+
+/// A new worktree leaves the governance submodule as an empty directory. Doctor called it
+/// "present", then blamed an "incomplete" checkout for the missing constitution; it now names the
+/// uninitialized submodule and the command that initializes it.
+#[test]
+fn an_uninitialized_governance_submodule_is_named_with_its_init_command() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gov = dir.path().join("governance/demerzel");
+    std::fs::create_dir_all(&gov).expect("mkdir");
+    let check = |name: &str| {
+        doctor::run(dir.path(), doctor::Options::default())
+            .checks
+            .into_iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("no {name} check"))
+    };
+
+    let empty = check("demerzel-governance");
+    assert_eq!(empty.status, Status::Warn, "{empty:?}");
+    assert!(empty.summary.contains("not initialized"), "{empty:?}");
+    assert!(
+        empty
+            .remedy
+            .as_deref()
+            .is_some_and(|r| r.contains("git submodule update --init governance/demerzel")),
+        "{empty:?}"
+    );
+    assert_eq!(check("default-constitution").status, Status::Skip);
+
+    std::fs::write(gov.join("README.md"), "governance\n").expect("write");
+    assert_eq!(check("demerzel-governance").status, Status::Ok);
+    assert_eq!(check("default-constitution").status, Status::Warn);
+
+    std::fs::create_dir_all(gov.join("constitutions")).expect("mkdir");
+    std::fs::write(gov.join("constitutions/default.constitution.md"), "# c\n").expect("write");
+    assert_eq!(check("default-constitution").status, Status::Ok);
+}

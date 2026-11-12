@@ -587,24 +587,31 @@ impl ConsoleState {
                 || entry.retained_log_bytes.saturating_add(line_bytes) > max_node_bytes
                 || self.total_retained_log_bytes.saturating_add(line_bytes) > max_total_bytes)
         {
-            if let Some(evicted) = entry.logs.pop_front() {
-                entry.retained_log_bytes =
-                    entry.retained_log_bytes.saturating_sub(evicted.byte_len);
-                self.total_retained_log_bytes = self
-                    .total_retained_log_bytes
-                    .saturating_sub(evicted.byte_len);
-                entry.evicted_log_count = entry.evicted_log_count.saturating_add(1);
-                entry.evicted_log_bytes = entry
-                    .evicted_log_bytes
-                    .saturating_add(evicted.byte_len as u64);
+            let freed = evict_oldest_log(entry, follow);
+            self.total_retained_log_bytes = self.total_retained_log_bytes.saturating_sub(freed);
+        }
 
-                if !follow && entry.log_anchor_seq == Some(evicted.seq) {
-                    entry.evicted_anchor_seq = Some(evicted.seq);
-                    entry.log_anchor_seq = entry.logs.front().map(|l| l.seq);
-                }
+        // The total budget is shared: once this node has nothing left to give, the oldest line
+        // retained by any other node goes (ties broken by node id).
+        while self.total_retained_log_bytes.saturating_add(line_bytes) > max_total_bytes {
+            let Some(victim) = self
+                .nodes
+                .iter()
+                .filter_map(|(id, n)| n.logs.front().map(|l| (l.timestamp_ms, id)))
+                .min()
+                .map(|(_, id)| id.clone())
+            else {
+                break;
+            };
+            if let Some(other) = self.nodes.get_mut(&victim) {
+                let freed = evict_oldest_log(other, follow);
+                self.total_retained_log_bytes = self.total_retained_log_bytes.saturating_sub(freed);
             }
         }
 
+        let Some(entry) = self.nodes.get_mut(node_id) else {
+            return;
+        };
         entry.logs.push_back(SanitizedLogLine {
             seq,
             timestamp_ms,
@@ -1127,6 +1134,25 @@ impl ConsoleState {
 pub fn sanitize_log_line(raw: &str) -> (String, bool) {
     let (s, esc, _) = sanitize_log_line_bounded(raw, usize::MAX);
     (s, esc)
+}
+
+/// Drops `entry`'s oldest log line and books it as evicted; returns the bytes freed (0 when
+/// `entry` holds no line). The caller keeps the total. When the line was the reading anchor,
+/// the eviction is reported in `evicted_anchor_seq`.
+fn evict_oldest_log(entry: &mut NodeEntry, follow: bool) -> usize {
+    let Some(evicted) = entry.logs.pop_front() else {
+        return 0;
+    };
+    entry.retained_log_bytes = entry.retained_log_bytes.saturating_sub(evicted.byte_len);
+    entry.evicted_log_count = entry.evicted_log_count.saturating_add(1);
+    entry.evicted_log_bytes = entry
+        .evicted_log_bytes
+        .saturating_add(evicted.byte_len as u64);
+    if !follow && entry.log_anchor_seq == Some(evicted.seq) {
+        entry.evicted_anchor_seq = Some(evicted.seq);
+        entry.log_anchor_seq = entry.logs.front().map(|l| l.seq);
+    }
+    evicted.byte_len
 }
 
 /// Escape dangerous characters and enforce a strict byte bound (`max_bytes`)

@@ -17,6 +17,10 @@ name = "jev-router"
 path = "src/bin/jev_router.rs"
 
 [[bin]]
+name = "context-list"
+path = "src/bin/context_list.rs"
+
+[[bin]]
 name = "claude-stream"
 path = "src/bin/claude_stream.rs"
 
@@ -27,5 +31,6 @@ serde_json = "1"
 sha2 = "0.10"
 ix-supervised = { path = "../ix-supervised" }
 ix-unsupervised = { path = "../ix-unsupervised" }
+ix-recover = { path = "../ix-recover" }
 
 [workspace]

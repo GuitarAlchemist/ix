@@ -340,6 +340,13 @@ To prove the outcome of one opaque `run`, a consumer follows this order:
 
 An exit from another run, including `last_exit`, is never substituted.
 
+A run's tree is killed before its output is drained, so `truncated` needs a process that left
+the tree with the output still open. On Windows none can: the job object holds every descendant
+and allows no breakaway, and the end is `complete`. On Linux a descendant that calls `setsid`
+leaves the process group the plane kills, and keeps the output open: the end then comes at the
+drain bound, `truncated` (`TestADescendantHoldingStdoutEndsTheRunAtTheDrainBound`, a real
+descendant on both systems).
+
 After a truncated end, later lines are dropped and counted in
 `services[].last_exit.late_lines`; the counter saturates instead of wrapping. Markers remain in
 the ring, but SSE and WebSocket subscribers skip them, including during replay, unless they ask
@@ -581,6 +588,135 @@ a refusal names what it hit, and a file whose records break them is refused at s
 `bookmark.*` op is forwardable to a peer (`peer`), whose own sequence the bookmark then points
 into; the replay stays local to that peer.
 
+## Needs
+
+A need is one question a waiting task asks the plane (issue #486): `information`, an
+`authorization` or `capacity`, with an absolute `deadline_ms` that never moves. The plane keeps it
+in `<state>/<name>.needs.json`, apart from the event ring. It outlives the process that asked, and
+a plane restart keeps every need, deadline, claim and fencing token as written.
+
+```text
+ixctl need submit  --name desk < q.json   # {"id","kind","requester","incarnation","body","deadline_ms"}
+ixctl need claim   --name desk < c.json   # {"id","resolver","lease_ms"} -> claim.fence
+ixctl need resolve --name desk < r.json   # {"id","resolver","fence","answer"}  (refuse: "reason")
+ixctl need wait    --name desk < w.json   # {"id","requester","incarnation","timeout_ms"}
+ixctl need status  --name desk < s.json   # {"id","requester","incarnation"}
+```
+
+Each op is `POST /v1/need/<op>`, or a `need.<op>` frame on the WebSocket, with the bearer token.
+Each answers with the need at its `rev`, which every transition raises by one.
+
+- **Submit** is idempotent on `id`.
+  - The same content returns the same need with `duplicate: true`, even after a restart or past
+    the deadline. Its sha256 `digest` covers kind, requester, incarnation, deadline and body.
+  - Another content under the same `id` is a 409.
+  - Bounds are checked before anything is written:
+    - `id` follows the instance-name rule;
+    - body and answer are up to 4096 bytes of JSON;
+    - the deadline is after now and within 7 days;
+    - a plane holds at most 256 needs.
+- **Claim** gives one resolver a lease, of up to an hour, and a new `fence`.
+  - Only that resolver may `resolve` or `refuse`. It must use that fence, while the lease holds and
+    before the deadline.
+  - Any other answer is a 409 that names why: stale fence, lost lease, expired, or already
+    resolved. A late answer never resolves.
+  - Once a lease lapses, another resolver may claim the need, and gets a higher fence.
+- **Wait** returns the outcome `resolved`, `refused` or `expired`. It returns `wait-timeout` when
+  its own `timeout_ms` passes first.
+  - A timed-out or cancelled wait leaves the need as it was.
+  - An expired need says nothing about the task, or about effects already made.
+- **Status** shows the state, claim and resolution to anyone with the token.
+  - The question (`body`) goes to the requester and incarnation that asked, and to the resolver
+    holding a live claim: the claim reply carries it, as does `status` with `resolver`.
+  - The `answer` goes only to the requester and incarnation that asked.
+
+**Identities are declared, not authenticated.**
+- `requester`, `incarnation` and `resolver` are names the caller declares. The plane does not
+  authenticate them.
+- Everyone who holds the plane's bearer token is trusted alike. Restricting the question and the
+  answer as above is correlation within one trusted owner, not isolation.
+
+**An `authorization` need grants nothing.**
+- It is a record for the asker's own checks, never a permission.
+- The requester may not claim its own `authorization` need.
+- Need ops are never forwarded to a peer.
+
+**Durability.** Every transition writes the whole file to a temporary, syncs it, then renames it
+over the old one. The op answers only once the rename has returned.
+- The tests interrupt a write before the rename, at it, and after it. In each case a reopen finds
+  the previous state or the committed one, or answers `unknown`.
+  - A commit whose reply was lost is found on reopen, and a retried answer is refused.
+  - These are injected interruptions: they prove the model, not the OS.
+- Not covered: a power loss, and the rename's own atomicity on Windows. `os.Rename` promises no
+  atomicity off Unix, and nothing here syncs the directory. When a reopen cannot tell, it answers
+  `unknown` (fail-closed), never an empty store.
+- Every need op answers 503 `unknown` until the file is reconciled when the file:
+  - cannot be read;
+  - breaks the records' invariants;
+  - is over its byte bound;
+  - or is missing while its temporary remains.
+
+  Such a file is never emptied or rewritten.
+- When a rename fails, the op's outcome is unknown (503). The next op re-reads the file; nothing is
+  replayed from memory.
+
+**No responder runs here.** The need ops record a question, its answer and its token accounts.
+None of them starts or calls a responder: a resolver is whatever process claims the need.
+
+### Token budget: accounting and admission, not a provider cap
+
+A deadline bounds time; a budget bounds tokens. They are separate limits, checked apart.
+
+```text
+ixctl need submit  --name desk < q.json   # ... "budget":{"total_tokens":1000}  (child: "parent":"<need id>")
+ixctl need reserve --name desk < v.json   # {"id","resolver","fence","reservation_id","runner":"deterministic","tokens"}
+ixctl need settle  --name desk < u.json   # {"id","resolver","reservation_id","usage":{...}}
+```
+
+- **One total per need.** It is in the need's digest. A resubmit with another total under the
+  same `id` is a 409. A retry, a restart, a renewed lease or a new claim never resets it.
+- **A child is carved from its parent.**
+  - A need submitted with `budget.parent` takes its total from what the parent has left, at
+    submit. When too little is left, the submit is a 409.
+  - The parent counts each child once: at the child's total, or at what the child really used
+    when that is more. A child's overrun shows on its parent too.
+  - The parent must be a budgeted need of the same store. A parent elsewhere is refused (404,
+    unsupported).
+- **Reserve before running.**
+  - Only the live claim's resolver and fence may reserve.
+  - A reservation is admitted only if the need's commitments leave room. Two concurrent
+    reservations cannot both take the last tokens.
+  - `reservation_id` makes a retry idempotent: the same content is a duplicate, other content
+    a 409.
+- **Settle after running.**
+  - A settle carries that run's own `usage`, never a running total: `unit` `tokens`, a `source`,
+    and four disjoint counts: `input_tokens` (without the cache), `output_tokens`,
+    `cache_write_tokens` and `cache_read_tokens`, each an integer from 0 to 2⁴⁰.
+  - The same usage again is a duplicate. Another usage is a 409, so a cumulative counter cannot
+    be counted twice.
+  - Negative, fractional, missing or oversized counts are refused before any write.
+  - A settle needs no live claim and no time before the deadline: consumption is a fact.
+- **Unknown is not zero.**
+  - A reservation not yet settled, or settled with `"unknown": true`, keeps all of its tokens
+    committed.
+  - Only a known usage with `"effects_clarified": true` replaces an unknown one.
+- **Committed tokens.** Committed = reserved + unknown + settled + children. Each reply shows
+  these, the remainder and any overrun.
+- **Durability.** Budgets and reservations live in the need's record and are written like
+  every transition. The tests crash a reserve and a settle at the rename and after it, then
+  reopen: nothing is reserved or credited twice.
+- **What is enforced.**
+  - `enforcement` is `accounting`. The plane admits or refuses reservations; it stops no runner
+    and enforces no provider's cap.
+  - `runner` must be `deterministic`. Any other value, such as `model`, is a 501
+    `unsupported`: no adapter here enforces a hard total cap, so a model run is refused rather
+    than promised a bound.
+  - No provider, model or API is wired. The tests use fixtures: they prove the accounting core,
+    not that a real model's consumption is bounded.
+- **No authority.** A root need's total is what its submitter declares, under the same bearer
+  token as every op, not an authenticated grant. A budget grants nothing.
+- An unknown field, such as `token_budget`, is refused with 400 before anything is written.
+
 ## Journal
 
 `<name>.journal.jsonl` appends, as JSON lines, a `boot` header per start (`schema:
@@ -592,6 +728,60 @@ appends are not `fsync`ed, write errors are ignored, and a crash can cut the las
 boot's header then starts a line of its own), so no record is a commit point; durable restoration would be a separate contract that announces itself
 (door 3).
 
+## Windows service
+
+`ixctl service run <spec.json> --state DIR` hosts one instance for a service manager: the Windows
+SCM when the SCM started the process, else the console (an interrupt is a stop). It is the same
+instance as `ixctl up`, with its lock, token, loopback listener and job objects. What the host adds:
+
+- **States.** It reports `start-pending`, then `running` once the instance serves (stop and shutdown
+  accepted), then `stop-pending` with a growing checkpoint and the time left as wait hint, then
+  `stopped`. Exit codes, service-specific: 0 a stop observed; 1 the instance did not start; 2 the
+  name is held by a running instance (nothing is reported running); 3 the trees were not seen gone
+  within `--stop-timeout` (default 30 s), or a tree still held a process when the supervisor
+  stopped waiting for it — the process exits all the same and the jobs close with it, which kills
+  what is left, but the host does not claim it saw it. On the console the process exits with the
+  same code. Under the SCM, the spec, the state directory and the log are opened after the SCM is
+  connected, so a failure there is code 1 the SCM sees.
+- **A stop in three moments.** `host.stop` on `ctl` with `phase: requested` (the control reached
+  the host; `source` is `scm`, `signal` or `api` for `/v1/shutdown`), then `phase: received` (the
+  plane admits nothing more: an apply answers 503), both before any service stops; then `observed`
+  (every tree seen gone within the bound, with `ms`) or `unobserved` (with `bound_ms` or
+  `trees_not_seen_gone`), in the log only, since the journal is closed by then. For `api` the plane
+  closed its admissions when it took the request, before the host saw it: there an apply may get
+  503 before either event.
+- **Log.** `<name>.service.log` in the state directory, one JSON object per line (`host.ready`,
+  `host.refused`, `host.failed`, `host.stop`), never the token; bounded to two files of 4 MiB
+  (`.service.log` and `.service.log.1`).
+- **After a crash.** The jobs die with the host. The next start draws a new epoch, at generation 0,
+  as any restart does (see Journal): what the dead host was asked to run is not run again, and a
+  run cut by the crash stays the effect run/1 calls `unknown`, for a person or a client to reconcile.
+
+`ixctl service plan --spec FILE --client-user DOMAIN\USER` prints the install, start, status, stop
+and uninstall commands for an elevated PowerShell; ixctl runs none of them. The plan uses the
+virtual account `NT SERVICE\ixctl` (no password stored), a manual start, no automatic restart (a
+restarted plane starts from its spec, not from what it was running), loopback only, and a state
+directory under `C:\ProgramData\ixctl` whose ACL gives read to the one client user named, who reads
+the token there. It needs PowerShell 7.4 or later: every section opens with
+`$ErrorActionPreference = 'Stop'` and `$PSNativeCommandUseErrorActionPreference = $true`, so it ends
+at its first failure, a native command's included. A start or a stop only asks the SCM, so each is
+followed by a bounded `WaitForStatus` (30 s for running, 60 s for stopped) whose timeout ends the
+section: a service that fails in its setup ends stopped and the start's wait says so. The plan
+reads the spec for the instance name, and names the spec and the binary that printed it by
+absolute paths. A test checks its contents; its install, start and status sections ran once on
+Windows 11 (2026-10-31), its stop and uninstall not yet. `--delta-journal FILE` on both commands
+gives the service Delta's journal for the `delta@1` probe kind, as `ixctl up --delta-journal`
+does: the plan passes it in the service's command line, grants the service account read on that
+one file, and takes the grant back at uninstall. Known limit: the stop bound runs from the request, but the host writes its reports, events
+and log lines on the same goroutine, so a log write that never returns holds the host past it. The service account has no Claude credentials, so work that needs them stays in an
+`ixctl up` of the user's session, a peer of the service.
+
+The install plan refuses an existing state directory. It runs
+`ixctl service prepare-config --spec FILE --output FILE` to write a new
+`config/spec.json` under that directory, outside the instance state-file namespace.
+The Go loader makes commands, working directories and peer state paths absolute against
+the source configuration. Argument and environment strings are preserved; their contents
+are not embedded in the printed plan. The preparation command refuses an existing output.
 ## Gate
 
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust
