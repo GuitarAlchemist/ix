@@ -556,9 +556,12 @@ service peut mettre dans son propre événement (`ev.t`, sur l'horloge de l'éme
 notez votre propre horloge en millisecondes Unix juste avant la requête : un échantillon dont le `t`
 est postérieur a été publié après ce moment, les autres (un `t` égal compris) sont rejoués. ixctl ne synchronise aucune
 horloge : la comparaison tient parce que le lecteur tourne sur la machine du plan (`addr` est en
-bouclage) et lit la même horloge système. Le flux ne porte pas `every_ms` : il est dans l'entrée du nœud de `GET /v1/probe`. Un échantillon est frais pendant
-environ `every_ms` + 20 s (un tick plus la borne de lecture) ; au-delà, le nœud ne dit rien, ce
-qui ne veut jamais dire libre.
+bouclage) et lit la même horloge système. Le flux ne porte pas `every_ms` : `GET /v1/probe` répond `{"nodes": [...]}`, et l'entrée dont le
+`name` est celui du nœud le porte. Un échantillon est frais tant que votre horloge a moins de
+`every_ms` + 20 s (un tick plus la borne de lecture) d'avance sur le `t` de son enveloppe ; au-delà,
+le nœud ne dit rien, ce qui ne veut jamais dire libre. Une entrée non vérifiée porte
+`identity: "unknown"`. Le flux peut aussi porter un événement `gap` (voir `GET /v1/events`) : des
+échantillons ont été perdus, ce qui n'est pas une absence de sessions.
 
 Un **nœud** est une instance d'un kind dans l'arbre :
 

@@ -521,8 +521,11 @@ may put in its own event (`ev.t`, on the emitter's clock, see `svc/<name>`). To 
 published during your read from a replayed one, note your own clock in Unix milliseconds just
 before the request: a sample whose `t` is later was published after that moment, the others (an equal `t` included) are
 replay. ixctl synchronises no clock: the comparison holds because the reader runs on the plane's
-machine (`addr` is loopback) and reads the same system clock. The stream does not carry `every_ms`: it is in the node's entry of `GET /v1/probe`. A sample is fresh for about `every_ms` + 20 s (a tick plus the read
-bound); past that, the node says nothing, which is never idle.
+machine (`addr` is loopback) and reads the same system clock. The stream does not carry `every_ms`: `GET /v1/probe` answers `{"nodes": [...]}`, and the entry whose
+`name` is the node carries it. A sample is fresh while your clock is less than `every_ms` + 20 s
+(a tick plus the read bound) past its envelope's `t`; past that, the node says nothing, which is
+never idle. An entry that was not verified carries `identity: "unknown"`. The stream can also
+carry a `gap` event (see `GET /v1/events`): samples were dropped, which is not an absence of sessions.
 
 A **node** is one instance of a kind in the tree:
 
