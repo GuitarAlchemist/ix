@@ -650,6 +650,12 @@ est `unknown`, jamais supposé démarré.
 - `service` : l'état et le type de démarrage d'un service Windows, lus avec les seuls droits de
   consultation. Un service démarré dont le type de démarrage n'est pas automatique est `degraded` :
   il ne reviendra pas après le prochain redémarrage.
+- `service_image_sha256` (avec `service`) : le SHA-256 de l'exécutable que nomme la ligne de commande
+  configurée du service, par exemple `ixctl.exe` sous `C:\Program Files\ixctl` : quel build le SCM
+  démarre, par son contenu. Le fichier est lu, pas le processus, donc cela marche pour un service
+  sous son propre compte. Un autre hachage donne `down` ; une ligne de commande illisible (voir
+  `receipt`) ou un fichier illisible donne `unknown`. Recopiez-le du fichier déployé
+  (`Get-FileHash`), et de nouveau après chaque mise à jour.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Rien ne se connecte au port.
 - `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui

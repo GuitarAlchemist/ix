@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -34,6 +36,10 @@ type resumeComponent struct {
 	// Service is a Windows service name: its state, and whether its start type brings it back
 	// after a reboot.
 	Service string `json:"service,omitempty"`
+	// ServiceImageSHA256 is the SHA-256 of the executable the service's configured command line
+	// names: which build the SCM starts, by content, read from the file (not the process, which a
+	// service under its own account refuses to open). Requires service.
+	ServiceImageSHA256 string `json:"service_image_sha256,omitempty"`
 	// Health is a loopback http(s) URL that answers 2xx once the component is ready.
 	Health string `json:"health,omitempty"`
 	// HealthHost is the Host header the health request carries, for a server that gates on it
@@ -89,6 +95,8 @@ type resumeProbes struct {
 	readFile func(path string) ([]byte, error)
 	// listDir names a directory's entries (the other update runs beside a receipt's).
 	listDir func(dir string) ([]string, error)
+	// hashFile is a file's SHA-256 in hex, read whole, never written.
+	hashFile func(path string) (string, error)
 }
 
 // listenerImage is the executable file name of the process holding addr, "" when nobody holds
@@ -142,6 +150,18 @@ func realResumeProbesOver(rt http.RoundTripper) resumeProbes {
 			}
 			defer f.Close()
 			return readAllCapped(f, 1<<20)
+		},
+		hashFile: func(p string) (string, error) {
+			f, err := os.Open(p)
+			if err != nil {
+				return "", err
+			}
+			defer f.Close()
+			h := sha256.New()
+			if _, err := io.Copy(h, f); err != nil {
+				return "", err
+			}
+			return hex.EncodeToString(h.Sum(nil)), nil
 		},
 		listDir: func(dir string) ([]string, error) {
 			entries, err := os.ReadDir(dir)
@@ -417,6 +437,31 @@ func healthProbe(rt http.RoundTripper, within time.Duration) func(u, host string
 	}
 }
 
+// serviceImageVerdict compares the SHA-256 of the executable the service's configured command
+// line names with the pinned one: down when another build would start, unknown when the line or
+// the file cannot be read.
+// @ai:invariant only a matching hash of the configured executable is ok [T:test conf:0.9 src:resume_hash_test.go]
+func serviceImageVerdict(c resumeComponent, p resumeProbes, svcImage string, svcErr error) (string, string) {
+	if svcErr != nil {
+		return verdictUnknown, fmt.Sprintf("service %s's configured command line cannot be read: %v", c.Service, svcErr)
+	}
+	if svcImage == "" {
+		return verdictUnknown, fmt.Sprintf("service %s has no configured command line to hash", c.Service)
+	}
+	exe, _, err := splitCommandLine(svcImage)
+	if err != nil {
+		return verdictUnknown, fmt.Sprintf("service %s's configured command line cannot be read: %v", c.Service, err)
+	}
+	sum, err := p.hashFile(exe)
+	switch {
+	case err != nil:
+		return verdictUnknown, fmt.Sprintf("service %s's executable %s cannot be hashed: %v", c.Service, exe, err)
+	case !strings.EqualFold(sum, c.ServiceImageSHA256):
+		return verdictDown, fmt.Sprintf("service %s starts %s, whose SHA-256 is %s, not %s", c.Service, exe, sum, c.ServiceImageSHA256)
+	}
+	return verdictOK, fmt.Sprintf("service %s starts %s, SHA-256 %s", c.Service, exe, sum)
+}
+
 // readAllCapped reads r whole, or fails once it holds more than max bytes: a prefix that happens
 // to parse is never handed back as the whole body or file.
 // @ai:invariant a capped read never returns a prefix as the whole [T:test conf:0.9 src:resume_capped_test.go]
@@ -499,6 +544,10 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			return nil, fmt.Errorf("inventory: %s receipt needs service, whose configured command line it is compared with", c.Name)
 		case c.Receipt == "" && c.ReceiptCandidateSHA256 != "":
 			return nil, fmt.Errorf("inventory: %s has receipt_candidate_sha256 without receipt", c.Name)
+		case c.ServiceImageSHA256 != "" && c.Service == "":
+			return nil, fmt.Errorf("inventory: %s has service_image_sha256 without service", c.Name)
+		case c.ServiceImageSHA256 != "" && !receiptSHA256.MatchString(c.ServiceImageSHA256):
+			return nil, fmt.Errorf("inventory: %s service_image_sha256 is not 64 hex digits", c.Name)
 		}
 	}
 	for _, c := range inv.Components {
@@ -590,6 +639,9 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 				worse(verdictDegraded, fmt.Sprintf("service %s is running, start type %s: it will not start after a reboot", c.Service, start))
 			default:
 				worse(verdictOK, fmt.Sprintf("service %s is running, start type %s", c.Service, start))
+			}
+			if c.ServiceImageSHA256 != "" {
+				worse(serviceImageVerdict(c, p, svcImage, svcErr))
 			}
 		}
 		if c.Listen != "" {

@@ -609,6 +609,12 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
 - `service`: a Windows service's state and start type, read with query rights only. A running
   service whose start type is not automatic is `degraded`: it will not come back after the next
   reboot.
+- `service_image_sha256` (with `service`): the SHA-256 of the executable the service's configured
+  command line names, such as `ixctl.exe` under `C:\Program Files\ixctl`: which build the SCM
+  starts, by content. The file is read, not the process, so it works for a service under its own
+  account. Another hash is `down`; a command line that cannot be read (see `receipt`) or a file
+  that cannot be read is `unknown`. Pin it from the deployed file (`Get-FileHash`), and again after
+  each update.
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Nothing connects to the port.
 - `listen_image` (Windows): the file name the listening process's executable must have, such as
