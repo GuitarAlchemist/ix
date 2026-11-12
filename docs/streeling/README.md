@@ -11,9 +11,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 ## Enrollment
 
-- **104** learnings total
+- **111** learnings total
   - `ga`: 36
-  - `ix`: 68
+  - `ix`: 75
 
 ## Faculties
 
@@ -82,7 +82,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [LDA non-symmetric deflation produces duplicated or wrong discriminants · `ix`](../../docs/solutions/math-correctness/lda-non-symmetric-deflation.md)
 - [Sedenion log(-1) principal value needs pi on an imaginary axis · `ix`](../../docs/solutions/math-correctness/sedenion-log-negative-reals.md)
 
-### plan (28)
+### plan (31)
 
 - [feat: Add quaternions, dual quaternions, Plücker coordinates, primes, and fractal curves · `ix`](../../docs/plans/2026-03-13-002-feat-tars-math-phase1-quaternions-primes-fractals-plan.md)
 - [feat: ix Full Vision — Math Crates + Demo + MCP + Infrastructure · `ix`](../../docs/plans/2026-03-14-001-feat-full-vision-math-demo-mcp-infra-plan.md)
@@ -112,14 +112,19 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [DFT-phase invariants — separate the Z-related pairs ICV cannot · `ix`](../../docs/plans/2026-07-21-feat-dft-phase-invariants.md)
 - [IX↔GA phase-similarity reconciliation — one name, two semantics · `ix`](../../docs/plans/2026-07-31-arch-ix-ga-phase-similarity-reconciliation.md)
 - [MSRV audit — what each IX package's dependency closure declares · `ix`](../../docs/plans/2026-10-17-arch-msrv-audit.md)
+- [ixctl slice 1: the three one-way doors · `ix`](../../docs/plans/2026-10-17-ixctl-one-way-doors.md)
+- [ixctl bookmarks: a named point in the instance's sequence, replayed from the ring (story S8) · `ix`](../../docs/plans/2026-10-20-ixctl-bookmarks.md)
+- [ixctl probes: a tree of in-process samplers under the control plane (story S1) · `ix`](../../docs/plans/2026-10-20-ixctl-probes.md)
 
 ### runtime-errors (2)
 
 - VoicingTagEnricher never tagged Cmaj7 as jazz — substring match on wrong field · `ga` — `docs/solutions/runtime-errors/enricher-substring-on-wrong-field-cmaj7-jazz.md`
 - F# Module Initializers, GaAsync Covariance, and DSL Closure Wiring · `ga` — `docs/solutions/runtime-errors/fsharp-module-init-closure-registry.md`
 
-### test-failures (1)
+### test-failures (3)
 
+- [The ixctl Go suite passes on Windows and two overflow tests fail on Linux: the loopback buffers absorb the flood · `ix`](../../docs/solutions/test-failures/2026-10-22-go-suite-green-on-windows-red-on-linux-loopback.md)
+- [A Rust test that hands a canonicalized Windows path to Git bash hangs for minutes: the `\\?\` prefix reads as the UNC share `//?/` · `ix`](../../docs/solutions/test-failures/2026-10-22-msys-bash-hangs-on-verbatim-path-prefix.md)
 - [Kernel PCA test assertion fails on symmetric input — centroids collapse to zero · `ix`](../../docs/solutions/test-failures/kernel-pca-symmetric-centroid-trap.md)
 
 ### tooling (3)
@@ -158,10 +163,12 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - Jules "unable to process" is the gemini-dispatch triage failing, NOT the jules-auto-delegate router · `ga` — `docs/solutions/tooling/2026-07-04-jules-unable-to-process-is-gemini-triage-not-the-router.md`
 - lsp-cross-reference-timeout-cclsp-20260306 · `ga` — `docs/solutions/tooling/lsp-cross-reference-timeout-cclsp-20260306.md`
 
-### workflow-patterns (5)
+### workflow-patterns (7)
 
 - [Measuring a yield improvement from an append-only ledger (the cumulative-blend trap) · `ix`](../../docs/solutions/workflow-patterns/2026-06-07-dogfood-yield-before-after-measurement.md)
 - [Green CI + DEGRADED dashboard = a missing input, not a metric regression · `ix`](../../docs/solutions/workflow-patterns/2026-07-20-green-ci-degraded-dashboard-missing-input.md)
+- [Twelve PRs green one by one, three defects once merged: rehearse the merge order on one branch before landing a stack · `ix`](../../docs/solutions/workflow-patterns/2026-10-22-integration-train-finds-combination-defects.md)
+- [A server started with `start` inside a captured `cmd /c` keeps the caller waiting until the server exits · `ix`](../../docs/solutions/workflow-patterns/2026-11-06-start-in-captured-cmd-waits-for-the-server.md)
 - [Multi-AI review should happen BEFORE merge, not after · `ix`](../../docs/solutions/workflow-patterns/multi-ai-review-before-merge.md)
 - [Parallel worktree merge pitfalls when agents write to main · `ix`](../../docs/solutions/workflow-patterns/parallel-worktree-merge-pitfalls.md)
 - [`streeling catalog` silently drops all ga records when run from a worktree outside repos/, and `streeling check` then blesses the result · `ix`](../../docs/solutions/workflow-patterns/streeling-catalog-drops-sibling-repo-records-from-a-worktree.md)

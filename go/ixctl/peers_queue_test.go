@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -220,5 +221,129 @@ func TestThePipeQueueIsBoundedInBytesToo(t *testing.T) {
 	}
 	if q.bytes.Load() != 0 {
 		t.Fatalf("after draining the queue, gap included: bytes %d, want 0 (Codex round 43: the gap gave back bytes it never counted)", q.bytes.Load())
+	}
+}
+
+// Criterion 6 of ix#408 as it is worded: several muxes and several parents, one slow (D4 ix#402:
+// "a slow parent never slows, stops or re-paces the child's probes nor other parents"; `ctl` and
+// `svc/` are never starved by `probe/` frames, "a measurable test under overload"). Two muxes on
+// the peer, four 10 ms leaves under each, both exported; two parents want both. One parent spends
+// 5 ms on every pipe frame (the 800 records a second offered are four times what it can take):
+// its losses are marked on its pipes and counted in its status, and a ctl event and a svc/ event
+// of the peer still cross to it within two seconds (milliseconds measured). Meanwhile the other
+// parent misses no record of a mux (the mux's own seq runs without a hole, and no marker), counts
+// no drop, and the peer's muxes keep emitting at their declared rate.
+func TestASlowParentSlowsNeitherThePeerNorAnotherParent(t *testing.T) {
+	dirB, dirS, dirF := t.TempDir(), t.TempDir(), t.TempDir()
+	muxes := []string{"agg0", "agg1"}
+	const leaves, everyMs = 4, 10
+	peers := []PeerSpec{{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: muxes}}
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	slow := newTestInstance(t, fakeSpec(t, "slow", peers), dirS)
+	fast := newTestInstance(t, fakeSpec(t, "fast", peers), dirF)
+	for _, in := range []*instance{slow, fast} {
+		waitStatus(t, in, 10*time.Second, "peer b up", func(st StatusReply) bool { return st.Peers[0].State == "up" })
+	}
+	slow.plane.peers["b"].pipeDelay.Store(int64(5 * time.Millisecond))
+
+	cb, cs, cf := dial(t, b), dial(t, slow), dial(t, fast)
+	var zero uint64
+	slowPipes := subscribe(t, cs, "peer/b/probe/", &zero)
+	slowCtl := subscribe(t, cs, "peer/b/ctl", &zero)
+	slowSvc := subscribe(t, cs, "peer/b/svc/", &zero)
+	slowOwn := subscribe(t, cs, "ctl", &zero)
+	for _, m := range muxes {
+		do(t, cb, Request{Op: "probe.create", Probe: node(m, "mux@1", 0, map[string]any{"export": true})})
+		do(t, cb, Request{Op: "probe.start", Node: m})
+		for i := 0; i < leaves; i++ {
+			leaf := fmt.Sprintf("%s-%d", m, i)
+			do(t, cb, Request{Op: "probe.create", Probe: node(leaf, "heartbeat@1", everyMs, map[string]any{"parent": m})})
+			do(t, cb, Request{Op: "probe.start", Node: leaf})
+		}
+	}
+
+	// The slow parent's losses are visible: a run of drops marked on one of its mirrored pipes.
+	m := waitEnv(t, slowPipes, 20*time.Second, "a dropped marker on the slow parent", func(e *Envelope) bool {
+		return e.Ev.Kind == linkGapKind && dataOf(e)["reason"] == "dropped"
+	})
+	if g := gapOf(t, m); m.Origin != "slow" || g.Peer != "b" || g.Dropped == 0 {
+		t.Fatalf("dropped marker: %s", m.Raw())
+	}
+
+	// From here the slow parent's pipe queue is full and stays so. Over a window of 300 records
+	// of one mux read live on the other parent: none is missing there, and the peer's muxes emit
+	// at their declared rate (half of it would already show a producer held back).
+	seqs := func() map[string]uint64 {
+		got := map[string]uint64{}
+		for _, n := range listNodes(t, b.plane) {
+			got[n.Name] = n.Seq
+		}
+		return got
+	}
+	fastMux := subscribe(t, cf, "peer/b/probe/"+muxes[0], nil)
+	before, t0 := seqs(), time.Now()
+	var prev float64
+	for n := 0; n < 300; n++ {
+		e := waitEnv(t, fastMux, 5*time.Second, "a record of the mux on the fast parent", func(*Envelope) bool { return true })
+		if e.Ev.Kind != "sample" {
+			t.Fatalf("on the fast parent, among the mux's records: %s", e.Raw())
+		}
+		seq, _ := dataOf(e)["seq"].(float64)
+		if n > 0 && seq != prev+1 {
+			t.Fatalf("the fast parent read the mux's record %v after %v: records are missing beside a slow parent", seq, prev)
+		}
+		prev = seq
+	}
+	after, elapsed := seqs(), time.Since(t0).Seconds()
+	declared := float64(leaves) * 1000 / everyMs
+	for _, mux := range muxes {
+		rate := float64(after[mux]-before[mux]) / elapsed
+		t.Logf("%s emitted %.0f records/s on the peer beside the slow parent (declared %.0f)", mux, rate, declared)
+		if rate < declared/2 {
+			t.Fatalf("%s emitted %.0f records/s on the peer, under half its declared %.0f: the slow parent held the producer back", mux, rate, declared)
+		}
+	}
+
+	// Control under the load, on the slow parent, both classes, measured.
+	t1 := time.Now()
+	do(t, cb, Request{Op: "probe.create", Probe: node("mark", "heartbeat@1", 1000, nil)})
+	waitEnv(t, slowCtl, 2*time.Second, "the mirrored probe.created on the slow parent", func(e *Envelope) bool {
+		return e.Ev.Kind == "probe.created" && dataOf(e)["node"] == "mark"
+	})
+	ctlMs := time.Since(t1)
+	t2 := time.Now()
+	b.plane.Publish("svc/x", event("stats", map[string]any{"n": 1}))
+	waitEnv(t, slowSvc, 2*time.Second, "the mirrored svc/ event on the slow parent", func(e *Envelope) bool {
+		return e.Ch == "peer/b/svc/x" && e.Origin == "b"
+	})
+	t.Logf("under the pipe overload the slow parent got a ctl event in %s and a svc/ event in %s", ctlMs, time.Since(t2))
+
+	// The statuses: the slow parent counts its drops and stays up, its pipes mirrored; the fast
+	// one counts none.
+	st := waitStatus(t, slow, 5*time.Second, "drops in the slow parent's status", func(st StatusReply) bool {
+		for _, p := range st.Peers[0].Probes {
+			if p.Dropped > 0 {
+				return true
+			}
+		}
+		return false
+	})
+	for _, in := range []StatusReply{st, fast.plane.Status()} {
+		if in.Peers[0].State != "up" {
+			t.Fatalf("%s: link %s under load", in.Name, in.Peers[0].State)
+		}
+		for _, p := range in.Peers[0].Probes {
+			if p.State != pipeMirrored {
+				t.Fatalf("%s: pipe %s is %s under load", in.Name, p.Name, p.State)
+			}
+			if in.Name == "fast" && p.Dropped != 0 {
+				t.Fatalf("the fast parent dropped %d records of %s beside a slow parent", p.Dropped, p.Name)
+			}
+		}
+	}
+	if f, err := slowOwn.next(200*time.Millisecond, func(e *Envelope) bool { return e.Ev.Kind == "peer.down" }); err == nil {
+		t.Fatalf("the slow parent's link went down under load: %s", f.Env.Raw())
+	} else if !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("waiting for no peer.down: %v", err)
 	}
 }

@@ -123,6 +123,8 @@ type Request struct {
 	// note, present (even empty) replaces it.
 	Bookmark string  `json:"bookmark,omitempty"`
 	Note     *string `json:"note,omitempty"`
+	// Need ops (need.*): the fields the op reads, see needOp.
+	Need *needOp `json:"need,omitempty"`
 }
 
 // Broker is all a transport sees of an instance: publish, subscribe with a

@@ -30,6 +30,7 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	hb("cpu", true)       // exportable and wanted: crosses
 	hb("cpu-extra", true) // exportable, not wanted: names are exact, never a prefix
 	hb("mem", false)      // wanted, not exportable: stays on B, and the status says so
+	hb("idle", false)     // neither exportable nor wanted: the fourth combination, stays on B, unnamed in the status
 
 	// B's own declaration says export, in the lifecycle event and in the list.
 	e := waitEnv(t, ctl, 5*time.Second, "mirrored probe.created cpu", func(e *Envelope) bool {
@@ -103,9 +104,10 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	waitStatus(t, a, 5*time.Second, "late mirrored", wantProbes("cpu:mirrored", "mem:not-exportable", "late:mirrored"))
 
 	// Nothing else ever crosses: not the exportable-but-unwanted cpu-extra (a prefix match on
-	// probe/cpu would carry it), not the wanted-but-not-exportable mem.
+	// probe/cpu would carry it), not the wanted-but-not-exportable mem, not idle, which is neither
+	// (criterion 1 of ix#408: of the four combinations only exportable-and-wanted crosses).
 	if f, err := pipes.next(300*time.Millisecond, func(e *Envelope) bool {
-		return e.Ch == "peer/b/probe/cpu-extra" || e.Ch == "peer/b/probe/mem"
+		return e.Ch != "peer/b/probe/cpu" && e.Ch != "peer/b/probe/late"
 	}); err == nil {
 		t.Fatalf("crossed the link: %s", f.Env.Ch)
 	} else if !strings.Contains(err.Error(), "timeout") {
