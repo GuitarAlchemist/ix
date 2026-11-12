@@ -26,18 +26,9 @@ on:
   # Every pull request, whatever its base: a PR stacked on an exp/* branch gets the Rust and Go
   # suites, `-race` and the ixctl gate too, instead of only once it is retargeted to main
   # (ix#423 carried eleven commits with no CI run; the local runner has no cgo, so no -race).
+  # No `paths` here: the workflow always starts on a pull request, and the `changes` job
+  # applies the list above to what the PR changes. See `changes` and `ci-ok`.
   pull_request:
-    paths:
-      - '**'
-      - '!**.md'
-      - 'crates/**.md'
-      - 'go/ixctl/README.md'
-      - 'go/ixctl/README.fr.md'
-      - '!docs/**'
-      - 'docs/contracts/**'
-      - '!.claude/**'
-      - '.claude/settings.json'
-      - '.claude/hooks/**'
 
 # The matrix runs the pull request's code; nothing in it writes to the repository, and the
 # repository's default token is a write token.
@@ -48,7 +39,70 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # On a pull request the workflow always starts, so that `ci-ok` below always reports: a
+  # check that never starts cannot be required, since a prose-only PR would wait on it for
+  # ever. This job decides whether the jobs below have anything to read, with the same
+  # patterns as on.push.paths and GitHub's rule (in order, the last match decides). It looks
+  # at the test merge against its first parent, without rename detection: a file the PR
+  # deletes or moves counts under its old name too. If it cannot tell, everything runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The test merge and its two parents.
+          fetch-depth: 2
+      - id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          MERGE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # on.push.paths, in the same order. ci_workflow_paths.rs holds the two lists equal.
+          PATTERNS: |
+            **
+            !**.md
+            crates/**.md
+            go/ixctl/README.md
+            go/ixctl/README.fr.md
+            !docs/**
+            docs/contracts/**
+            !.claude/**
+            .claude/settings.json
+            .claude/hooks/**
+        run: |
+          decide() { echo "code=$1" >> "$GITHUB_OUTPUT"; echo "code=$1: $2"; exit 0; }
+          if [ "$EVENT" != pull_request ]; then
+            decide true "not a pull request; on.push.paths filtered this run already"
+          fi
+          parents="$(git rev-list --parents -n 1 "$MERGE_SHA" 2>/dev/null)" || decide true "cannot read $MERGE_SHA: everything runs"
+          set -- $parents
+          if [ "$#" -ne 3 ] || [ "$3" != "$HEAD_SHA" ]; then
+            decide true "$MERGE_SHA is not the test merge of $HEAD_SHA: everything runs"
+          fi
+          files="$(git diff --no-renames --name-only "$2" "$MERGE_SHA")" || decide true "the diff failed: everything runs"
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            hit=false
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              neg=false
+              case "$pat" in '!'*) neg=true; pat="${pat#!}" ;; esac
+              glob="${pat//\*\*/*}"
+              # shellcheck disable=SC2254
+              case "$file" in $glob) if $neg; then hit=false; else hit=true; fi ;; esac
+            done <<< "$PATTERNS"
+            if $hit; then
+              decide true "a job reads $file"
+            fi
+          done <<< "$files"
+          decide false "no job reads any of the changed files"
+
   build-and-test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -212,6 +266,8 @@ jobs:
   # tests (ix#390) ran the whole Rust matrix and not one of its own tests. The
   # matrix value is the module's directory (`go/ixctl`, `prototypes/probes`).
   go-modules-discover:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.find.outputs.modules }}
@@ -299,6 +355,8 @@ jobs:
   # ever compiled in CI, so a break in that seam would otherwise surface only when
   # someone builds the opt-in binary by hand.
   gated-features:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -360,6 +418,8 @@ jobs:
   # IX_REQUIRE_DUCKDB=1, under which an unreachable CLI is a hard failure rather
   # than a skip, so the job cannot go green by doing nothing.
   duckdb-sql:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       # Pinned deliberately, and checked against the release asset's own digest.
@@ -429,6 +489,8 @@ jobs:
   # rather than skipping. Only the torch-side tests skip here, by name: they run
   # in ComfyUI's own Python.
   comfyui-pack:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -457,3 +519,54 @@ jobs:
 
       - name: Pack tests
         run: python -m unittest discover -s integrations/comfyui/tests -v
+
+  # The one check to require on main. It always runs, and it is green only when every job
+  # above succeeded, or was skipped for a reason this workflow gives: nothing to read
+  # (changes said so), or no Go module to test. A job that failed, was cancelled, or was
+  # skipped though the change needs it, makes it red. ci_final_gate.rs holds that every job
+  # of this workflow is listed here.
+  ci-ok:
+    if: always()
+    needs: [changes, build-and-test, go-modules-discover, go-modules, gated-features, duckdb-sql, comfyui-pack]
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+          R_CHANGES: ${{ needs.changes.result }}
+          R_BUILD_AND_TEST: ${{ needs.build-and-test.result }}
+          R_GO_MODULES_DISCOVER: ${{ needs.go-modules-discover.result }}
+          R_GO_MODULES: ${{ needs.go-modules.result }}
+          R_GATED_FEATURES: ${{ needs.gated-features.result }}
+          R_DUCKDB_SQL: ${{ needs.duckdb-sql.result }}
+          R_COMFYUI_PACK: ${{ needs.comfyui-pack.result }}
+        run: |
+          fail=0
+          red() { echo "::error title=ci-ok::$1"; fail=1; }
+          # check <job> <result> <must|may>: `must` jobs run whenever the change has code.
+          check() {
+            echo "$1: $2"
+            case "$2" in
+              success) ;;
+              skipped)
+                if [ "$3" = must ] && [ "$CODE" != false ]; then
+                  red "$1 was skipped though this change needs it"
+                fi ;;
+              *) red "$1: ${2:-no result}" ;;
+            esac
+          }
+          echo "changes: $R_CHANGES, code=$CODE"
+          if [ "$R_CHANGES" != success ]; then
+            red "changes: ${R_CHANGES:-no result}"
+          fi
+          case "$CODE" in
+            true | false) ;;
+            *) red "changes gave no decision" ;;
+          esac
+          check build-and-test "$R_BUILD_AND_TEST" must
+          check go-modules-discover "$R_GO_MODULES_DISCOVER" must
+          check go-modules "$R_GO_MODULES" may
+          check gated-features "$R_GATED_FEATURES" must
+          check duckdb-sql "$R_DUCKDB_SQL" must
+          check comfyui-pack "$R_COMFYUI_PACK" must
+          exit "$fail"

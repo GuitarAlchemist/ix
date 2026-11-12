@@ -53,12 +53,31 @@ fn check_event(event: &str, branch: Option<&str>) {
         trigger["paths-ignore"].is_null(),
         "{event}: use `paths` with negations, so a text file a job reads can be re-included"
     );
-    let paths: Vec<&str> = trigger["paths"]
-        .as_sequence()
-        .expect("event must have a paths filter")
-        .iter()
-        .map(|path| path.as_str().expect("path must be a string"))
-        .collect();
+    let paths: Vec<&str> = if event == "pull_request" {
+        // A pull request always starts the workflow, so that `ci-ok` always reports and can
+        // be required; the `changes` job applies the list instead (ci_final_gate.rs runs it).
+        assert!(
+            trigger["paths"].is_null(),
+            "pull_request: no `paths`, or a prose-only PR never gets the required check"
+        );
+        workflow["jobs"]["changes"]["steps"]
+            .as_sequence()
+            .expect("the changes job has steps")
+            .iter()
+            .find(|s| s["id"].as_str() == Some("decide"))
+            .expect("a step with id `decide`")["env"]["PATTERNS"]
+            .as_str()
+            .expect("PATTERNS, one pattern per line")
+            .lines()
+            .collect()
+    } else {
+        trigger["paths"]
+            .as_sequence()
+            .expect("event must have a paths filter")
+            .iter()
+            .map(|path| path.as_str().expect("path must be a string"))
+            .collect()
+    };
     // Order matters to GitHub, so the list is pinned as written, not as a set.
     assert_eq!(
         paths,
