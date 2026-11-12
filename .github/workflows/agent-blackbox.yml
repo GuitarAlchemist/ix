@@ -76,12 +76,39 @@ jobs:
           path: .agent-blackbox
           token: ${{ secrets.AGENT_BLACKBOX_TOKEN || github.token }}
 
+      # What the PR changes is the test merge against its first parent: the base branch as it
+      # is now. `pull_request.base.sha` is the base when the PR was last pushed; diffing from
+      # it adds every commit main took since, so #507 (go/ixctl only) was reported as
+      # changing ci.yml and failed as a blocked path. If the test merge is not the merge of
+      # this head, the changeset cannot be established and the job fails: it never guesses.
+      - name: Establish the changeset of this PR
+        shell: bash
+        env:
+          MERGE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p dist
+          fail() { echo "::error title=Agent Blackbox::cannot establish what this PR changes: $1"; exit 1; }
+          parents="$(git rev-list --parents -n 1 "$MERGE_SHA")" || fail "$MERGE_SHA is not a commit of this checkout"
+          set -- $parents
+          if [ "$#" -ne 3 ]; then
+            fail "$MERGE_SHA has $(($# - 1)) parent(s); a test merge has two"
+          fi
+          base="$2"
+          if [ "$3" != "$HEAD_SHA" ]; then
+            fail "the test merge $MERGE_SHA merges $3, not this PR's head $HEAD_SHA"
+          fi
+          # --no-renames: a moved file is listed under both names, so moving a protected
+          # file away does not take its old path out of the list.
+          git diff --no-renames --name-only "$base" "$MERGE_SHA" > dist/changed-files.txt
+          git diff --no-renames "$base" "$MERGE_SHA" > dist/diff.patch
+          printf '{"base_sha":"%s","head_sha":"%s","merge_sha":"%s"}\n' "$base" "$HEAD_SHA" "$MERGE_SHA" > dist/changeset.json
+          echo "changeset: base $base, head $HEAD_SHA, merge $MERGE_SHA, $(wc -l < dist/changed-files.txt) file(s)"
+
       - name: Collect PR evidence
         shell: bash
         run: |
           mkdir -p dist
-          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/changed-files.txt
-          git diff "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/diff.patch
           if [ -n "${IX_BLAST_RADIUS_BUILD_COMMAND:-}" ]; then
             bash -lc "$IX_BLAST_RADIUS_BUILD_COMMAND"
           fi
@@ -118,7 +145,7 @@ jobs:
                   tool="git.diff",
                   status="ok",
                   path="dist/changed-files.txt",
-                  data={"changed_file_count": len(changed_files)},
+                  data={"changed_file_count": len(changed_files), **json.loads(Path("dist/changeset.json").read_text(encoding="utf-8"))},
               ),
               event(
                   event="verification",

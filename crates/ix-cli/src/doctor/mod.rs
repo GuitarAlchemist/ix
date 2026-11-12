@@ -692,7 +692,11 @@ fn check_environment(root: &Path) -> Vec<CheckResult> {
     let gov_dir =
         std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
     let gov_path = root.join(&gov_dir);
-    let gov_ok = gov_path.is_dir();
+    // A submodule that was never initialized (a fresh worktree) is an empty directory: there on
+    // disk, absent in content.
+    let gov_ok = gov_path
+        .read_dir()
+        .is_ok_and(|mut entries| entries.next().is_some());
 
     let mut out = vec![if gov_ok {
         CheckResult::new(
@@ -700,6 +704,15 @@ fn check_environment(root: &Path) -> Vec<CheckResult> {
             Status::Ok,
             format!("{gov_dir} present"),
         )
+    } else if gov_path.is_dir() {
+        CheckResult::new(
+            "demerzel-governance",
+            Status::Warn,
+            format!("{gov_dir} is an empty directory: the submodule is not initialized"),
+        )
+        .with_remedy(format!(
+            "run `git submodule update --init {gov_dir}` (a new worktree does not initialize submodules)"
+        ))
     } else {
         CheckResult::new(
             "demerzel-governance",
@@ -723,7 +736,7 @@ fn check_environment(root: &Path) -> Vec<CheckResult> {
         CheckResult::new(
             "default-constitution",
             Status::Skip,
-            "skipped (governance submodule absent)",
+            "skipped (governance submodule absent or not initialized)",
         )
     });
 

@@ -163,6 +163,17 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 		peer, err := peerField(body.Peer)
 		return Request{Op: "bookmark.remove", Bookmark: body.Bookmark, Peer: peer}, err
 	}))
+	// Needs: one route per op, the op's fields as the body; never forwarded to a peer.
+	for _, op := range needOps {
+		op := op
+		m.HandleFunc("POST /v1/need/"+op, s.op(func(r *http.Request) (Request, error) {
+			var body needOp
+			if err := decodeBody(r, &body); err != nil {
+				return Request{}, err
+			}
+			return Request{Op: "need." + op, Need: &body}, nil
+		}))
+	}
 	m.HandleFunc("GET /v1/events", s.events)
 	m.HandleFunc("GET /v1/ws", s.ws)
 	s.mux = m

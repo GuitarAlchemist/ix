@@ -26,8 +26,10 @@ var initTime = time.Now()
 const usage = `usage:
   ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N] [--delta-journal FILE]
   ixctl bench <spec.json>
+  ixctl service run|plan    # host under the Windows SCM (or the console); print the install plan
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
   ixctl resume check <inventory.json> [--json]   # after a reboot: what came back, in start order (observes only; exit 1 when not ready)
+  ixctl need submit|status|claim|resolve|refuse|reserve|settle|wait --name NAME [--state DIR]   # the op's JSON on stdin
   ixctl version`
 
 func main() { os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -43,6 +45,8 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		err = cmdUp(args[1:], stdout)
 	case "bench":
 		err = cmdBench(args[1:], stdout)
+	case "service":
+		err = cmdService(args[1:], stdout)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "ixctl", version)
 	case "probes":
@@ -54,6 +58,8 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		if ready, err = cmdResume(args[1:], stdout, realResumeProbes()); err == nil && !ready {
 			return 1
 		}
+	case "need":
+		err = cmdNeed(args[1:], os.Stdin, stdout)
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 	default:
@@ -62,6 +68,10 @@ func cli(args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "ixctl:", err)
+		var ec exitCodeError
+		if errors.As(err, &ec) {
+			return int(ec.code)
+		}
 		return 1
 	}
 	return 0
@@ -163,6 +173,9 @@ type readyLine struct {
 	MsToReady float64 `json:"ms_to_ready"`
 }
 
+// errInstanceRunning: another process holds the name, or answers at its state file.
+var errInstanceRunning = errors.New("already starting or running")
+
 // startInstance listens, serves and writes the state file. The caller starts
 // the plane (supervisors, peers, autostart) once it has announced readiness.
 func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *probeBudget) (*instance, error) {
@@ -200,14 +213,14 @@ func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *p
 		return nil, err
 	}
 	if !held {
-		return nil, fmt.Errorf("instance %q is already starting or running (its lock in %s is held)", name, stateDir)
+		return nil, fmt.Errorf("%w: instance %q (its lock in %s is held)", errInstanceRunning, name, stateDir)
 	}
 	fail := func(err error) (*instance, error) {
 		lock.Close()
 		return nil, err
 	}
 	if st, err := readStateFile(statePath); err == nil && instanceAlive(st) {
-		return fail(fmt.Errorf("instance %q already runs at %s (pid %d)", name, st.Addr, st.Pid))
+		return fail(fmt.Errorf("%w: instance %q at %s (pid %d)", errInstanceRunning, name, st.Addr, st.Pid))
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -231,6 +244,7 @@ func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *p
 	if budget != nil {
 		in.plane.SetProbeBudget(budget.maxRate, budget.treeRate) // validated above
 	}
+	in.plane.SetNeedStore(filepath.Join(stateDir, name+".needs.json")) // under the instance lock: its only writer
 	in.web = newServer(in.plane, name, in.token, ln.Addr().(*net.TCPAddr))
 	in.srv = &http.Server{Handler: in.web, ReadHeaderTimeout: 5 * time.Second}
 	go in.srv.Serve(ln)
