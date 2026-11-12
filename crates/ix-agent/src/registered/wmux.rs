@@ -1015,6 +1015,25 @@ mod tests {
         assert!(out.contains("from <path> using"), "{out}");
     }
 
+    /// Held by every test that starts a script, one at a time, after one untimed start of
+    /// PowerShell. On a loaded Windows runner a cold `pwsh` took longer than the 10 s these tests
+    /// give their scripts, and three of them failed on a start they do not measure (CI,
+    /// 2026-11-11, `did not finish within the snapshot's 10 s budget`). What they measure is the
+    /// call's own deadline, which stays as it was.
+    fn one_script_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static WARM: std::sync::Once = std::sync::Once::new();
+        let guard = ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cfg!(windows) {
+            WARM.call_once(|| {
+                let _ = std::process::Command::new("pwsh")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", "exit"])
+                    .output();
+            });
+        }
+        guard
+    }
+
     /// A launcher that runs a short script: PowerShell on Windows, `sh` elsewhere. The wmux
     /// arguments land after a `#` or in `$0`, so the script ignores them.
     fn script(windows: &str, unix: &str) -> Launcher {
@@ -1044,6 +1063,7 @@ mod tests {
 
     #[test]
     fn an_error_names_the_program_and_never_its_path_or_a_secret() {
+        let _one = one_script_at_a_time();
         let missing = Launcher {
             program: if cfg!(windows) {
                 r"C:\Users\alice\private\wmux.exe"
@@ -1070,6 +1090,7 @@ mod tests {
 
     #[test]
     fn one_deadline_bounds_the_whole_call() {
+        let _one = one_script_at_a_time();
         let mut budget = Budget::new(Duration::from_secs(1), MAX_OUTPUT_BYTES);
         let started = Instant::now();
         let slow = script("Start-Sleep 30", "sleep 30");
@@ -1088,6 +1109,7 @@ mod tests {
     /// still ends at the deadline instead of waiting for that process.
     #[test]
     fn a_descendant_that_keeps_the_output_open_does_not_hang_the_call() {
+        let _one = one_script_at_a_time();
         let mut budget = Budget::new(Duration::from_secs(3), MAX_OUTPUT_BYTES);
         let started = Instant::now();
         let wrapper = script(
@@ -1105,6 +1127,7 @@ mod tests {
 
     #[test]
     fn the_output_budget_is_shared_by_the_whole_call() {
+        let _one = one_script_at_a_time();
         let mut budget = Budget::new(TIMEOUT, 10);
         let small = script("'[1,2]'", "echo '[1,2]'");
         assert_eq!(
@@ -1218,6 +1241,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_cmd_or_ps1_shim_on_path_is_found_and_run() {
+        let _one = one_script_at_a_time();
         let root = std::env::temp_dir().join(format!("ix-wmux-shim-{}", std::process::id()));
         let cmd_dir = root.join("cmd");
         let ps1_dir = root.join("ps1");
