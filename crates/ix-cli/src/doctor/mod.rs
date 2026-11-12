@@ -259,9 +259,9 @@ pub fn run(root: &Path, opts: Options) -> Report {
         check_dark_features(root),
         check_silent_skips(root),
         hardcoded_paths::check(root),
-        // The harness's hooks: present, parsing, fixtures green. Runs the
-        // fixtures under the bash the hooks run under; warns when there is none.
-        hooks::check(root, hooks::find_bash().as_deref()),
+        // The harness's hooks: present, none through a shell, their Go tests green;
+        // warns when there is no Go to run the tests with.
+        hooks::check(root, hooks::find_go().as_deref()),
         // The Rust files this change touches are rustfmt-clean; the base is the one
         // IX_DOCTOR_BASE names (CI), else origin/main.
         rustfmt_touched::check(root, fmt_base.as_deref(), Path::new("rustfmt")),

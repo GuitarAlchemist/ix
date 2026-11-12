@@ -9,11 +9,8 @@ on:
       - '.claude/skills/digest/**'
       - '.claude/skills/correct/**'
       - '.claude/skills/learnings/**'
-      - '.claude/hooks/correction-detector*'
-      - '.claude/hooks/test-correction-detector*'
-      - '.claude/hooks/digest-*'
-      - '.claude/hooks/precompact-digest*'
-      - '.claude/hooks/sessionstart-digest*'
+      - '.claude/hooks/**'
+      - 'go/claudehooks/**'
       - 'CLAUDE.md'
       - '.github/workflows/karpathy-cherny-discipline.yml'
 
@@ -44,39 +41,39 @@ jobs:
             exit 1
           fi
 
-      - name: Verify required hook scripts exist (bash variants)
-        shell: bash
-        run: |
-          missing=0
-          for f in \
-            ".claude/hooks/precompact-digest.sh" \
-            ".claude/hooks/sessionstart-digest.sh" \
-            ".claude/hooks/digest-validate.sh" \
-            ".claude/hooks/digest-staleness-nudge.sh" \
-            ".claude/hooks/digest-activity-tracker.sh" \
-            ".claude/hooks/digest-stop-finalize.sh"; do
-            if [ ! -f "$f" ]; then
-              echo "::error file=$f::Required Karpathy/Cherny hook script missing: $f"
-              missing=1
-            fi
-          done
-          exit $missing
+      # The hooks are one Go program, go/claudehooks (ix-hooks <hook>): no shell in hooks (the
+      # user's rule, 2026-11-05). Its tests carry the former bash fixtures (correction detector
+      # FR/EN, governance blocks, session-start injection) and the digest hooks' contracts.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/claudehooks/go.mod
+          cache: false
 
-      - name: Verify hook scripts are syntactically valid bash
+      - name: Vet and test the hooks (go/claudehooks)
+        working-directory: go/claudehooks
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+
+      # "No hook runs a shell or a script" has one implementation, `ix doctor`'s hooks check
+      # (crates/ix-cli/src/doctor/hooks.rs, runs_shell). ci.yml runs it on every change to
+      # .claude/settings.json, .claude/hooks/** or go/claudehooks: `ix doctor` and the doctor_hooks
+      # test in `cargo test --workspace`. A grep copy here missed 'quoted' programs and env.
+      - name: Verify every digest hook is wired to ix-hooks
         shell: bash
         run: |
           fail=0
-          for f in .claude/hooks/precompact-digest.sh .claude/hooks/sessionstart-digest.sh .claude/hooks/digest-*.sh .claude/hooks/correction-detector.sh; do
-            if ! bash -n "$f"; then
-              echo "::error file=$f::bash syntax error"
+          for h in precompact-digest digest-staleness-nudge digest-activity-tracker digest-stop-finalize correction-detector; do
+            if ! grep -q "ix-hooks\\\\\" $h\"" .claude/settings.json; then
+              echo "::error file=.claude/settings.json::hook $h is not wired to ix-hooks"
               fail=1
             fi
           done
+          if ! grep -q 'run ./cmd/ix-hooks session-start' .claude/settings.json; then
+            echo "::error file=.claude/settings.json::session-start (digest injection, binary install) is not wired"
+            fail=1
+          fi
           exit $fail
-
-      - name: Run the correction detector fixture (FR/EN corrections nudge, requests stay silent)
-        shell: bash
-        run: bash .claude/hooks/test-correction-detector.sh
 
       - name: Verify .claude/settings.json is valid JSON
         run: python -c "import json; json.load(open('.claude/settings.json'))"
