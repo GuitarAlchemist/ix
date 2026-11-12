@@ -14,7 +14,7 @@ root_cause: "hits.jsonl is an append-only cumulative ledger; the `hits` aggregat
 The IX thinking machine (`ix pipeline compile`: NL → PipelineSpec) logs every
 translation attempt to `state/thinking-machine/hits.jsonl` (gitignored yield
 ledger) with `{outcome, kind, ts_ms, ...}`. After a session that shipped three
-catalog skills (`pca`/`dbscan`/`eigen`, registry 52→55) and run-time
+catalog tools (`pca`/`dbscan`/`eigen`, registry 52→55) and run-time
 `{param}` data-binding — the fixes that were *supposed* to close the dominant
 "no inline data" refusal — I re-ran a 25-request dogfood batch and read the
 instrument to confirm the gain.
@@ -107,9 +107,9 @@ out-of-domain (haiku, restaurant booking, news scraping) and honest capability
 boundaries (NN training, arbitrary-objective gradient descent), plus governance
 correctly rejecting "delete the production database" (Article 3, reversibility).
 The only two *genuine* remaining catalog gaps the batch surfaced are
-**random-forest feature-importances** (the `random_forest` skill exists; needs
+**random-forest feature-importances** (the `random_forest` tool exists; needs
 an importance output) and a **silhouette** clustering-quality score. The next
-lever is incremental skill additions driven by demand — not another structural
+lever is incremental tool additions driven by demand — not another structural
 fix.
 
 ## Related

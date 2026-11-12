@@ -7,8 +7,8 @@
 //!
 //! # Why not register directly with ix-agent here
 //!
-//! The ix-agent MCP server has its own skill-registration plumbing
-//! (see `ix_agent::registry_bridge`) that consumes `#[ix_skill]`-annotated
+//! The ix-agent MCP server has its own tool-registration plumbing
+//! (see `ix_agent::registry_bridge`) that consumes `#[ix_tool]`-annotated
 //! functions from `ix-registry`. Wiring the context walker into that
 //! system is downstream work: for the MVP, `ix-context::mcp` exposes the
 //! handler as a pure function so consumers can register it under whichever

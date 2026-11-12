@@ -22,7 +22,7 @@ passé.
 **`ix doctor`** — la porte pré-PR. Chaque exécution ajoute exactement une ligne :
 
 ```bash
-cargo run -p ix-skill --bin ix -- doctor
+cargo run -p ix-cli --bin ix -- doctor
 ```
 
 Une ligne par exécution, pas une par vérification. La réponse de la porte est

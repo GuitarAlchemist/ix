@@ -59,10 +59,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.sha }}
 
+      # No module cache: one written by another workflow would reach the released binary.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/ixctl/go.mod
-          cache-dependency-path: go/ixctl/go.sum
+          cache: false
 
       - name: Build with the tag as the version
         env:
@@ -166,7 +167,7 @@ jobs:
             "- [This build](https://github.com/$repo/actions/runs/${{ github.run_id }})"
           ) -join "`n" | Out-File body.md -Encoding utf8
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: ${{ github.event.inputs.tag || github.ref_name }}

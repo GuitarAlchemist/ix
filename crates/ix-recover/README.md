@@ -46,7 +46,7 @@ The records parse into structs that refuse unknown and duplicated keys. Bindings
 
 - `tests/recover.rs` runs in-process: replay, conflict, a held lock, a missing receipt, and simulated evidence damage (tampered, extra or missing files; unknown or duplicated fields; a receipt for another manifest; an intent that does not match its digest; a commit without an intent; a foreign commit during an attempt). It also covers unsafe run ids and file names.
 - `tests/kill.rs` uses real process kills. The test binary re-runs itself as a child, which stops at a publish point and is killed there (TerminateProcess on Windows, SIGKILL on Unix). A kill after the commit is repaired without a second publication. A kill before the commit leaves its residue and a fresh attempt. A guard kills and reaps the child on every way out of the parent, a failed wait included, and a child left waiting exits by itself after its deadline; both are tested, the first by checking that the child's process id is gone.
-- `crates/ix-skill/tests/pipeline_kill.rs` kills the `ix` process itself before and after the commit, at a pause point that exists in debug builds only (`IX_RECOVER_PAUSE`).
+- `crates/ix-cli/tests/pipeline_kill.rs` kills the `ix` process itself before and after the commit, at a pause point that exists in debug builds only (`IX_RECOVER_PAUSE`).
 
 ## Scope
 

@@ -7,7 +7,7 @@
 //! or if a new tool is added without updating this allowlist — an
 //! intentional rate-limiter so every surface change is reviewed.
 //!
-//! `EXPECTED` is cross-checked against `state/registry/skills.snapshot.json`,
+//! `EXPECTED` is cross-checked against `state/registry/tools.snapshot.json`,
 //! the generated inventory oracle (ix#185). The hand-typed counts that used to
 //! live here are gone: drift now reports *which* capability moved, and
 //! `ix doctor --write` regenerates the snapshot.
@@ -23,7 +23,7 @@ static LOOP_DETECTOR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// The MCP tools exposed by ix-agent. Deliberately **not** prefixed with a
 /// hand-typed count: the number here read "72" while the list below held 96
 /// entries, because every tool-adding PR bumped the list and left the prose
-/// alone. `state/registry/skills.snapshot.json` is the count oracle (ix#185);
+/// alone. `state/registry/tools.snapshot.json` is the count oracle (ix#185);
 /// this list is the *name* oracle. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
 /// ServerContext-routed surface), plus the 4 pipeline tools added during
@@ -96,7 +96,7 @@ const EXPECTED: &[&str] = &[
     "ix_gmm",
     "ix_wavelet_denoise",
     "ix_fir_filter",
-    // ix#193 — proposed surface, see crates/ix-agent/src/skills/batch1.rs
+    // ix#193 — proposed surface, see crates/ix-agent/src/registered/batch1.rs
     "ix_kalman",
     "ix_spectrogram",
     "ix_autocorrelation",
@@ -201,16 +201,16 @@ fn parity_all_64_tools_reachable() {
 /// `assert_eq!(EXPECTED.len(), 94)` used to live here. It carried a 40-line
 /// running tally in a comment, and it is the oracle that drifted and turned
 /// `main` red when `mesh_correlate` landed. The snapshot is regenerated with
-/// `cargo run -p ix-skill --bin ix -- doctor --write`, so adding a tool
+/// `cargo run -p ix-cli --bin ix -- doctor --write`, so adding a tool
 /// produces a reviewable diff of *names* instead of a number nobody can
 /// sanity-check.
 fn snapshot_names(section: &str) -> BTreeSet<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../state/registry/skills.snapshot.json");
+        .join("../../state/registry/tools.snapshot.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "reading {}: {e}\n  \
-             regenerate it with `cargo run -p ix-skill --bin ix -- doctor --write`",
+             regenerate it with `cargo run -p ix-cli --bin ix -- doctor --write`",
             path.display()
         )
     });
@@ -234,11 +234,11 @@ fn assert_same_names(live: &BTreeSet<String>, snapshot: &BTreeSet<String>, what:
     let only_snapshot: Vec<&String> = snapshot.difference(live).collect();
     assert!(
         only_live.is_empty() && only_snapshot.is_empty(),
-        "{what} drifted from state/registry/skills.snapshot.json\n  \
+        "{what} drifted from state/registry/tools.snapshot.json\n  \
          in this build but not the snapshot: {only_live:?}\n  \
          in the snapshot but not this build: {only_snapshot:?}\n  \
          If the change is intended, run \
-         `cargo run -p ix-skill --bin ix -- doctor --write` and commit the diff."
+         `cargo run -p ix-cli --bin ix -- doctor --write` and commit the diff."
     );
 }
 
@@ -317,7 +317,7 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
 ///
 /// `ToolRegistry::call` routes registry-backed tools through `dispatch_action`, whose
 /// `ApprovalMiddleware` sends an unclassified name to `ActionKind::Unknown` → Tier 3 →
-/// blocked. So adding an `#[ix_skill]` without a matching `classify_action_kind` entry
+/// blocked. So adding an `#[ix_tool]` without a matching `classify_action_kind` entry
 /// ships a tool that is listed, unit-tested below the gate, and refused on every MCP call
 /// (`ix_petri_analyze`, `ix_mesh_correlate` and the four `ix_assumption_*` tools were).
 /// Manual tools go through the same gate (ix#350); see
@@ -1193,7 +1193,7 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
 fn parity_batch1_tools_are_registry_backed() {
     // Sanity: the 6 tools migrated in Week 2 batch 1 should now be sourced
     // from the capability registry, not from the manual handler list.
-    let batch1_skills = [
+    let batch1_tools = [
         "stats",
         "distance",
         "fft",
@@ -1201,18 +1201,18 @@ fn parity_batch1_tools_are_registry_backed() {
         "linear_regression",
         "governance.belief",
     ];
-    for skill in batch1_skills {
+    for tool in batch1_tools {
         assert!(
-            ix_registry::by_name(skill).is_some(),
-            "batch1 skill missing from registry: {skill}"
+            ix_registry::by_name(tool).is_some(),
+            "batch1 tool missing from registry: {tool}"
         );
     }
 }
 
 #[test]
 fn parity_batch2_tools_are_registry_backed() {
-    // All 28 batch2 skill names should be discoverable via ix-registry.
-    let batch2_skills = [
+    // All 28 batch2 tool names should be discoverable via ix-registry.
+    let batch2_tools = [
         "optimize",
         "markov",
         "viterbi",
@@ -1243,15 +1243,15 @@ fn parity_batch2_tools_are_registry_backed() {
         "governance.persona",
         "governance.policy",
     ];
-    for skill in batch2_skills {
+    for tool in batch2_tools {
         assert!(
-            ix_registry::by_name(skill).is_some(),
-            "batch2 skill missing from registry: {skill}"
+            ix_registry::by_name(tool).is_some(),
+            "batch2 tool missing from registry: {tool}"
         );
     }
 }
 
-/// Every `#[ix_skill]` registration must appear in the generated snapshot.
+/// Every `#[ix_tool]` registration must appear in the generated snapshot.
 ///
 /// This replaces `assert_eq!(ix_registry::count(), 66)`, which asserted a
 /// number rather than an inventory: a rename that kept the count constant
@@ -1261,14 +1261,14 @@ fn parity_registry_matches_generated_snapshot() {
     let live: BTreeSet<String> = ix_registry::all().map(|d| d.name.to_string()).collect();
     assert_same_names(
         &live,
-        &snapshot_names("skills"),
-        "capability registry skills",
+        &snapshot_names("registry_tools"),
+        "capability registry tools",
     );
 }
 
 #[test]
 fn parity_batch3_tools_are_registry_backed() {
-    let batch3_skills = [
+    let batch3_tools = [
         "pipeline",
         "cache",
         "federation.discover",
@@ -1279,10 +1279,10 @@ fn parity_batch3_tools_are_registry_backed() {
         "tars_bridge",
         "ga_bridge",
     ];
-    for skill in batch3_skills {
+    for tool in batch3_tools {
         assert!(
-            ix_registry::by_name(skill).is_some(),
-            "batch3 skill missing from registry: {skill}"
+            ix_registry::by_name(tool).is_some(),
+            "batch3 tool missing from registry: {tool}"
         );
     }
 }
@@ -1307,7 +1307,7 @@ fn registry_backed_calls_dispatch_correctly() {
     assert_eq!(result["gcd"].as_u64(), Some(6));
 
     // batch1: ix_eigen → eigen (exercises the MCP-name dispatch path for the new
-    // skill, not just the wrapper). [[2,1],[1,2]] has top eigenvalue 3.
+    // tool, not just the wrapper). [[2,1],[1,2]] has top eigenvalue 3.
     let params = serde_json::json!({ "matrix": [[2.0, 1.0], [1.0, 2.0]] });
     let result = reg.call("ix_eigen", params).expect("ix_eigen via registry");
     let top = result["eigenvalues"][0].as_f64().expect("eigenvalues[0]");

@@ -2,8 +2,8 @@
 title: "A Rust test that hands a canonicalized Windows path to Git bash hangs for minutes: the `\\\\?\\` prefix reads as the UNC share `//?/`"
 category: test-failures
 date: 2026-10-22
-tags: [windows, msys, git-bash, canonicalize, verbatim-prefix, unc, hang, ix-skill, doctor, fixtures]
-symptom: "cargo test for ix-skill's doctor suites took 629 s and 1220 s on Windows with every test green; a bash fixture spawned by the test sat idle, and its child `bash \"$HOOK\"` with `dirname \"$0\"` never returned until the 120 s timeout"
+tags: [windows, msys, git-bash, canonicalize, verbatim-prefix, unc, hang, ix-cli, doctor, fixtures]
+symptom: "cargo test for ix-cli's doctor suites took 629 s and 1220 s on Windows with every test green; a bash fixture spawned by the test sat idle, and its child `bash \"$HOOK\"` with `dirname \"$0\"` never returned until the 120 s timeout"
 root_cause: "Path::canonicalize on Windows returns a verbatim path, `\\\\?\\C:\\...`; replacing backslashes with slashes turns it into `//?/C:/...`, which msys bash parses as a UNC path on a host named `?` and tries to resolve over the network before giving up"
 ---
 
@@ -28,7 +28,7 @@ is why every test stayed green while the wall clock exploded.
 
 ## Fix
 
-`crates/ix-skill/src/doctor/hooks.rs`, `posix()`: strip `\\?\` (and `\\?\UNC\` back to `\\`)
+`crates/ix-cli/src/doctor/hooks.rs`, `posix()`: strip `\\?\` (and `\\?\UNC\` back to `\\`)
 before replacing the separators. Suites back to 33 s and 56 s; `ix doctor` 40 s with the
 fixtures included. PR #424.
 

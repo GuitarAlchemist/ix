@@ -103,7 +103,7 @@ impl LockFile {
     /// a different/empty map, a seed-backed ref fails to resolve and
     /// `resolved_args_hash` silently falls back to the template hash. The sole
     /// caller (`ix pipeline run`) passes one shared, empty map, so this holds today.
-    // @ai:assumption from_run's `initial_inputs` is the SAME seed map passed to execute() this run; else a seed-backed resolved_args_hash silently degrades to the template hash [U:uncertain conf:0.6 src:ix-skill pipeline.rs run() passes one shared empty map to both — unenforced precondition]
+    // @ai:assumption from_run's `initial_inputs` is the SAME seed map passed to execute() this run; else a seed-backed resolved_args_hash silently degrades to the template hash [U:uncertain conf:0.6 src:ix-cli pipeline.rs run() passes one shared empty map to both — unenforced precondition]
     pub fn from_run(
         spec: &PipelineSpec,
         result: &PipelineResult,

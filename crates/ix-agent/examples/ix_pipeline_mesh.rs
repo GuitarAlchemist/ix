@@ -2,19 +2,19 @@
 //! docs/plans/2026-06-23-executable-pipeline-mesh.md). Unlike `ix_voicing_mesh` (which
 //! *reified* a DAG for display), this builds a real `PipelineSpec`, `lower()`s it to a
 //! `Dag<PipelineNode>`, and `execute()`s it through the ix-pipeline executor — every node
-//! is a real `ix-agent` skill invocation.
+//! is a real `ix-agent` tool invocation.
 //!
 //! Shape (Option C): N per-stream pipelines + a pairwise mesh tier.
 //!   cond_i   = autocorrelation(series_i)          [N nodes, level 0]
 //!   dist_ij  = distance(cond_i, cond_j, cosine)   [C(N,2) nodes, level 1]
-//! N = 16 → **136 real skill nodes executed** (16 + 120). Each `dist_ij` is fed by two
+//! N = 16 → **136 real tool nodes executed** (16 + 120). Each `dist_ij` is fed by two
 //! `cond` stages via `{from: "cond_i.autocorrelation"}` refs — no glue code.
 //!
 //! The hub is read back from the executed pairwise outputs (stream with max mean
 //! distance). It is *not* a `graph`-pagerank node: pagerank on a complete graph is
 //! uniform regardless of weight, and the spec can't threshold edges at build time (the
 //! weights are run-time values) — a real constraint surfaced while building. A
-//! thresholded/weighted centrality would need a dedicated fan-in skill (Option A in the
+//! thresholded/weighted centrality would need a dedicated fan-in tool (Option A in the
 //! plan); kept example-local here per Option C.
 //!
 //! Validation: the streams are 15 mutually-similar tones + 1 planted **outlier**; the
@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-// Force-link ix-agent's rlib so its `#[ix_skill]` linkme entries register.
+// Force-link ix-agent's rlib so its `#[ix_tool]` linkme entries register.
 use ix_agent as _;
 use ix_pipeline::executor::{execute, NoCache};
 use ix_pipeline::lower::lower;
@@ -55,11 +55,14 @@ fn main() {
     );
 
     let result = execute(&dag, &HashMap::new(), &NoCache).expect("execute");
-    println!("✓ executed {} real skill nodes through ix_pipeline::executor (not reified)\n", result.node_results.len());
+    println!(
+        "✓ executed {} real tool nodes through ix_pipeline::executor (not reified)\n",
+        result.node_results.len()
+    );
 
     // Read the N×N distance matrix from the executed pairwise nodes, then rank streams
     // by mean distance to the rest (an outlier-centrality from the executed mesh — the
-    // `graph` skill's pagerank is uniform on a complete graph, so the aggregation is
+    // `graph` tool's pagerank is uniform on a complete graph, so the aggregation is
     // computed here from the pipeline's real outputs).
     let mut mean_dist = [0.0f64; N];
     for i in 0..N {

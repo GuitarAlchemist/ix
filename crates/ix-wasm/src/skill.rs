@@ -19,7 +19,7 @@
 
 use crate::build::{id_of, is_id, Toolchain};
 use crate::{Limits, Program};
-use ix_skill_macros::ix_skill;
+use ix_tool_macros::ix_tool;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -167,7 +167,7 @@ pub fn wasm_run_output_schema() -> Value {
 
 /// Runs a WASI module as a pipeline stage, sandboxed: JSON in on stdin, JSON out on stdout, no
 /// files, no network, a seeded clock and random source, bounded by fuel and memory.
-#[ix_skill(
+#[ix_tool(
     domain = "wasm",
     name = "wasm.run",
     governance = "safety,deterministic",

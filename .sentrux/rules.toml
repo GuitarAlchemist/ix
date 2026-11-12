@@ -139,8 +139,8 @@ name  = "runtime"
 paths = [
   "crates/ix-agent/*",
   "crates/ix-agent-core/*",
-  "crates/ix-skill/*",
-  "crates/ix-skill-macros/*",
+  "crates/ix-cli/*",
+  "crates/ix-tool-macros/*",
   "crates/ix-net/*",
   "crates/ix-session/*",
   "crates/ix-dashboard/*",

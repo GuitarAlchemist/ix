@@ -135,7 +135,20 @@
       "mcp__ga__ga_chord_intervals",
       "mcp__ga__ga_set_class_subs",
       "mcp__ga__ga_chord_to_set",
-      "mcp__notebooklm__get_health"
+      "mcp__notebooklm__get_health",
+      "PowerShell(wmux ping)",
+      "PowerShell(wmux browser get-text*)",
+      "mcp__ga-chatbot__chord_diagram",
+      "mcp__session-inbox__group_list",
+      "mcp__ga__ga_common_tones",
+      "mcp__ga__ga_search_voicings",
+      "mcp__ga__ga_parse_chord",
+      "mcp__ga__ga_transpose_chord",
+      "mcp__ga__get_key_signature_info",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__list_pages",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_take_screenshot"
     ]
   }
 }

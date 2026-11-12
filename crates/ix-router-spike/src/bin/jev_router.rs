@@ -221,17 +221,60 @@ struct Answer {
     choice: String,
     confidence: f64,
     probabilities: BTreeMap<String, f64>,
+    /// Another option shares the maximum probability: the choice is one of a tie.
+    tied: bool,
     input_tokens: u64,
     output_tokens: u64,
 }
 
 /// Why a response was rejected. Every variant is scored as a failure.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Invalid {
     Missing,
     DigestMismatch,
     WrongModel(String),
     Contract(String),
+    /// The runner gave up waiting (run-live.ps1's 30 s timeout).
+    Timeout,
+    /// No 200 response: the HTTP status or the runner's exception name.
+    ProviderUnavailable(String),
+}
+
+/// One receipt line: the digest of the bytes the runner sent, the provider's
+/// response, and what the runner saw instead when there was none.
+#[derive(Debug, Clone)]
+struct Receipt {
+    digest: String,
+    response: Value,
+    transport: Option<Invalid>,
+}
+
+impl Receipt {
+    fn answered(digest: &str, response: Value) -> Self {
+        Self {
+            digest: digest.to_string(),
+            response,
+            transport: None,
+        }
+    }
+}
+
+/// What run-live.ps1 recorded in place of a response: a non-200 status, a
+/// timeout, or another exception. `None` when there is a response to validate.
+fn transport_failure(line: &Value) -> Option<Invalid> {
+    if !line["response"].is_null() {
+        return None;
+    }
+    match (line["http_status"].as_u64(), line["error"].as_str()) {
+        (Some(code), _) if code != 200 => {
+            Some(Invalid::ProviderUnavailable(format!("http {code}")))
+        }
+        (None, Some(e)) if e.contains("Timeout") || e.contains("TaskCanceled") => {
+            Some(Invalid::Timeout)
+        }
+        (None, Some(e)) => Some(Invalid::ProviderUnavailable(e.to_string())),
+        _ => None,
+    }
 }
 
 /// Request bytes. Canonical (sorted) unless `reversed`: then the criteria
@@ -342,6 +385,7 @@ fn validate(resp: &Value, options: &BTreeSet<String>, sum_tol: f64) -> Result<An
     if probabilities[choice] != max {
         return Err(c("choice must carry the maximum probability"));
     }
+    let tied = probabilities.values().filter(|p| **p == max).count() > 1;
     let confidence = a
         .get("confidence")
         .and_then(num)
@@ -368,6 +412,7 @@ fn validate(resp: &Value, options: &BTreeSet<String>, sum_tol: f64) -> Result<An
         choice: choice.to_string(),
         confidence,
         probabilities,
+        tied,
         input_tokens: tok("input_tokens")?,
         output_tokens: tok("output_tokens")?,
     })
@@ -623,17 +668,22 @@ fn plan(root: &Path, s: &Setup) {
     );
 }
 
-/// Receipt line: {"id", "request_sha256", "response"} — one per prompt. The
-/// runner hashes the bytes it actually sent. A repeated id means a retry,
-/// which the pre-registration forbids, so it aborts instead of last-wins.
-fn load_receipt(path: &Path) -> BTreeMap<String, (String, Value)> {
+/// Receipt line: {"id", "request_sha256", "http_status", "error", "response"}
+/// — one per prompt. The runner hashes the bytes it actually sent. A repeated
+/// id means a retry, which the pre-registration forbids, so it aborts instead
+/// of last-wins.
+fn load_receipt(path: &Path) -> BTreeMap<String, Receipt> {
     let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     let mut out = BTreeMap::new();
     for l in text.lines().filter(|l| !l.trim().is_empty()) {
         let v: Value = serde_json::from_str(l).unwrap_or_else(|e| panic!("receipt line: {e}"));
         let id = v["id"].as_str().expect("receipt id").to_string();
-        let digest = v["request_sha256"].as_str().unwrap_or("").to_string();
-        let prev = out.insert(id.clone(), (digest, v["response"].clone()));
+        let receipt = Receipt {
+            digest: v["request_sha256"].as_str().unwrap_or("").to_string(),
+            response: v["response"].clone(),
+            transport: transport_failure(&v),
+        };
+        let prev = out.insert(id.clone(), receipt);
         assert!(
             prev.is_none(),
             "duplicate receipt id {id}: retries are not allowed"
@@ -675,10 +725,7 @@ fn verdict(m: &Metrics, wrong_model: bool) -> &'static str {
     }
 }
 
-fn validate_all(
-    s: &Setup,
-    receipt: &BTreeMap<String, (String, Value)>,
-) -> Vec<Result<Answer, Invalid>> {
+fn validate_all(s: &Setup, receipt: &BTreeMap<String, Receipt>) -> Vec<Result<Answer, Invalid>> {
     // An unplanned id is an extra call; the pre-registration fixes the call set.
     let planned: BTreeSet<&str> = s.heldout.prompts.iter().map(|p| p.id.as_str()).collect();
     if let Some(extra) = receipt.keys().find(|k| !planned.contains(k.as_str())) {
@@ -690,27 +737,29 @@ fn validate_all(
         .zip(&s.digests)
         .map(|(p, d)| match receipt.get(&p.id) {
             None => Err(Invalid::Missing),
-            Some((got, _)) if got != d => Err(Invalid::DigestMismatch),
-            Some((_, resp)) => validate(resp, &s.option_set, s.arm.sum_tol),
+            Some(r) if r.digest != *d => Err(Invalid::DigestMismatch),
+            Some(Receipt {
+                transport: Some(e), ..
+            }) => Err(e.clone()),
+            Some(r) => validate(&r.response, &s.option_set, s.arm.sum_tol),
         })
         .collect()
 }
 
-/// Reported usage over EVERY response in the receipt, valid or not: a
-/// rejected answer was still billed.
-fn usage_totals(receipt: &BTreeMap<String, (String, Value)>) -> (u64, u64) {
-    receipt.values().fold((0, 0), |(i, o), (_, r)| {
-        let tok = |k: &str| r["usage"][k].as_f64().filter(|x| *x >= 0.0).unwrap_or(0.0) as u64;
-        (i + tok("input_tokens"), o + tok("output_tokens"))
+/// Reported usage over EVERY receipt, valid or not: a rejected answer was
+/// still billed. The third count is the receipts with no usable usage: their
+/// cost is unknown, and it is reported as such rather than added as zero.
+fn usage_totals(receipt: &BTreeMap<String, Receipt>) -> (u64, u64, usize) {
+    receipt.values().fold((0, 0, 0), |(i, o, unknown), r| {
+        let tok = |k: &str| r.response["usage"][k].as_f64().filter(|x| *x >= 0.0);
+        match (tok("input_tokens"), tok("output_tokens")) {
+            (Some(a), Some(b)) => (i + a as u64, o + b as u64, unknown),
+            _ => (i, o, unknown + 1),
+        }
     })
 }
 
-fn report(
-    root: &Path,
-    s: &Setup,
-    receipt: &BTreeMap<String, (String, Value)>,
-    label: &str,
-) -> Value {
+fn report(root: &Path, s: &Setup, receipt: &BTreeMap<String, Receipt>, label: &str) -> Value {
     let results = validate_all(s, receipt);
     let results = results.as_slice();
     let gold: Vec<&str> = s
@@ -751,7 +800,7 @@ fn report(
         .zip(results)
         .filter_map(|(p, r)| r.as_ref().err().map(|e| (p.id.clone(), format!("{e:?}"))))
         .collect();
-    let (input_tokens, output_tokens) = usage_totals(receipt);
+    let (input_tokens, output_tokens, unknown_cost) = usage_totals(receipt);
     let exploratory: Vec<Value> = EXPLORATORY_TAUS
         .iter()
         .map(|&t| {
@@ -825,12 +874,14 @@ fn report(
             "min_f1": { "intent": primary.min_f1.0, "f1": primary.min_f1.1 },
             "brier": brier(&gold, &answers),
             "per_intent_f1": primary.per_intent_f1,
+            "tied_answers": answers.iter().flatten().filter(|a| a.tied).count(),
         },
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "receipts_without_usage": unknown_cost,
             "rate_card_usd": input_tokens as f64 / 1e6 * INPUT_PRICE_PER_MILLION_USD,
-            "note": "Rate-card arithmetic on reported input tokens (output tokens are free on the reviewed card), not an account charge.",
+            "note": "Rate-card arithmetic on reported input tokens (output tokens are free on the reviewed card), not an account charge. Receipts without usage have an unknown cost and are not in the totals.",
         },
         "exploratory_confidence_taus": exploratory,
         "baselines": {
@@ -843,7 +894,7 @@ fn report(
 
 /// Deterministic synthetic responses for exercising the pipeline. Gold with a
 /// fixed error pattern, plus one malformed and one missing entry. MOCK only.
-fn mock_receipt(s: &Setup) -> BTreeMap<String, (String, Value)> {
+fn mock_receipt(s: &Setup) -> BTreeMap<String, Receipt> {
     let opts: Vec<&String> = s.option_set.iter().collect();
     s.heldout
         .prompts
@@ -869,7 +920,7 @@ fn mock_receipt(s: &Setup) -> BTreeMap<String, (String, Value)> {
             if i == 3 {
                 resp["answers"][QUESTION_ID]["probabilities"][NONE] = json!(0.9); // no longer sums to 1
             }
-            (p.id.clone(), (d.clone(), resp))
+            (p.id.clone(), Receipt::answered(d, resp))
         })
         .collect()
 }
@@ -1008,10 +1059,13 @@ mod tests {
         let mut bad = resp("a", 0.7, 0.2, 0.2); // invalid: sums to 1.1
         bad["usage"] = json!({ "input_tokens": 40, "output_tokens": 5 });
         let receipt = BTreeMap::from([
-            ("x".to_string(), (String::new(), resp("a", 0.7, 0.2, 0.1))),
-            ("y".to_string(), (String::new(), bad)),
+            (
+                "x".to_string(),
+                Receipt::answered("", resp("a", 0.7, 0.2, 0.1)),
+            ),
+            ("y".to_string(), Receipt::answered("", bad)),
         ]);
-        assert_eq!(usage_totals(&receipt), (50, 5));
+        assert_eq!(usage_totals(&receipt), (50, 5, 0));
     }
 
     #[test]
@@ -1182,5 +1236,137 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    // ix#489 contract cases. These pin the CURRENT behaviour, gaps included:
+    // they were written green against unchanged code, so none was seen red.
+    // Three of them first pinned gaps (timeout = provider failure, tie unflagged,
+    // missing usage counted as zero); they now state the fixed behaviour.
+
+    fn musicse_setup() -> Setup {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        setup(&root, arm("musicse"))
+    }
+
+    fn temp_receipt(name: &str, lines: &[Value]) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("jev-{name}-{}.jsonl", std::process::id()));
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        fs::write(&p, text).unwrap();
+        p
+    }
+
+    #[test]
+    fn test_digest_mismatch_and_missing_answer_are_invalid() {
+        let s = musicse_setup();
+        let ids: Vec<&str> = s.heldout.prompts.iter().map(|p| p.id.as_str()).collect();
+        let receipt = BTreeMap::from([
+            (
+                ids[0].to_string(),
+                Receipt::answered(&s.digests[0], resp("a", 0.7, 0.2, 0.1)),
+            ),
+            (
+                ids[1].to_string(),
+                Receipt::answered(&"0".repeat(64), resp("a", 0.7, 0.2, 0.1)),
+            ),
+        ]);
+        let r = validate_all(&s, &receipt);
+        assert_ne!(r[0], Err(Invalid::DigestMismatch));
+        assert_eq!(r[1], Err(Invalid::DigestMismatch));
+        assert_eq!(r[2], Err(Invalid::Missing));
+    }
+
+    #[test]
+    #[should_panic(expected = "extra calls are not allowed")]
+    fn test_unplanned_receipt_id_aborts_scoring() {
+        let s = musicse_setup();
+        let receipt = BTreeMap::from([(
+            "not-planned".to_string(),
+            Receipt::answered("", Value::Null),
+        )]);
+        validate_all(&s, &receipt);
+    }
+
+    #[test]
+    fn test_duplicate_receipt_id_aborts_scoring() {
+        let line = json!({ "id": "x", "request_sha256": "", "response": null });
+        let p = temp_receipt("dup", &[line.clone(), line]);
+        let got = std::panic::catch_unwind(|| load_receipt(&p));
+        fs::remove_file(&p).unwrap();
+        assert!(
+            got.is_err(),
+            "a duplicate id (a retry) must abort, never last-wins"
+        );
+    }
+
+    /// run-live.ps1 records a timeout or an HTTP failure in `error` /
+    /// `http_status`; each keeps its own outcome instead of `Contract("model missing")`.
+    #[test]
+    fn test_timeout_and_provider_failure_are_distinct_outcomes() {
+        let p = temp_receipt(
+            "fail",
+            &[
+                json!({ "id": "t", "request_sha256": "d", "http_status": null, "latency_ms": 30001, "error": "TaskCanceledException", "response": null }),
+                json!({ "id": "h", "request_sha256": "d", "http_status": 503, "latency_ms": 80, "error": "http 503", "response": null }),
+                json!({ "id": "c", "request_sha256": "d", "http_status": null, "latency_ms": 5, "error": "HttpRequestException", "response": null }),
+            ],
+        );
+        let receipt = load_receipt(&p);
+        fs::remove_file(&p).unwrap();
+        assert_eq!(receipt["t"].transport, Some(Invalid::Timeout));
+        assert_eq!(
+            receipt["h"].transport,
+            Some(Invalid::ProviderUnavailable("http 503".into()))
+        );
+        assert_eq!(
+            receipt["c"].transport,
+            Some(Invalid::ProviderUnavailable("HttpRequestException".into()))
+        );
+    }
+
+    #[test]
+    fn test_non_finite_or_out_of_range_scores_are_invalid() {
+        for bad in [json!(null), json!(-0.1), json!(1.5), json!("0.7")] {
+            let mut r = resp("a", 0.7, 0.2, 0.1);
+            r["answers"]["intent"]["probabilities"]["b"] = bad.clone();
+            assert!(
+                matches!(validate(&r, &opts(), SUM_TOL), Err(Invalid::Contract(_))),
+                "probability {bad} accepted"
+            );
+        }
+        // serde_json has no NaN literal: json!(f64::NAN) is null, rejected above.
+        assert_eq!(json!(f64::NAN), Value::Null);
+        let mut r = resp("a", 0.7, 0.2, 0.1);
+        r["answers"]["intent"]["confidence"] = json!(1.5);
+        assert!(matches!(
+            validate(&r, &opts(), SUM_TOL),
+            Err(Invalid::Contract(_))
+        ));
+    }
+
+    /// A tie for the maximum is still accepted (the choice is one of the tied
+    /// options), but the answer says it was tied: ambiguous evidence is visible.
+    #[test]
+    fn test_argmax_tie_is_flagged() {
+        let tied = validate(&resp("b", 0.45, 0.45, 0.1), &opts(), SUM_TOL).unwrap();
+        assert_eq!((tied.choice.as_str(), tied.tied), ("b", true));
+        let clear = validate(&resp("a", 0.7, 0.2, 0.1), &opts(), SUM_TOL).unwrap();
+        assert!(!clear.tied);
+    }
+
+    /// A receipt without usage (a response that omits it, or no response at
+    /// all) is counted as unknown cost, never folded into the totals as zero.
+    #[test]
+    fn test_usage_totals_count_receipts_without_usage() {
+        let mut r = resp("a", 0.7, 0.2, 0.1);
+        r.as_object_mut().unwrap().remove("usage");
+        let receipt = BTreeMap::from([
+            ("x".to_string(), Receipt::answered("", r)),
+            (
+                "y".to_string(),
+                Receipt::answered("", resp("a", 0.7, 0.2, 0.1)),
+            ),
+        ]);
+        assert!(validate(&receipt["x"].response, &opts(), SUM_TOL).is_err());
+        assert_eq!(usage_totals(&receipt), (10, 0, 1));
     }
 }

@@ -26,18 +26,9 @@ on:
   # Every pull request, whatever its base: a PR stacked on an exp/* branch gets the Rust and Go
   # suites, `-race` and the ixctl gate too, instead of only once it is retargeted to main
   # (ix#423 carried eleven commits with no CI run; the local runner has no cgo, so no -race).
+  # No `paths` here: the workflow always starts on a pull request, and the `changes` job
+  # applies the list above to what the PR changes. See `changes` and `ci-ok`.
   pull_request:
-    paths:
-      - '**'
-      - '!**.md'
-      - 'crates/**.md'
-      - 'go/ixctl/README.md'
-      - 'go/ixctl/README.fr.md'
-      - '!docs/**'
-      - 'docs/contracts/**'
-      - '!.claude/**'
-      - '.claude/settings.json'
-      - '.claude/hooks/**'
   # The merge queue on main runs the required jobs on each merge group.
   merge_group:
 
@@ -50,7 +41,70 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # On a pull request the workflow always starts, so that `ci-ok` below always reports: a
+  # check that never starts cannot be required, since a prose-only PR would wait on it for
+  # ever. This job decides whether the jobs below have anything to read, with the same
+  # patterns as on.push.paths and GitHub's rule (in order, the last match decides). It looks
+  # at the test merge against its first parent, without rename detection: a file the PR
+  # deletes or moves counts under its old name too. If it cannot tell, everything runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The test merge and its two parents.
+          fetch-depth: 2
+      - id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          MERGE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # on.push.paths, in the same order. ci_workflow_paths.rs holds the two lists equal.
+          PATTERNS: |
+            **
+            !**.md
+            crates/**.md
+            go/ixctl/README.md
+            go/ixctl/README.fr.md
+            !docs/**
+            docs/contracts/**
+            !.claude/**
+            .claude/settings.json
+            .claude/hooks/**
+        run: |
+          decide() { echo "code=$1" >> "$GITHUB_OUTPUT"; echo "code=$1: $2"; exit 0; }
+          if [ "$EVENT" != pull_request ]; then
+            decide true "not a pull request; on.push.paths filtered this run already"
+          fi
+          parents="$(git rev-list --parents -n 1 "$MERGE_SHA" 2>/dev/null)" || decide true "cannot read $MERGE_SHA: everything runs"
+          set -- $parents
+          if [ "$#" -ne 3 ] || [ "$3" != "$HEAD_SHA" ]; then
+            decide true "$MERGE_SHA is not the test merge of $HEAD_SHA: everything runs"
+          fi
+          files="$(git diff --no-renames --name-only "$2" "$MERGE_SHA")" || decide true "the diff failed: everything runs"
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            hit=false
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              neg=false
+              case "$pat" in '!'*) neg=true; pat="${pat#!}" ;; esac
+              glob="${pat//\*\*/*}"
+              # shellcheck disable=SC2254
+              case "$file" in $glob) if $neg; then hit=false; else hit=true; fi ;; esac
+            done <<< "$PATTERNS"
+            if $hit; then
+              decide true "a job reads $file"
+            fi
+          done <<< "$files"
+          decide false "no job reads any of the changed files"
+
   build-and-test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -67,13 +121,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # The merge commit and its first parent, the base: `ix doctor`'s rustfmt-touched
+          # check diffs one against the other.
+          fetch-depth: 2
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ matrix.rust }}
-          components: clippy
+          components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Build workspace
         run: cargo build --workspace
@@ -84,19 +141,36 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # crates/ix-router-spike is a standalone crate (an empty [workspace] table), so the
+      # workspace commands above never compile it. Its tests hold the pinned held-out corpora
+      # and the Jev response contract (ix#489); one OS row is enough for a pure-Rust crate.
+      - name: Router spike tests
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo test --manifest-path crates/ix-router-spike/Cargo.toml
+
+      - name: Router spike clippy
+        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo clippy --manifest-path crates/ix-router-spike/Cargo.toml --all-targets -- -D warnings
+
       # The repo's own pre-PR gate, run where each check is visible by name.
       # Until now its checks reached CI only through one test among many
-      # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-skill`), so a
+      # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-cli`), so a
       # new check such as `silent-skips` had no line of its own in any run. The
       # bar is the same as that test's: exit 4 (a failing check) is red, exit 1
       # (warnings only) is reported and stays green, exit 0 is green.
+      # On a pull request HEAD is the merge commit, so HEAD^1 is the base and the
+      # rustfmt-touched check holds the PR's own Rust files; naming the base makes that
+      # check fail, not warn, when it cannot run. A push to main has nothing to scope.
       - name: ix doctor
         shell: bash
         run: |
           export IX_ROOT="$PWD"
           export IX_GOVERNANCE_DIR="$PWD/governance/demerzel"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            export IX_DOCTOR_BASE='HEAD^1'
+          fi
           set +e
-          cargo run -q -p ix-skill --bin ix -- doctor
+          cargo run -q -p ix-cli --bin ix -- doctor
           code=$?
           set -e
           if [ "$code" -eq 1 ]; then
@@ -106,7 +180,7 @@ jobs:
           exit "$code"
 
       - name: Showcase smoke tests
-        # Runs all 9 advanced pipelines via the ix binary to catch skill
+        # Runs all 9 advanced pipelines via the ix binary to catch tool
         # registry regressions end-to-end. ~1s total runtime.
         shell: bash
         run: |
@@ -140,9 +214,34 @@ jobs:
           go-version-file: go/ixctl/go.mod
           cache-dependency-path: go/ixctl/go.sum
 
+      # The gate's own helpers, without planes or binaries (E18's wait predicate).
+      - name: ixctl end-to-end gate helpers
+        if: matrix.rust == 'stable'
+        run: python -I -m unittest discover -s go/ixctl/e2e -p "test_*.py" -v
+
       - name: ixctl end-to-end gate
         if: matrix.rust == 'stable'
         run: python go/ixctl/e2e/e2e.py --build --work "${{ runner.temp }}/ixctl-e2e"
+
+      # The Rust client against a real `ixctl up` (crates/ix-ctl/tests/real_plane.rs):
+      # run markers acknowledged by the plane (#450) and a wait after a hard plane stop
+      # ending unknown/other-epoch (#453 B4). Those tests are #[ignore] because they need
+      # a built plane, so `cargo test --workspace` above never runs them: this step builds
+      # ixctl, names it in IXCTL_BIN and runs them with --ignored. It fails unless both
+      # ran, so a renamed or filtered-out test cannot pass with nothing run.
+      - name: ix-ctl against a real plane
+        if: matrix.rust == 'stable'
+        shell: bash
+        run: |
+          # An `if`, not `$([ ... ] && echo .exe)`: under bash -e that substitution fails
+          # the assignment, and so the step, silently on every OS but Windows.
+          exe="$RUNNER_TEMP/ixctl-real/ixctl"
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          (cd go/ixctl && go build -o "$exe" .)
+          export IXCTL_BIN="$exe"
+          cargo test -p ix-ctl --test real_plane -- --ignored 2>&1 | tee "$RUNNER_TEMP/real-plane.txt"
+          grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/real-plane.txt" \
+            || { echo "::error::the real-plane tests did not both run and pass"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         if: failure() && matrix.rust == 'stable'
@@ -157,26 +256,53 @@ jobs:
         if: matrix.rust == 'stable'
         run: cargo doc --workspace --no-deps
 
-  # `go/ixctl`, the control plane, is Go: nothing in the job above compiles or
+  # Every Go module under `go/` is Go: nothing in the job above compiles or
   # tests it, and no Rust test wraps `go`. Until this job existed the plane's
-  # Linux process code (`proc_other.go`) had never run anywhere. Fast (under a
-  # minute), so it runs on every push.
-  ixctl-go:
+  # Linux process code (`go/ixctl/proc_other.go`) had never run anywhere. Fast
+  # (under a minute per module), so it runs on every push.
+  #
+  # The modules are discovered, not listed: a second module (`go/ixmux`) once
+  # sat beside `go/ixctl` with its tests run by no gate, its Unix code never
+  # executed and its races never checked. A new `go/<name>/go.mod` is covered
+  # the day it lands. So is a `prototypes/<name>/go.mod`: a prototype with Go
+  # tests (ix#390) ran the whole Rust matrix and not one of its own tests. The
+  # matrix value is the module's directory (`go/ixctl`, `prototypes/probes`).
+  go-modules-discover:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.find.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        shell: bash
+        run: |
+          # An `if`, not `[ -f ] && ...`: a glob with no match (no prototype has a go.mod)
+          # would end the loop on a false test and, under `-eo pipefail`, fail the step.
+          modules=$(for m in go/*/go.mod prototypes/*/go.mod; do if [ -f "$m" ]; then dirname "$m"; fi; done | jq -Rcn '[inputs]')
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+          echo "Go modules: $modules"
+
+  go-modules:
+    needs: go-modules-discover
+    if: needs.go-modules-discover.outputs.modules != '[]'
     strategy:
       fail-fast: false
       matrix:
+        module: ${{ fromJSON(needs.go-modules-discover.outputs.modules) }}
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: go/ixctl
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/ixctl/go.mod
-          cache-dependency-path: go/ixctl/go.sum
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.*
 
       - name: gofmt
         shell: bash
@@ -186,8 +312,8 @@ jobs:
         run: go vet ./...
 
       # The race detector needs cgo, which the Windows runner has no C
-      # toolchain for; the hub, cursors and sessions are the same code on
-      # both, so one row under -race covers them.
+      # toolchain for; the concurrent code is the same on both, so one row
+      # under -race covers it.
       - name: go test
         run: go test ./... -count=1 ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }}
 
@@ -231,6 +357,8 @@ jobs:
   # ever compiled in CI, so a break in that seam would otherwise surface only when
   # someone builds the opt-in binary by hand.
   gated-features:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -251,9 +379,9 @@ jobs:
           # stayed green (ix#350 review). It is the slow row.
           - crate: ix-agent
             features: maintain-gate
-          # `wasm` links ix-wasm, whose `wasm.run` skill registers at link time. No workspace
+          # `wasm` links ix-wasm, whose `wasm.run` tool registers at link time. No workspace
           # member enables it, on purpose: a dev edge from ix-wasm back to ix-stream made the
-          # dep graph cyclic, and one from ix-skill put `ix_wasm_run` on ix-agent's test-time
+          # dep graph cyclic, and one from ix-cli put `ix_wasm_run` on ix-agent's test-time
           # MCP surface through feature unification. The Go and Zig stages are #[ignore].
           - crate: ix-stream
             features: wasm
@@ -263,12 +391,12 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
           components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: gated-${{ matrix.crate }}
 
@@ -292,6 +420,8 @@ jobs:
   # IX_REQUIRE_DUCKDB=1, under which an unreachable CLI is a hard failure rather
   # than a skip, so the job cannot go green by doing nothing.
   duckdb-sql:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       # Pinned deliberately, and checked against the release asset's own digest.
@@ -307,11 +437,11 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: duckdb-sql
 
@@ -354,24 +484,26 @@ jobs:
         env:
           IX_REQUIRE_DUCKDB: '1'
         shell: bash
-        run: cargo test -p ix-agent --lib skills::wmux::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes
+        run: cargo test -p ix-agent --lib registered::wmux::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes
 
   # The ComfyUI pack (ADR-0009) calls ix-mcp over stdio, so its tests need a real
   # build installed into the pack. A missing or mismatched binary fails them
   # rather than skipping. Only the torch-side tests skip here, by name: they run
   # in ComfyUI's own Python.
   comfyui-pack:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: comfyui-pack
 
@@ -389,3 +521,54 @@ jobs:
 
       - name: Pack tests
         run: python -m unittest discover -s integrations/comfyui/tests -v
+
+  # The one check to require on main. It always runs, and it is green only when every job
+  # above succeeded, or was skipped for a reason this workflow gives: nothing to read
+  # (changes said so), or no Go module to test. A job that failed, was cancelled, or was
+  # skipped though the change needs it, makes it red. ci_final_gate.rs holds that every job
+  # of this workflow is listed here.
+  ci-ok:
+    if: always()
+    needs: [changes, build-and-test, go-modules-discover, go-modules, gated-features, duckdb-sql, comfyui-pack]
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+          R_CHANGES: ${{ needs.changes.result }}
+          R_BUILD_AND_TEST: ${{ needs.build-and-test.result }}
+          R_GO_MODULES_DISCOVER: ${{ needs.go-modules-discover.result }}
+          R_GO_MODULES: ${{ needs.go-modules.result }}
+          R_GATED_FEATURES: ${{ needs.gated-features.result }}
+          R_DUCKDB_SQL: ${{ needs.duckdb-sql.result }}
+          R_COMFYUI_PACK: ${{ needs.comfyui-pack.result }}
+        run: |
+          fail=0
+          red() { echo "::error title=ci-ok::$1"; fail=1; }
+          # check <job> <result> <must|may>: `must` jobs run whenever the change has code.
+          check() {
+            echo "$1: $2"
+            case "$2" in
+              success) ;;
+              skipped)
+                if [ "$3" = must ] && [ "$CODE" != false ]; then
+                  red "$1 was skipped though this change needs it"
+                fi ;;
+              *) red "$1: ${2:-no result}" ;;
+            esac
+          }
+          echo "changes: $R_CHANGES, code=$CODE"
+          if [ "$R_CHANGES" != success ]; then
+            red "changes: ${R_CHANGES:-no result}"
+          fi
+          case "$CODE" in
+            true | false) ;;
+            *) red "changes gave no decision" ;;
+          esac
+          check build-and-test "$R_BUILD_AND_TEST" must
+          check go-modules-discover "$R_GO_MODULES_DISCOVER" must
+          check go-modules "$R_GO_MODULES" may
+          check gated-features "$R_GATED_FEATURES" must
+          check duckdb-sql "$R_DUCKDB_SQL" must
+          check comfyui-pack "$R_COMFYUI_PACK" must
+          exit "$fail"

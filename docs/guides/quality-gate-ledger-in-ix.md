@@ -21,7 +21,7 @@ whether it passed.
 **`ix doctor`** — the pre-PR gate. Every run appends exactly one row:
 
 ```bash
-cargo run -p ix-skill --bin ix -- doctor
+cargo run -p ix-cli --bin ix -- doctor
 ```
 
 One row per run, not per check. The gate's answer is its aggregate verdict —

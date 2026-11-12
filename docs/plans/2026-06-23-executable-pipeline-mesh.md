@@ -1,9 +1,9 @@
 # Plan: an *executable* 100+ node pipeline mesh (ix-pipeline over DuckDB+IX)
 
 **Status:** Option C built — phases 1–5 done (`crates/ix-agent/examples/ix_pipeline_mesh.rs`,
-walkthrough `docs/walkthroughs/executable-pipeline-mesh.md`). 136 real skill nodes execute
+walkthrough `docs/walkthroughs/executable-pipeline-mesh.md`). 136 real tool nodes execute
 through `ix_pipeline::executor`; the mesh recovers a planted outlier. Open follow-up: the
-in-pipeline weighted/thresholded centrality (Option A's `mesh_correlate` skill) + swapping
+in-pipeline weighted/thresholded centrality (Option A's `mesh_correlate` tool) + swapping
 synthetic streams for the real voicing fret-profiles.
 **Date:** 2026-06-23
 **Relates to:** [ADR-0004](../adr/0004-duckdb-sql-pipeline-mesh.md) (the SQL mesh substrate),
@@ -22,7 +22,7 @@ for a real-world analysis problem."* What shipped so far:
   IXQL (Demerzel's governance DSL) and DuckDB+IX are complementary layers joined by
   JSON-on-disk. The executable IX pipeline DSL is **`ix-pipeline`** (`PipelineSpec` YAML →
   `lower()` → `Dag<PipelineNode>` → `executor::execute`), where each stage invokes a
-  registered **skill** (`ix-registry`).
+  registered **tool** (`ix-registry`).
 
 This plan closes the gap: realize the mesh as a **PipelineSpec that actually executes**
 through `ix-pipeline`, so the 100+ nodes are *run*, not drawn.
@@ -39,13 +39,13 @@ spec: 3 stages → lower() → 3-node / 1-edge / 2-level Dag → execute()
 
 Confirmed: `PipelineSpec::from_yaml_str` → `lower` → `execute` works; `from:`-ref field
 extraction wires stage outputs to downstream inputs; parallel levels execute. Host = an
-**`ix-agent` example** (must `use ix_agent as _;` so the `linkme` skill slice links in).
+**`ix-agent` example** (must `use ix_agent as _;` so the `linkme` tool slice links in).
 
 ## The gap
 
-The available skills (`ix-agent` batches) cover per-stream work — `autocorrelation`,
+The available tools (`ix-agent` batches) cover per-stream work — `autocorrelation`,
 `distance` (pairwise), `fft`, `fir_filter`, `kmeans`, `pca`, `graph`, `markov`,
-`nn.forward`, `evolution`, … — but there is **no single "correlate-N / aggregate" skill**
+`nn.forward`, `evolution`, … — but there is **no single "correlate-N / aggregate" tool**
 for the mesh fan-in (N streams → N×N correlation → clusters → centrality). That fan-in is
 the one missing piece.
 
@@ -53,20 +53,20 @@ the one missing piece.
 
 | Option | Executable DAG shape | Nodes | New surface | Faithfulness |
 |---|---|---|---|---|
-| **A. `mesh_correlate` skill** | N per-stream transform stages → **1** fan-in stage (wraps `ix_duck::mesh::correlate`) | ~N+1 (N≈114 → ~115) | new `#[ix_skill]` in ix-agent + handler + schema + **parity.rs bump** | mesh hidden inside one node; DAG is a fan-in *star*, not a mesh |
-| **B. pure pairwise** | N transform stages + **O(N²)** pairwise `distance` stages + a merge + `graph` centrality | N=18 → ~170 | a small *merge* skill (collect pairwise → edge list) | the N×N mesh **is** the DAG — most literal "mesh of 100+ nodes"; cosine-distance, not Pearson |
-| **C. hybrid** | N **multi-stage** stream pipelines (source→condition→feature) + pairwise edges among a capped subset + `graph` | tunable to ~120 | merge skill (as B) | "100+ pipelines forming a mesh"; balances faithfulness vs node blow-up |
+| **A. `mesh_correlate` tool** | N per-stream transform stages → **1** fan-in stage (wraps `ix_duck::mesh::correlate`) | ~N+1 (N≈114 → ~115) | new `#[ix_tool]` in ix-agent + handler + schema + **parity.rs bump** | mesh hidden inside one node; DAG is a fan-in *star*, not a mesh |
+| **B. pure pairwise** | N transform stages + **O(N²)** pairwise `distance` stages + a merge + `graph` centrality | N=18 → ~170 | a small *merge* tool (collect pairwise → edge list) | the N×N mesh **is** the DAG — most literal "mesh of 100+ nodes"; cosine-distance, not Pearson |
+| **C. hybrid** | N **multi-stage** stream pipelines (source→condition→feature) + pairwise edges among a capped subset + `graph` | tunable to ~120 | merge tool (as B) | "100+ pipelines forming a mesh"; balances faithfulness vs node blow-up |
 
-**Reversibility.** Option A registers a public skill (`ix-registry` entry + parity test) —
-a **one-way-ish door** (others may depend on the skill name/contract). Options B/C add only
-example code + possibly a tiny internal merge skill. Revisit trigger: if a second mesh
-consumer appears, promote the chosen fan-in into a first-class skill regardless.
+**Reversibility.** Option A registers a public tool (`ix-registry` entry + parity test) —
+a **one-way-ish door** (others may depend on the tool name/contract). Options B/C add only
+example code + possibly a tiny internal merge tool. Revisit trigger: if a second mesh
+consumer appears, promote the chosen fan-in into a first-class tool regardless.
 
 ## Recommendation
 
 **Option C, leaning on B's machinery**, because it is the most faithful to the literal ask
 ("a mesh of 100+ *pipeline* nodes") and avoids prematurely freezing a public `mesh_correlate`
-skill contract:
+tool contract:
 
 - **Streams:** reuse the real voicing fret-profiles (per set-class, computed once via the
   bench, embedded as stage data) — same data the validated `ix_voicing_mesh` used.
@@ -75,19 +75,19 @@ skill contract:
 - **Mesh edges:** pairwise `distance` (cosine) among the 20 stream features = 190 nodes →
   capped/thresholded to keep the DAG legible; this is where the node count crosses 100+.
 - **Aggregate:** one small internal merge (pairwise → edge list) → `graph` centrality →
-  hub. The merge is the only new code on the skill side; keep it example-local first, and
-  only promote to a registered skill (ADR) if a second consumer appears.
+  hub. The merge is the only new code on the tool side; keep it example-local first, and
+  only promote to a registered tool (ADR) if a second consumer appears.
 - **Validation:** carry the discipline forward — the executed mesh's hub must clear the
   same null model the SQL mesh used (`ix_voicing_mesh_nullcheck`), so "executable" doesn't
   silently drop the rigor.
 
-If the operator prefers the cleaner code and is fine logging the public-skill one-way door,
-**Option A** is the smaller build (one skill + a fan-in star) — but the DAG is then a star,
+If the operator prefers the cleaner code and is fine logging the public-tool one-way door,
+**Option A** is the smaller build (one tool + a fan-in star) — but the DAG is then a star,
 not a mesh.
 
 ## Phased build
 
-1. ✅ **Tracer** — executable spec of real skills (done).
+1. ✅ **Tracer** — executable spec of real tools (done).
 2. **Minimal executable mesh** — 4 streams, full shape (source→condition→feature→pairwise→
    merge→graph), lowered + executed; prove the fan-in/merge composes. *(tracer-bullet)*
 3. **Scale to 100+ nodes** — bump stream count + pairwise edges to cross 100 executed nodes;

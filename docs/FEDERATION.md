@@ -42,9 +42,9 @@ Any MCP client sees the union of all three servers' tools. Each tool
 call is dispatched to the owning server, runs in that server's
 runtime, and returns JSON.
 
-## The bridge skills
+## The bridge tools
 
-`ix` ships three bridge skills in `ix-agent` that pre-format ix's
+`ix` ships three bridge tools in `ix-agent` that pre-format ix's
 outputs for consumption by the other repos:
 
 - **`tars_bridge`** — prepares trace stats / patterns / grammar
@@ -56,7 +56,7 @@ outputs for consumption by the other repos:
 - **`federation.discover`** — queries the capability registry to find
   which server owns a given capability, filtered by domain or query.
 
-The bridge skills are themselves registry skills — callable from
+The bridge tools are themselves registry tools — callable from
 `ix run ga_bridge`, embeddable in `ix.yaml` stages, and invokable from
 agents.
 
@@ -135,12 +135,12 @@ ix run federation.discover --input '{"query":"grammar"}'
 
 ## Status (2026-04)
 
-- **ix**: 43 skills across 29 domains, full registry + CLI + visual editor
+- **ix**: 43 tools across 29 domains, full registry + CLI + visual editor
 - **tars**: `ingest_ga_traces`, `run_promotion_pipeline`, grammar weighting
 - **ga**: chord/scale/progression analysis, trace export
 - **Demerzel**: 11-article constitution + 39 policies + 14 personas
 
-The ix bridge skills (`tars_bridge`, `ga_bridge`, `federation.discover`)
+The ix bridge tools (`tars_bridge`, `ga_bridge`, `federation.discover`)
 produce the data shapes that TARS and GA expect — they are the
 narrow-waist interfaces between the three runtimes.
 

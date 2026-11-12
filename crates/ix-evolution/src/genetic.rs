@@ -4,8 +4,45 @@ use ndarray::Array1;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
+use crate::fractal::{
+    fractal_mutation_takagi, recursive_crossover_de_rham, AmplitudeSchedule, TakagiMode,
+    TakagiNoise,
+};
 use crate::selection;
 use crate::traits::{EvolutionResult, Individual, RealIndividual};
+
+/// Which mutation operator the GA applies to a child (refs #204).
+///
+/// [`MutationOperator::Gaussian`] is the default and dispatches to
+/// `RealIndividual::mutate` unchanged, drawing the same values in the same
+/// order — so an unconfigured `GeneticAlgorithm` behaves exactly as it did
+/// before this enum existed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MutationOperator {
+    /// `Normal(0, rate)` per gene, gated at probability 0.3. The baseline.
+    Gaussian,
+    /// Standardised Takagi noise, same step scale and same 0.3 gate.
+    Takagi { noise: TakagiNoise, mode: TakagiMode },
+    /// Gaussian noise whose amplitude follows a schedule across generations.
+    /// Use [`AmplitudeSchedule::Takagi`] for the fractal arm and the `Linear` /
+    /// `Constant` variants as its controls.
+    ScheduledGaussian(AmplitudeSchedule),
+}
+
+/// Which crossover operator the GA applies (refs #204, gap-matrix C6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CrossoverOperator {
+    /// BLX-alpha, per-gene independent. Dispatches to `Individual::crossover`
+    /// unchanged. The baseline.
+    Blx,
+    /// A point sampled from a de Rham fractal path between the parents.
+    DeRham { depth: usize, roughness: f64 },
+}
+
+/// The per-gene mutation probability the baseline `RealIndividual::mutate`
+/// applies. Named here so every arm is gated identically; an arm that touched a
+/// different fraction of genes would be testing the gate, not the noise.
+pub const BASELINE_PER_GENE_MUTATION_PROB: f64 = 0.3;
 
 /// Genetic Algorithm configuration.
 pub struct GeneticAlgorithm {
@@ -17,6 +54,8 @@ pub struct GeneticAlgorithm {
     pub elitism: usize,
     pub bounds: (f64, f64),
     pub seed: u64,
+    pub mutation: MutationOperator,
+    pub crossover: CrossoverOperator,
 }
 
 impl Default for GeneticAlgorithm {
@@ -30,6 +69,8 @@ impl Default for GeneticAlgorithm {
             elitism: 2,
             bounds: (-10.0, 10.0),
             seed: 42,
+            mutation: MutationOperator::Gaussian,
+            crossover: CrossoverOperator::Blx,
         }
     }
 }
@@ -64,6 +105,18 @@ impl GeneticAlgorithm {
         self
     }
 
+    /// Swap the mutation operator (refs #204). Default [`MutationOperator::Gaussian`].
+    pub fn with_mutation(mut self, mutation: MutationOperator) -> Self {
+        self.mutation = mutation;
+        self
+    }
+
+    /// Swap the crossover operator (refs #204). Default [`CrossoverOperator::Blx`].
+    pub fn with_crossover(mut self, crossover: CrossoverOperator) -> Self {
+        self.crossover = crossover;
+        self
+    }
+
     /// Run the GA. `fitness_fn` evaluates a candidate solution (lower is better).
     pub fn minimize<F>(&self, fitness_fn: &F, dim: usize) -> EvolutionResult
     where
@@ -84,7 +137,7 @@ impl GeneticAlgorithm {
 
         let mut fitness_history = Vec::with_capacity(self.generations);
 
-        for _gen in 0..self.generations {
+        for generation in 0..self.generations {
             // Sort by fitness (ascending = best first)
             population.sort_by(|a, b| a.fitness().partial_cmp(&b.fitness()).unwrap());
 
@@ -109,12 +162,40 @@ impl GeneticAlgorithm {
 
                 use rand::Rng;
                 let mut child = if rng.random::<f64>() < self.crossover_rate {
-                    parent1.crossover(&parent2, &mut rng)
+                    match self.crossover {
+                        CrossoverOperator::Blx => parent1.crossover(&parent2, &mut rng),
+                        CrossoverOperator::DeRham { depth, roughness } => {
+                            let genes = recursive_crossover_de_rham(
+                                &parent1.genes,
+                                &parent2.genes,
+                                depth,
+                                roughness,
+                                &mut rng,
+                            );
+                            RealIndividual::new(genes)
+                        }
+                    }
                 } else {
                     parent1.clone()
                 };
 
-                child.mutate(self.mutation_rate, &mut rng);
+                match self.mutation {
+                    MutationOperator::Gaussian => child.mutate(self.mutation_rate, &mut rng),
+                    MutationOperator::Takagi { noise, mode } => {
+                        fractal_mutation_takagi(
+                            &mut child.genes,
+                            self.mutation_rate,
+                            BASELINE_PER_GENE_MUTATION_PROB,
+                            &noise,
+                            mode,
+                            &mut rng,
+                        );
+                    }
+                    MutationOperator::ScheduledGaussian(schedule) => {
+                        let scale = schedule.at(generation, self.generations);
+                        child.mutate(self.mutation_rate * scale, &mut rng);
+                    }
+                }
 
                 // Clamp to bounds
                 child.genes.mapv_inplace(|v| v.clamp(lo, hi));

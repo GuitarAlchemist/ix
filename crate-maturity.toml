@@ -61,8 +61,8 @@ ix-petri          = "experimental"  # P/T Petri nets + reachability analyses. De
 ix-recover        = "experimental"  # Provisional publish-once / reconcile-after-kill store behind `ix pipeline run --run-id` (exp/ix-recover). Two-way door: the layout and record schemas are spike choices awaiting review, and whether recovery is owned by an IX crate or by Gaia's continuity store is undecided.
 
 # --- Internal tier ------------------------------------------------------
-ix-skill                  = "internal"
-ix-skill-macros           = "internal"
+ix-cli                    = "internal"
+ix-tool-macros            = "internal"
 ix-demo                   = "internal"
 ix-dashboard              = "internal"
 ix-registry               = "internal"

@@ -692,6 +692,9 @@ func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 	t.hub.Publish("probe/"+n.spec.Name, event("sample", rec))
 	t.mu.Unlock()
 	if parent != nil {
+		if t.forwarding != nil {
+			t.forwarding(n.spec.Name)
+		}
 		up := make(map[string]any, len(fields)+1)
 		for k, v := range fields {
 			up[k] = v
@@ -808,6 +811,10 @@ type probeTree struct {
 
 	budget probeBudget // D10: what a subtree, and the tree, may declare to emit
 	cfg    kindConfig  // what the samplers are told about this plane (`--delta-journal`)
+
+	// forwarding, when a test sets it before any start, runs between a child's record and its
+	// mux's republish of it, outside the lock: the window a list can fall into. Nil otherwise.
+	forwarding func(child string)
 }
 
 func newProbeTree(hub *Hub) *probeTree {

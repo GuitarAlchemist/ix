@@ -578,7 +578,7 @@ fn context_routed_tools_const_matches_call_with_ctx() {
 }
 
 /// The wmux → SQL example of `docs/pipelines/dag-execution.md`, read from the page itself
-/// (its SQL is run on captured wmux rows by `skills::wmux` tests): a valid spec, run
+/// (its SQL is run on captured wmux rows by `registered::wmux` tests): a valid spec, run
 /// snapshot first, with no prompt.
 #[test]
 fn the_documented_wmux_pipeline_is_valid_and_auto_approved() {

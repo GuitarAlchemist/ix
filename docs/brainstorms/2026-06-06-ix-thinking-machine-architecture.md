@@ -107,7 +107,7 @@ the spec-endorsed, only-live option.
   not a standalone Python shell (O3 rejected as a third path), not sampling+fallback (no live
   sampling to fall back *from*, so the hybrid debate is moot).
 - **Unification is CHEAP, not an engine rewrite:** `crates/ix-agent/src/registry_bridge.rs` already
-  has a bijective `mcp_name()`/`mcp_to_skill_name()` map — both IRs dispatch the *same* `fn_ptr`s.
+  has a bijective `mcp_name()`/`mcp_to_tool_name()` map — both IRs dispatch the *same* `fn_ptr`s.
   Retarget = prompt-target swap + name normalizer + ref-syntax swap.
 - **Do NOT delete System A in the same PR** (Article 3 / one-way door). Retarget + deprecate-with-shim;
   delete-trigger = zero non-test callers of the `{steps}` executor for 14 days.

@@ -1,5 +1,5 @@
 {
-  "note": "Public traits allowed to have zero implementors and zero generic-bound uses. Checked by `ix doctor` (see crates/ix-skill/src/doctor/orphan_traits.rs). Every entry needs a non-empty `reason`: the point of this file is that a human said whether the trait is dead surface or a contract still waiting to be honoured. Entries whose trait stops being an orphan are reported as stale and must be removed. This list is a baseline of what was already true when the check landed (ix#185) — it is not a place to park new orphans.",
+  "note": "Public traits allowed to have zero implementors and zero generic-bound uses. Checked by `ix doctor` (see crates/ix-cli/src/doctor/orphan_traits.rs). Every entry needs a non-empty `reason`: the point of this file is that a human said whether the trait is dead surface or a contract still waiting to be honoured. Entries whose trait stops being an orphan are reported as stale and must be removed. This list is a baseline of what was already true when the check landed (ix#185) — it is not a place to park new orphans.",
   "allow": [
     {
       "trait": "NaturalTransformation",

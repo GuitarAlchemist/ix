@@ -3,7 +3,7 @@
 Where [`ix_voicing_mesh`](voicing-mesh.md) **reified** an operator DAG for *display* (the
 real work ran as DuckDB SQL), this builds a real `ix_pipeline::PipelineSpec`, `lower()`s it
 to a `Dag`, and **`execute()`s** it through the ix-pipeline executor — every node is a real
-`ix-agent` skill invocation. See the plan: `docs/plans/2026-06-23-executable-pipeline-mesh.md`.
+`ix-agent` tool invocation. See the plan: `docs/plans/2026-06-23-executable-pipeline-mesh.md`.
 
 > _Version française : [`docs/fr/pas-a-pas/maillage-pipeline-executable.md`](../fr/pas-a-pas/maillage-pipeline-executable.md)._
 
@@ -14,7 +14,7 @@ cargo run -p ix-agent --example ix_pipeline_mesh
 ## What "executable" means here
 
 The IX pipeline stack is `PipelineSpec` (YAML or built in code) → `lower()` →
-`Dag<PipelineNode>` → `executor::execute`, where each stage invokes a **registered skill**
+`Dag<PipelineNode>` → `executor::execute`, where each stage invokes a **registered tool**
 (`ix-registry`). (IXQL — Demerzel's governance DSL — runs governance pipelines through its
 own executor, `ix-ixql`, and does not run this mesh; see ADR-0001. `ix-pipeline` is the
 executable IX pipeline layer.)
@@ -22,7 +22,7 @@ executable IX pipeline layer.)
 ```text
 executable pipeline mesh — 136 stages (N=16 streams)
 lowered → 136 nodes, 240 edges, 2 levels (widest 120 — the pairwise tier)
-✓ executed 136 real skill nodes through ix_pipeline::executor (not reified)
+✓ executed 136 real tool nodes through ix_pipeline::executor (not reified)
 ```
 
 The shape (Option C of the plan):
@@ -60,8 +60,8 @@ and a spec **cannot threshold edges at build time** because the weights are run-
 
 So the executable mesh is the **pairwise tier** (the 100+ nodes that genuinely run), and
 the thresholded/centrality aggregation is computed example-local from the executed outputs.
-A weighted/thresholded centrality *inside* the pipeline would need a dedicated fan-in skill
-(Option A in the plan) — deferred, since that freezes a public skill contract.
+A weighted/thresholded centrality *inside* the pipeline would need a dedicated fan-in tool
+(Option A in the plan) — deferred, since that freezes a public tool contract.
 
 ## Scope and caveats
 

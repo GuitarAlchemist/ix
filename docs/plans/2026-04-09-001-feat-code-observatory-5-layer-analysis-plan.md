@@ -893,7 +893,7 @@ Laplacian spectrum, Ricci curvature, sheaf cohomology, thermodynamics, and renor
 
 ### New Tools (6 tools, all in domain "code")
 
-| Tool | Layer | Skill Name | Governance |
+| Tool | Layer | Tool Name | Governance |
 |------|-------|-----------|------------|
 | Semantic analysis | 2 | `code.semantic` | deterministic |
 | Metric trajectory | 3 | `code.trajectory` | empirical |
@@ -1037,7 +1037,7 @@ git2 = { version = "0.19", optional = true }
 - **No new crates** -- all modules in ix-code behind feature gates
 - ix-code Cargo.toml grows from 3 deps to ~8 (with features enabled)
 - ix-agent Cargo.toml adds ix-code feature flags for MCP exposure
-- Parity test count increases by 7 (from 45 to 52 registry skills)
+- Parity test count increases by 7 (from 45 to 52 registry tools)
 
 ### Security
 
@@ -1083,7 +1083,7 @@ git2 = { version = "0.19", optional = true }
 
 ### API Surface Parity
 
-- CLI (`ix-skill run code.semantic`) -- all 7 new tools accessible
+- CLI (`ix-cli run code.semantic`) -- all 7 new tools accessible
 - MCP (JSON-RPC) -- all 7 new tools in ix-agent tools list
 - Pipeline (ix.yaml) -- all 7 tools usable as pipeline stages
 - egui demo -- new "Code Observatory" tab showing all layers
@@ -1139,7 +1139,7 @@ git2 = { version = "0.19", optional = true }
 - `crates/ix-code/src/semantic.rs` -- SemanticMetrics, CallGraph, extract_call_graph()
 - `crates/ix-code/src/lib.rs` -- `#[cfg(feature = "semantic")] pub mod semantic;`
 - `crates/ix-agent/src/handlers.rs` -- code_semantic handler
-- `crates/ix-agent/src/skills/batch3.rs` -- `#[ix_skill]` for code.semantic
+- `crates/ix-agent/src/registered/batch3.rs` -- `#[ix_tool]` for code.semantic
 - `Cargo.toml` -- workspace deps for tree-sitter
 
 **Deliverables:**
@@ -1155,7 +1155,7 @@ git2 = { version = "0.19", optional = true }
 - `crates/ix-code/Cargo.toml` -- add git2 behind `trajectory` feature
 - `crates/ix-code/src/trajectory.rs` -- MetricTrajectory, compute_trajectory()
 - `crates/ix-agent/src/handlers.rs` -- code_trajectory handler
-- `crates/ix-agent/src/skills/batch3.rs` -- `#[ix_skill]` for code.trajectory
+- `crates/ix-agent/src/registered/batch3.rs` -- `#[ix_tool]` for code.trajectory
 
 **Deliverables:**
 - Git history walk -> metric time series
@@ -1170,7 +1170,7 @@ git2 = { version = "0.19", optional = true }
 **Files:**
 - `crates/ix-code/src/topology.rs` -- CodeTopology, compute_code_topology()
 - `crates/ix-agent/src/handlers.rs` -- code_topology handler
-- `crates/ix-agent/src/skills/batch3.rs` -- `#[ix_skill]` for code.topology
+- `crates/ix-agent/src/registered/batch3.rs` -- `#[ix_tool]` for code.topology
 
 **Deliverables:**
 - CallGraph -> ix-graph::Graph conversion
@@ -1185,7 +1185,7 @@ git2 = { version = "0.19", optional = true }
 - `crates/ix-code/src/gates.rs` -- RiskDelta, Signal, Scorecard, Provenance, verdict mapping
 - `crates/ix-code/src/aggregate.rs` -- AggregatedMetrics, Gini coefficient, percentile rollup
 - `crates/ix-agent/src/handlers.rs` -- code_risk_score, code_quality_gate, code_hotspots handlers
-- `crates/ix-agent/src/skills/batch3.rs` -- 3 `#[ix_skill]` registrations
+- `crates/ix-agent/src/registered/batch3.rs` -- 3 `#[ix_tool]` registrations
 
 **Deliverables:**
 - Scorecard indirection: Metric -> Signal -> Scorecard -> Policy -> Decision
@@ -1201,7 +1201,7 @@ git2 = { version = "0.19", optional = true }
 - `crates/ix-code/src/advanced.rs` -- HyperbolicCodeMap, KTheoryInvariants, MetricSpectrum, CodeSimilarityIndex, ChangePatternFractal, CouplingFragility
 - `crates/ix-code/Cargo.toml` -- add `advanced` feature with deps on ix-ktheory, ix-fractal, ix-sedenion, ix-math (for BSP + Poincare)
 - `crates/ix-agent/src/handlers.rs` -- 5 new handlers
-- `crates/ix-agent/src/skills/batch3.rs` -- 5 `#[ix_skill]` registrations
+- `crates/ix-agent/src/registered/batch3.rs` -- 5 `#[ix_tool]` registrations
 
 **Deliverables:**
 - Poincare hierarchy embedding of call graphs + hierarchy_map_score
@@ -1218,7 +1218,7 @@ git2 = { version = "0.19", optional = true }
 - `crates/ix-code/src/physics.rs` -- CodeStability, FilteredQuality, MultiScaleAnalysis, CodeEvolutionModel, RefactoringSymmetry, LaplacianSpectrum, GraphCurvatureProfile, InterfaceConsistency, ThermodynamicProfile, RenormalizationFlow
 - `crates/ix-code/Cargo.toml` -- add `physics` feature with deps on ix-chaos, ix-dynamics
 - `crates/ix-agent/src/handlers.rs` -- 10 new handlers
-- `crates/ix-agent/src/skills/batch3.rs` -- 10 `#[ix_skill]` registrations
+- `crates/ix-agent/src/registered/batch3.rs` -- 10 `#[ix_tool]` registrations
 
 **Sub-phases:**
 - **6a: Already-in-ix** (chaos Lyapunov, Kalman filter, wavelets, Markov, Lie symmetry) -- connect existing crate APIs
@@ -1320,7 +1320,7 @@ MCP handlers convert `CodeError` to structured JSON with opaque error codes (no 
 - ix-graph: `crates/ix-graph/src/graph.rs:8` (`Graph` struct)
 - ix-governance policy: `crates/ix-governance/src/policy.rs:10` (`AlignmentPolicy`)
 - ix-types hexavalent: `crates/ix-types/src/lib.rs:35` (`Hexavalent` enum)
-- Skill registration: `crates/ix-skill-macros/src/lib.rs:45` (`#[ix_skill]` macro)
+- Tool registration: `crates/ix-tool-macros/src/lib.rs:45` (`#[ix_tool]` macro)
 - MCP handler: `crates/ix-agent/src/handlers.rs:2051` (`code_analyze`)
 
 ### Learnings Applied
@@ -1328,4 +1328,4 @@ MCP handlers convert `CodeError` to structured JSON with opaque error codes (no 
 - Path resolution: use `governance_dir()` walk-up helper, not `CARGO_MANIFEST_DIR` (from docs/solutions/)
 - API design: every builder field must map to behavior (from docs/solutions/)
 - Performance: avoid heap allocations in hot loops, hoist loop-invariant computation (from docs/solutions/)
-- Windows LLD: sentinel element in IX_SKILLS, filter in public APIs (from Phase 1 delivery)
+- Windows LLD: sentinel element in IX_TOOLS, filter in public APIs (from Phase 1 delivery)

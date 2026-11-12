@@ -378,7 +378,7 @@ Ses lignes passent directement en SQL. Ce pipeline liste les volets qui attenden
 }
 ```
 
-Sur l'instantané capturé pour les tests (anonymisé), `blocked` renvoie deux lignes, dont un terminal sans titre (`"title": null`). La requête est épinglée par `crates/ix-agent/src/skills/wmux.rs::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes`.
+Sur l'instantané capturé pour les tests (anonymisé), `blocked` renvoie deux lignes, dont un terminal sans titre (`"title": null`). La requête est épinglée par `crates/ix-agent/src/registered/wmux.rs::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes`.
 
 ---
 
