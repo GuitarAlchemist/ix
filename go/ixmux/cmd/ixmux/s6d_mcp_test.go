@@ -29,7 +29,7 @@ func TestNoFreeTextFromTheNetwork(t *testing.T) {
 			v = map[string]any{"version": "fake", "epoch": "e", "bounds": map[string]any{"delivery_timeout": "30s"},
 				"targets": []any{map[string]any{"name": "c", "kind": "claude", "incarnation": "inc-1", "error": "lost: " + frag}}}
 		case r.URL.Path == "/v1/mandates/m1":
-			v = map[string]any{"target": "c", "mandate_id": "m1", "state": "uncertain", "reason": "adapter error: " + frag}
+			v = map[string]any{"target": "c", "mandate_id": "m1", "state": "uncertain", "reason": "adapter error: " + frag, "cause": "adapter-error " + frag}
 		default:
 			w.WriteHeader(http.StatusConflict)
 			v = map[string]any{"error": "target-busy", "detail": frag}

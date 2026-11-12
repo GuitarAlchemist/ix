@@ -49,7 +49,7 @@ Bornes HTTP : les en-têtes et le corps d'une requête sont lus en `--read-timeo
 
 ## Fichiers de `<state>`
 
-- `commands.jsonl` : le journal de commandes des livraisons. Tant qu'ixmux tourne, il tient `commands.jsonl.lock`.
+- `commands.jsonl` : le journal de commandes des livraisons. Tant qu'ixmux tourne, il tient `commands.jsonl.lock`. Il est borné à 64 Mio, la taille qu'un démarrage relit : aucun ajout ne le fait dépasser cette borne. **Chaque livraison réserve dans le journal la place des enregistrements qu'elle peut encore écrire** : une fois acceptée, son enregistrement `delivering`, son enregistrement final (avec la réponse : un enregistrement fait au plus 32 Kio, et le texte d'une réponse plus longue est coupé et marqué `truncated`) et une réponse tardive ; une fois `uncertain`, l'enregistrement qui la tranche (une réponse tardive, ou celui d'une réconciliation). Aucun autre enregistrement ne prend cette place : une livraison acceptée enregistre toujours son issue, quel que soit le nombre de livraisons simultanées. Un nouveau mandat qui ne peut pas obtenir sa place est refusé `log-full`, avant tout envoi. Un mandat dont l'id, la cible et l'incarnation prennent plus de la moitié d'un enregistrement de 1 Kio est refusé `bad-mandate`. Un enregistrement qui ne tient toujours pas (dans un journal écrit par un ixmux plus ancien, ou sous une borne abaissée) n'est pas un refus : la livraison est `uncertain`, cause `log-write-failed`, et la requête échoue `internal` ; de même pour une livraison dont l'enregistrement final trouve le journal cassé par l'écriture ratée d'une autre. **Rétention** : un mandat terminé (`delivered` ou `refused`) est gardé en mémoire, donc dédoublonné (rejoué, ou refusé `mandate-id-reuse`), au moins `--dedup-window` après sa dernière transition (720 h, 30 jours, par défaut). La première compaction au-delà l'oublie : son id redevient un nouveau mandat, et `GET /v1/mandates/{id}` répond 404. Un mandat `uncertain`, `accepted` ou `delivering` n'est jamais oublié. Le journal est compacté quand un nouveau mandat ne trouve pas de place, et au démarrage s'il dépasse les trois quarts de sa borne ou n'a plus de place pour un nouveau mandat, si cela le rend plus petit : un enregistrement par mandat, dans son état courant, avec son empreinte, son incarnation, son reçu et sa cause. En cours de route, ixmux compacte au plus une fois par minute. Le journal compacté est écrit dans `commands.jsonl.compact`, synchronisé, puis renommé par-dessus le journal (sous Windows, en écriture directe). Si les transitions du redémarrage ne tiennent pas, elles sont appliquées en mémoire : le journal les refait à chaque démarrage. Le journal se remplit encore si les mandats terminés dans la fenêtre le remplissent (environ 14 000 avec des réponses de 4 Kio) : un nouveau mandat est alors refusé `log-full` jusqu'à ce que les plus anciens sortent de la fenêtre ; raccourcir la fenêtre le libère. Ne jamais supprimer le journal. La fenêtre lit l'horloge du système : une horloge avancée fait oublier plus tôt. À chaque démarrage, stderr dit ce qui a été trouvé et fait : `ixmux: command log: N records replayed[, a torn last record of B bytes cut], U made uncertain, R made refused[ (K of them in memory only: the log is full)][, compacted from X to Y bytes[ (F finished mandates past the deduplication window forgotten)]][, compaction not done (the log is kept as read): raison]; a finished mandate is remembered at least 720h0m0s` (la ligne est en anglais).
 - `ixmux.json` : adresse, PID, heure de démarrage, version, SHA-256 de l'exécutable, époque, et `state` (`running` ou `stopped`, puis `exit_code`).
 - `ixmux.token` : le jeton Bearer. Il est réécrit à chaque démarrage et supprimé à l'arrêt propre. Sous Windows, sa DACL est protégée et n'accorde l'accès qu'à l'utilisateur courant ; ailleurs, son mode est 0600. Si ixmux ne peut pas le créer ainsi, il refuse de démarrer.
 
@@ -156,12 +156,54 @@ La session Claude elle-même est gardée par claude sous ton profil, comme toute
 
 `ixmux mcp --state <dossier>` est un serveur MCP local sur stdio, branché sur l'ixmux serve de ce
 dossier d'état. Il y lit l'adresse et le jeton à chaque appel, et suit donc un ixmux redémarré
-entre-temps. Il a trois outils : `ixmux_status`, `ixmux_submit` (un reçu en 2 s, même quand le tour
-dure plus longtemps) et `ixmux_result` (lu dans le journal de commandes). Aucun outil n'arrête
+entre-temps. Il a quatre outils : `ixmux_status`, `ixmux_submit` (un reçu en 2 s, même quand le
+tour dure plus longtemps), `ixmux_result` (lu dans le journal de commandes) et `ixmux_inventory`
+(l'inventaire ci-dessous, de ce seul dossier d'état, lu dans ses fichiers). Aucun outil n'arrête
 ixmux. Il n'envoie le jeton qu'à un serveur qui a répondu à son défi `/v1/hello`, sur la même
 connexion ; un processus qui aurait pris le port sans le jeton n'obtient rien (`ixmux-unverified`).
 Un processus qui peut lire le fichier du jeton est hors de ce modèle. Le contrat, avec la commande
 exacte, les schémas et les erreurs : [MCP.fr.md](MCP.fr.md).
+
+## Inventaire après un redémarrage (`ixmux inventory`)
+
+`ixmux inventory [--state <dossier> ...] [--claude-home <dossier>] [--no-claude] [--json]` ne lit
+que des fichiers et les heures de création des processus. Il n'envoie, ne lance, ne rejoue, ne
+verrouille et n'écrit rien. Après un plantage, une coupure de courant ou un redémarrage de Windows,
+il liste :
+
+- **les sessions Claude Code locales** : Claude Code écrit un enregistrement pour chaque processus
+  en marche dans `<claude-home>/sessions/<pid>.json` (`--claude-home` vaut par défaut
+  `%CLAUDE_CONFIG_DIR%`, sinon `~/.claude`). Ce fichier n'est pas documenté : un enregistrement
+  illisible ou incomplet est signalé `unreadable`, jamais deviné. L'`id` d'une session est son id
+  de session. Son `incarnation` est `pid:<pid>@<heure de création>`. Elle n'est `running` ou
+  `idle` que si c'est prouvé : un processus vivant a ce pid et a été créé à cette heure, exactement
+  sous Windows (`procStart`), à une minute près dans les deux sens de `startedAt` ailleurs (un saut
+  d'horloge la déplace). Un enregistrement dont le `pidDomain` nomme une autre machine est
+  `unknown`. Un enregistrement laissé par un plantage est `unreachable`, avec le
+  `claude --resume <id>` à lancer. Un id de session que portent deux enregistrements figure dans
+  `duplicates`. Tant que l'un d'eux est vivant, les autres disent « ne pas reprendre » ;
+- **chaque ixmux donné par `--state`** et ses mandats. L'ixmux est `running`, `stopped`, ou
+  `unreachable` (`ixmux.json` dit qu'il tourne et son processus a disparu). Chaque mandat est
+  `running`, `done` ou `uncertain`, avec son `state`, sa `cause` et sa `reason` enregistrés. Leurs
+  champs sont décrits dans [MCP.fr.md](MCP.fr.md), où `ixmux_inventory` en donne une vue réduite.
+
+`last_activity` est la plus récente des heures de l'enregistrement et de la date de modification
+du fichier de transcription, dont le contenu n'est jamais lu. La transcription est cherchée à
+`projects/<cwd, chaque caractère autre qu'une lettre ou un chiffre ASCII changé en '->/<id>.jsonl`
+(un seul stat), puis dans les autres dossiers de `projects/`, dans un budget par lecture : 4096
+chemins examinés et entrées listées, et 2 s (`--transcript-files`, `--transcript-time`). Chaque
+session dit ce qu'il en est dans `declared.transcript` : `found`, `none` (cherchée jusqu'au bout),
+`search-cut` (budget épuisé : `last_activity` est celle de l'enregistrement, peut-être plus
+ancienne) ou `unreadable`. `declared` garde ce que dit un fichier, à part de ce qui est prouvé. Une
+borne n'est jamais silencieuse : `partial` vaut vrai et `omitted` compte ce qui a été laissé de
+côté, au-delà de 256 enregistrements de session, au-delà des 50 mandats terminés les plus récents
+par ixmux (jamais un mandat non terminé), ou par une recherche de transcription coupée ou en échec.
+Un enregistrement de plus de 64 Kio, un
+journal de plus de 64 Mio, ou tout ce qui n'est pas un fichier ordinaire (une FIFO n'est jamais
+attendue) donne une entrée `unreadable`. `gaps` nomme ce qui n'est pas
+lu : les sessions cloud, qu'aucun fichier local ne liste et dont aucune n'est montrée active, l'état
+des volets wmux, et les services Windows (`ixctl resume check`). Code de sortie 0 dès que le
+rapport est imprimé.
 
 ## Limites de cette tranche
 

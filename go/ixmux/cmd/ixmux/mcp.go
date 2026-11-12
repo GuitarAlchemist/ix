@@ -107,6 +107,7 @@ var ixmuxCodes = map[string]string{
 	deliver.NotUncertain:            "the mandate is not uncertain",
 	deliver.ReconcileUnsupported:    "the target cannot be asked whether it received a mandate",
 	deliver.LogTooLarge:             "ixmux's command log is over its bound",
+	deliver.LogFull:                 "ixmux's command log has no room for a new mandate; nothing was sent (see ixmux's README: log bound)",
 	deliver.LogCorrupt:              "ixmux's command log is corrupt",
 	deliver.MandateIDReuse:          "this mandate id was first accepted for another target, incarnation or text",
 	deliver.JournalLocked:           "ixmux's command log is held by another process",
@@ -124,6 +125,10 @@ var ixmuxCodes = map[string]string{
 	"bad-request":                   "ixmux could not read the request",
 	"stopping":                      "ixmux is stopping",
 }
+
+// uncertainCauses are the causes of an uncertain state that pass to a tool answer.
+var uncertainCauses = map[string]bool{deliver.CauseDeadline: true, deliver.CauseAdapterError: true,
+	deliver.CauseRestart: true, deliver.CauseLogWrite: true}
 
 func newMCP(state string, stdout io.Writer) *mcp {
 	// Each request dials its own connection (see exchange): loopback only, no proxy, none kept.
@@ -334,6 +339,8 @@ func (m *mcp) handle(line []byte) {
 			v, terr = m.submit(p.Arguments)
 		case "ixmux_result":
 			v, terr = m.result(p.Arguments)
+		case "ixmux_inventory":
+			v, terr = m.inventory(p.Arguments)
 		default:
 			m.reply(req.id, nil, &rpcError{-32602, "unknown tool " + *p.Name, map[string]any{"reason": reasonUnknownTool}})
 			return
@@ -716,9 +723,11 @@ func (m *mcp) submit(raw json.RawMessage) (any, *toolErr) {
 	for {
 		select {
 		case p := <-done:
-			if p.err != nil && p.err.Error == reasonUnavailable {
-				// Cut at the transport: ixmux may have taken it all the same. Its entry tells,
-				// until the receipt's bound.
+			if p.err != nil && (p.err.Error == reasonUnavailable || p.err.Error == "internal") {
+				// Cut at the transport, or failed inside ixmux (a final record its log could not
+				// hold, the target having taken the mandate): ixmux may have taken it all the same.
+				// No refusal, so no proof that nothing was sent: its entry tells, until the bound.
+				// @ai:invariant an internal error of the POST is no refusal: the receipt reads the entry [T:test conf:0.85 src:go/ixmux/cmd/ixmux/s6b_mcp_test.go:TestReceiptAfterACutPOST]
 				done = nil
 				continue
 			}
@@ -780,9 +789,13 @@ func (m *mcp) result(raw json.RawMessage) (any, *toolErr) {
 		return nil, e
 	}
 	// The entry's reason is ixmux's free text (an adapter's error may quote anything): it does not
-	// pass. The state and last transition say what is known.
+	// pass. The state and last transition say what is known, and an uncertain state's cause, one
+	// of a closed set: any other value from the network is left out.
 	out := map[string]any{"mandate_id": v.MandateID, "target": v.Target, "state": v.State, "last": v.Last,
 		"still_running": v.StillRunning}
+	if uncertainCauses[v.Cause] {
+		out["cause"] = v.Cause
+	}
 	if v.Ack != nil {
 		text, cut := v.Ack.Text, v.Ack.Truncated
 		if len(text) > MCPMaxResultText {
@@ -821,4 +834,7 @@ var mcpTools = []map[string]any{
 	{"name": "ixmux_result", "title": "Result of a mandate",
 		"description": "The state of a mandate by its mandate_id and, once delivered, its result: receipt, the answer's text (at most 4 KiB, truncated says it was cut), ack_seen. Read from ixmux's command log: it survives a restart of the adapter and of ixmux.",
 		"inputSchema": obj(map[string]any{"mandate_id": idSchema}, "mandate_id")},
+	{"name": "ixmux_inventory", "title": "Inventory after a restart",
+		"description": "Read from ixmux's files, so also while ixmux is down: whether ixmux runs (proven by its pid and creation time, not by its file), and each mandate's status: running, done, or uncertain (the target may have acted: a person decides, nothing is sent again). Says what to do next; does nothing itself.",
+		"inputSchema": obj(map[string]any{})},
 }

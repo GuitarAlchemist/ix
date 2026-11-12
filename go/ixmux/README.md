@@ -52,7 +52,7 @@ HTTP bounds: a request's headers and body are read within `--read-timeout`, and 
 
 ## Files in `<state>`
 
-- `commands.jsonl`: the command log of deliveries. While it runs, ixmux holds `commands.jsonl.lock`.
+- `commands.jsonl`: the command log of deliveries. While it runs, ixmux holds `commands.jsonl.lock`. It is bounded at 64 MiB, the size a start reads back: no append takes it past that bound. **Each delivery holds room in the log for the records it may still write**: once accepted, its delivering record, its final record (with the answer: a record is at most 32 KiB, and an answer's text past that is cut and said `truncated`) and a late answer; once `uncertain`, the record that settles it (a late answer, or a reconcile's). No other record takes that room, so an accepted delivery always records its outcome, however many run at once. A new mandate that cannot be given its room is refused `log-full`, before anything is sent. A mandate whose id, target and incarnation take more than half of a 1 KiB record is refused `bad-mandate`. A record that still does not fit (in a log written by an older ixmux, or under a lowered bound) is no refusal: the delivery is `uncertain`, cause `log-write-failed`, and the request fails `internal`; so is a delivery whose final record finds the log broken by another one's failed write. **Retention**: a finished mandate (`delivered` or `refused`) is remembered, and so deduplicated (replayed, or refused `mandate-id-reuse`), at least `--dedup-window` after its last transition (720 h, 30 days, by default). The first compaction past that forgets it: its id is then a new mandate, and `GET /v1/mandates/{id}` answers 404. An `uncertain`, `accepted` or `delivering` mandate is never forgotten. The log is compacted when a new mandate finds no room, and at a start past three quarters of its bound or with no room for a new mandate, if that makes it smaller: one record per mandate, in its current state, with its fingerprint, incarnation, receipt and cause. A running ixmux compacts at most once a minute. The compacted log is written to `commands.jsonl.compact`, synced, then renamed over the log (on Windows with write-through). If the restart's own transitions do not fit, they are applied in memory: the log already makes them at every start. The log still fills if the mandates finished within the window do (about 14,000 with 4 KiB answers): a new mandate is then refused `log-full` until older ones leave the window; shorten the window to free it. Never delete the log. The window reads the system clock: a clock set forward forgets sooner. At each start, stderr says what was found and done: `ixmux: command log: N records replayed[, a torn last record of B bytes cut], U made uncertain, R made refused[ (K of them in memory only: the log is full)][, compacted from X to Y bytes[ (F finished mandates past the deduplication window forgotten)]][, compaction not done (the log is kept as read): why]; a finished mandate is remembered at least 720h0m0s`.
 - `ixmux.json`: address, PID, start time, version, SHA-256 of the executable, epoch, and `state` (`running` or `stopped`, then `exit_code`).
 - `ixmux.token`: the Bearer token. It is rewritten at each start and removed at a clean stop. On Windows, its DACL is protected and grants the current user alone; elsewhere its mode is 0600. If ixmux cannot create it that way, it refuses to start.
 
@@ -159,12 +159,48 @@ The Claude session itself is kept by claude under your profile, as any `claude -
 
 `ixmux mcp --state <dir>` is a local MCP server on stdio over the ixmux serve of that state
 directory. It reads the address and the token there at each call, so it follows an ixmux restarted
-since, and has three tools: `ixmux_status`, `ixmux_submit` (a receipt within 2 s, even when the
-turn lasts longer) and `ixmux_result` (read from the command log). It has no tool that stops ixmux.
+since, and has four tools: `ixmux_status`, `ixmux_submit` (a receipt within 2 s, even when the
+turn lasts longer), `ixmux_result` (read from the command log) and `ixmux_inventory` (the inventory
+below, of that state directory alone, read from its files). It has no tool that stops ixmux.
 It sends the token only to a server that answered its `/v1/hello` challenge, on the same
 connection; a process that took the port without the token gets nothing (`ixmux-unverified`). A
 process that can read the token file is outside this model. The contract, with the exact command,
 the schemas and the errors: [MCP.md](MCP.md).
+
+## Inventory after a restart (`ixmux inventory`)
+
+`ixmux inventory [--state <dir> ...] [--claude-home <dir>] [--no-claude] [--json]` reads files and
+process creation times only. It sends, starts, replays, locks and writes nothing. After a crash, a
+power loss or a Windows restart it lists:
+
+- **the local Claude Code sessions**: Claude Code writes a record for each running process in
+  `<claude-home>/sessions/<pid>.json` (`--claude-home` defaults to `%CLAUDE_CONFIG_DIR%`, else
+  `~/.claude`). That file is undocumented: an unreadable or incomplete record is reported
+  `unreadable`, never guessed. A session's `id` is its session id. Its `incarnation` is
+  `pid:<pid>@<creation time>`. It is `running` or `idle` only when proven: a live process has that
+  pid and was created at that time, exactly on Windows (`procStart`), or within a minute either way
+  of `startedAt` elsewhere (a clock step moves it). A record whose `pidDomain` names another
+  machine is `unknown`. A record left behind by a crash is `unreachable`, with the
+  `claude --resume <id>` to run. A session id held by two records is listed under `duplicates`.
+  While one of them is live, the others say "do not resume";
+- **each `--state` ixmux** and its mandates: the ixmux `running`, `stopped`, or `unreachable`
+  (`ixmux.json` says running and its process is gone); each mandate `running`, `done` or
+  `uncertain`, with its recorded `state`, `cause` and `reason`. Its fields are listed in
+  [MCP.md](MCP.md), where `ixmux_inventory` gives a reduced view of them.
+
+`last_activity` is the latest of the record's times and of the transcript file's modification time
+(its content is never read). The transcript is looked for at `projects/<cwd, every character but
+an ASCII letter or digit made '->/<id>.jsonl` (one stat), then in the other directories of
+`projects/`, within one budget per read: 4096 paths stat-ed and entries listed, and 2 s
+(`--transcript-files`, `--transcript-time`). Each session says what came of it in
+`declared.transcript`: `found`, `none` (searched to the end), `search-cut` (the budget ran out:
+`last_activity` is the record's, maybe older) or `unreadable`. `declared` keeps what a file says
+apart from what was proven. A bound is never silent: `partial` is true and `omitted` counts what
+was left out, past 256 session records, past the 50 newest finished mandates per ixmux (an
+unfinished mandate never is), or by a cut or failed transcript search; a record over 64 KiB, a log over 64 MiB,
+or anything but a regular file (a FIFO is never waited on) is an `unreadable` entry. `gaps` names what is not read: cloud
+sessions, which no local file lists and none of which is shown as active, wmux's pane states, and
+Windows services (`ixctl resume check`). Exit code 0 whenever the report is printed.
 
 ## Limits of this slice
 

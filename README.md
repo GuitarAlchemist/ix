@@ -10,6 +10,15 @@ For industrial engineering and robotics, IX is an **offline/advisory co-processo
 
 82 crates. 96 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
+## Agentic workflow entry point
+
+Start with the [canonical glossary](CONTEXT.md#agent-strategy-measurement), then
+[the bounded-plan guide](docs/methodology/agentic-plan-entrypoint.md) and its
+[versioned intervention example](docs/methodology/baseline/claude-bin-unblock.v0.1.0.ixql).
+Compile the data-only dependency plan with existing IXQL; it does not run agents
+or authorize parent resumption. Compare admitted trials with the
+[three-strategy baseline](docs/methodology/three-strategy-baseline.md).
+
 ## Quick Start
 
 ```bash

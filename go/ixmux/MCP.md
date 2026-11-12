@@ -49,7 +49,7 @@ Demonstration without a client, from PowerShell, once `ixmux serve` runs on that
 | `initialize` | `params` needs `protocolVersion` (a string), `capabilities` (an object) and `clientInfo` `{name, version}`, else -32602. `protocolVersion`: the one asked if the adapter holds it (`2025-11-25`, `2025-06-18`), else `2025-11-25`. Older versions are not offered: their batches are refused here. `capabilities.tools.listChanged` is false. `serverInfo` is `ixmux` and its version. It needs no ixmux. |
 | `notifications/initialized` | A notification: no answer. Any other notification is ignored. |
 | `ping` | `{}`. |
-| `tools/list` | The three tools below, with their `inputSchema`. |
+| `tools/list` | The four tools below, with their `inputSchema`. |
 | `tools/call` | `{content: [{type: "text", text}], structuredContent, isError}`. `text` is the JSON of `structuredContent`. |
 
 Protocol errors are JSON-RPC errors, and the adapter goes on reading:
@@ -68,7 +68,7 @@ A request without an `id` member is a notification and gets no answer, unless it
 A tool that fails answers `isError: true` with `structuredContent` `{error, detail}`. `error` is a
 typed reason: one of the adapter's (below) or a known refusal code of ixmux (`mandate-id-reuse`,
 `stale-incarnation`, `unknown-target`, `uncertain-needs-reconcile`, `in-flight`, `target-busy`,
-`busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, ...). A code the adapter does not
+`busy`, `unknown-mandate`, `text-too-long`, `engine-closed`, `log-full`, ...). A code the adapter does not
 know is `ixmux-error`. `detail` is the adapter's own text, for a person; never parse it: for an
 ixmux refusal, the adapter writes one message per code. No free text of ixmux (a refusal's detail,
 a mandate's reason, a target's error) reaches a tool answer.
@@ -147,7 +147,16 @@ Input: `{mandate_id}`. Output:
 
 - `state`: `accepted`, `delivering`, `delivered`, `refused` or `uncertain`, and `last` the
   transition that led there. ixmux's reason is not passed on (free text). An `uncertain` mandate is
-  never replayed: a new submission is refused `uncertain-needs-reconcile`.
+  never replayed: a new submission is refused `uncertain-needs-reconcile`. Nor may a client send its
+  work again under another id: `uncertain` means the target may have taken it. Nothing is
+  relaunched automatically; a person decides, from the session's output or a reconcile.
+- `cause`, on an `uncertain` mandate, says why, from a closed set: `deadline` (no answer within
+  ixmux's delivery deadline), `adapter-error` (the target answered an error, `is_error` included),
+  `restart` (ixmux stopped, cleanly or not, or restarted with the delivery under way), `log-write-failed` (its final state
+  could not be written). A mandate past its deadline whose call then ends in an error while ixmux
+  stops keeps `deadline`, the error added to its `reason`; outside a stop it becomes
+  `adapter-error`, its `reason` still beginning with the deadline's. Any other value from ixmux is left out. Saturation is no state: it is a
+  refused submission, `target-busy` or `busy`.
 - `receipt`, `text`, `ack_seen` and `truncated` appear once delivered with an answer. `text` is at
   most 4 KiB; `truncated: true` says the answer was longer and its end is missing. A mandate made
   `delivered` by a reconcile (the target said it received it) has none of them: no answer was read.
@@ -158,7 +167,39 @@ Input: `{mandate_id}`. Output:
   already come.
 - It is read from the command log of ixmux (`GET /v1/mandates/{id}`): it survives a restart of the
   adapter and a restart of ixmux.
-- An unknown id is `unknown-mandate`.
+- An unknown id is `unknown-mandate`: never submitted, or finished (`delivered` or `refused`) more
+  than ixmux's deduplication window ago (`--dedup-window`, 720 h by default) and forgotten; that
+  id is then a new mandate. An `uncertain` mandate is never forgotten.
+
+### `ixmux_inventory`
+
+No arguments. What can be found again after a crash or a restart, read from the files of the state
+directory, so it also answers while ixmux is down (`ixmux_status` then fails `ixmux-unavailable`).
+The report (`ixmux.inventory.mcp.v1`) is a reduced view of `ixmux inventory --json`. It holds:
+
+- the ixmux entry, with its `incarnation` (`epoch:…`) and its `status`. `liveness` is `proven` only
+  when a live process has the pid of `ixmux.json` and was created when ixmux recorded its start,
+  within a minute either way (a clock step). `absent` or `pid-reused` while `ixmux.json` says
+  `running` gives `unreachable`: ixmux did not stop cleanly. `unknown` with "read again" means
+  `ixmux.json` changed during the read;
+- each unfinished mandate of the command log: `mandate_id`, `target`, `incarnation`, the recorded
+  `state`, `cause` (from the closed set of `ixmux_result`), and its `status`:
+  - `running`: accepted or delivering under a live ixmux;
+  - `uncertain`: the target may have acted, and a person decides. That covers a mandate left
+    delivering by an ixmux that is gone, which its next start records `uncertain`, cause `restart`;
+  - `done`: accepted under an ixmux that is gone, so never sent (its next start records it
+    `refused`);
+  - `unknown`: its ixmux could not be checked, or started during the read;
+- `finished`: the number of delivered and refused mandates. They are not listed: `ixmux_result`
+  answers for each id;
+- `last_activity` and `age_s`, the last transition. `resume` says what a person may do; the tool does
+  nothing;
+- `gaps`: what the inventory does not read.
+
+It carries no path, pid, address, exit code or creation time, no Claude Code session of the machine,
+and no `reason` (text that may come from a target). It reads the command log without its lock. On
+Windows a compaction of a running ixmux fails during that read: no harm, the log is kept as it was
+and the compaction is tried again a minute later.
 
 ## Stop
 
@@ -170,7 +211,8 @@ running in every case.
 
 - It does not stop ixmux: `/v1/shutdown` is not a tool. It does not reconcile an uncertain mandate
   either (`/v1/mandates/{id}/reconcile` is not a tool).
-- No shell, no file access outside `ixmux.json` and `ixmux.token`, no WMUX session control, no
+- No shell, no file access outside `ixmux.json`, `ixmux.token` and, read-only for
+  `ixmux_inventory`, `commands.jsonl`; no WMUX session control, no
   tunnel, no service, no network beyond the loopback address of `ixmux.json`.
 - It keeps no durable state of its own: what it says of a mandate comes from ixmux. Its own
   answers are `initialize`, the tool schemas, the protocol and validation errors, the
