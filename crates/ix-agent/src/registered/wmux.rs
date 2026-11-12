@@ -1107,19 +1107,25 @@ mod tests {
 
     /// A wrapper that exits after starting a process that keeps its output open: the call
     /// still ends at the deadline instead of waiting for that process.
+    ///
+    /// The deadline must leave the wrapper the time to start, start its child and exit, or the
+    /// call ends on a wrapper that "did not finish", which is another refusal. At 3 s a loaded
+    /// Windows runner did not get there, PowerShell already warm (CI, 2026-11-12, on the
+    /// merge of main into ix#512). So the deadline is 12 s, the child sleeps 90 s, and the call
+    /// must be back well before the child would have ended.
     #[test]
     fn a_descendant_that_keeps_the_output_open_does_not_hang_the_call() {
         let _one = one_script_at_a_time();
-        let mut budget = Budget::new(Duration::from_secs(3), MAX_OUTPUT_BYTES);
+        let mut budget = Budget::new(Duration::from_secs(12), MAX_OUTPUT_BYTES);
         let started = Instant::now();
         let wrapper = script(
-            "Start-Process -NoNewWindow pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 20'; '{}'",
-            "sleep 20 & echo '{}'",
+            "Start-Process -NoNewWindow pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 90'; '{}'",
+            "sleep 90 & echo '{}'",
         );
         let err = run_json(&wrapper, &["sidebar-state"], &mut budget).unwrap_err();
         assert!(err.contains("stayed open"), "{err}");
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            started.elapsed() < Duration::from_secs(45),
             "{:?}",
             started.elapsed()
         );
