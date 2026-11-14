@@ -170,8 +170,8 @@ impl Parser {
         if self.peek_keyword("when") {
             return Err(ParseError::at(
                 self.line(),
-                "`when` blocks are not supported by this parser yet — no pipeline in \
-                 Demerzel/pipelines uses one, so the block-delimiting rule is still undecided",
+                "`when` blocks are not supported by this parser yet — the block-delimiting rule is \
+                 still undecided (tracked in ix#331)",
             ));
         }
 
@@ -849,6 +849,8 @@ mod tests {
     fn when_is_refused_explicitly_rather_than_misparsed() {
         let err = parse_program("when x: y <- 1").unwrap_err();
         assert!(err.to_string().contains("`when` blocks are not supported"));
+        // ix#331: the refusal must not claim the Demerzel corpus has no `when` block.
+        assert!(!err.to_string().contains("no pipeline"));
     }
     // ---- lambdas ---------------------------------------------------------
 
