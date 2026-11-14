@@ -91,7 +91,10 @@ func readAgents(ctx context.Context, bin string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { tree.kill(); tree.close() }()
+	// The kill is a signal: it returns before the processes are gone. The read waits for them, within
+	// its own bound, so that "no process left behind" holds when it returns and not a moment later
+	// (a loaded Linux runner showed the descendant still alive right after the stop, 2026-11-14).
+	defer func() { tree.kill(); tree.waitGone(claudeWaitDelay); tree.close() }()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {

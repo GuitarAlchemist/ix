@@ -61,6 +61,11 @@ jobs:
           # Build, test and lint subcommands only: no `cargo run`, `cargo install` or `go run`.
           # git fetch and git merge too: a task asked to bring main into its branch was refused
           # both, twice (#476, #390, 2026-11-11), and left the branch red on a defect main had fixed.
+          # The `go -C <module>` forms, one per module under go/, and `go version` too: a
+          # task wrote `go -C go/ixctl vet ./...`, which `Bash(go vet:*)` does not match, and ran
+          # nothing (#531, 2026-11-14). `node --test` and `node --check` for the JavaScript tests
+          # that sit beside Go code; no `npm`, so no install script runs here. A new module under go/
+          # needs its three entries added. No wildcard before the subcommand: it would let `go run` in.
           claude_args: |
-            --allowedTools "Bash(cargo build:*),Bash(cargo check:*),Bash(cargo test:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go vet:*),Bash(go test:*),Bash(gofmt:*),Bash(git fetch:*),Bash(git merge:*)"
+            --allowedTools "Bash(cargo build:*),Bash(cargo check:*),Bash(cargo test:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go vet:*),Bash(go test:*),Bash(go -C go/claudehooks vet:*),Bash(go -C go/claudehooks test:*),Bash(go -C go/claudehooks build:*),Bash(go -C go/ghbridge vet:*),Bash(go -C go/ghbridge test:*),Bash(go -C go/ghbridge build:*),Bash(go -C go/ixctl vet:*),Bash(go -C go/ixctl test:*),Bash(go -C go/ixctl build:*),Bash(go -C go/ixmux vet:*),Bash(go -C go/ixmux test:*),Bash(go -C go/ixmux build:*),Bash(go -C go/prmap vet:*),Bash(go -C go/prmap test:*),Bash(go -C go/prmap build:*),Bash(go version),Bash(gofmt:*),Bash(node --test:*),Bash(node --check:*),Bash(git fetch:*),Bash(git merge:*)"
 
