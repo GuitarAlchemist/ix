@@ -53,8 +53,9 @@ the correction apply to *future* work, not just this edit?
    > 🎓 Réflexe : j'ai lancé /correct parce que tu m'as repris sur <X>. Tu peux le taper
    > toi-même juste après une correction.
 
-   The `correction-detector.sh` hook (FR/EN) nudges Claude to fire this skill itself on every
-   correction; the user asked (2026-10-22) to be told each time, so they learn the moment.
+   The `correction-detector` hook (FR/EN, in `go/claudehooks`) nudges Claude to fire this skill
+   itself on every correction; the user asked (2026-10-22) to be told each time, so they learn the
+   moment.
 
 ## Anti-patterns
 
