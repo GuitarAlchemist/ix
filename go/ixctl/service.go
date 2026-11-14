@@ -77,7 +77,8 @@ type hostOptions struct {
 	deltaJournal string
 	log          io.Writer
 	// close ends the instance (a test seam; (*instance).close when nil).
-	close func(*instance)
+	close    func(*instance)
+	workshop workshopSettings
 }
 
 // hostLog writes one JSON object per line, with its time. It never carries the token: no
@@ -132,6 +133,12 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 		log.event("host.failed", map[string]any{"error": err.Error()})
 		return stopped(exitStartFailed)
 	}
+	in.workshop, err = startWorkshop(o.workshop, o.stateDir, in.ready.Name)
+	if err != nil {
+		in.close()
+		log.event("workshop.failed", map[string]any{"error": err.Error()})
+		return stopped(exitStartFailed)
+	}
 	// Before the plane starts: no client knows the token yet, so no node can exist.
 	in.plane.SetDeltaJournal(o.deltaJournal)
 	in.plane.Start()
@@ -164,6 +171,7 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "requested", "source": source}))
 	log.event("host.stop", map[string]any{"phase": "requested", "source": source})
 	in.plane.RequestShutdown()
+	in.workshop.stopAccepting()
 	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "received", "source": source}))
 	log.event("host.stop", map[string]any{"phase": "received", "source": source})
 
@@ -280,7 +288,7 @@ func (l *rotatingLog) Close() error {
 }
 
 const serviceUsage = `usage:
-  ixctl service run <spec.json> --state DIR [--name NAME] [--addr 127.0.0.1:0] [--stop-timeout 30s] [--service-name ixctl]
+  ixctl service run <spec.json> --state DIR [--name NAME] [--addr 127.0.0.1:0] [--stop-timeout 30s] [--service-name ixctl] [--workshop-config FILE]
   ixctl service plan --spec FILE --client-user DOMAIN\USER [--service-name ixctl] [--exe PATH] [--dir DIR]
   ixctl service prepare-config --spec FILE --output FILE`
 
@@ -303,12 +311,14 @@ func cmdServiceRun(args []string) error {
 	fs := flag.NewFlagSet("service run", flag.ContinueOnError)
 	var o hostOptions
 	var serviceName string
+	var workshopConfig string
 	fs.StringVar(&o.addr, "addr", "127.0.0.1:0", "loopback address to listen on")
 	fs.StringVar(&o.name, "name", "", "instance name (default: the spec's name)")
 	fs.StringVar(&o.stateDir, "state", "", "state directory (required)")
 	fs.DurationVar(&o.stopTimeout, "stop-timeout", defaultStopTimeout, "bound on a stop, past which the host exits unobserved")
 	fs.StringVar(&serviceName, "service-name", "ixctl", "the name the SCM knows the service by")
 	fs.StringVar(&o.deltaJournal, "delta-journal", "", "JSONL journal the delta@1 probe kind tails (Delta's brain writes it); unset refuses the kind")
+	fs.StringVar(&workshopConfig, "workshop-config", "", "optional versioned IxForge configuration; absent keeps Workshop disabled")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -320,6 +330,11 @@ func cmdServiceRun(args []string) error {
 	// setup runs once the manager is connected: under the SCM, a spec or a log that fails
 	// here is a start failure the SCM sees, not a process gone before it was told anything.
 	setup := func() (hostOptions, func(), error) {
+		var err error
+		o.workshop, err = readWorkshopSettings(workshopConfig)
+		if err != nil {
+			return o, nil, err
+		}
 		spec, err := LoadSpec(pos[0])
 		if err != nil {
 			return o, nil, err
