@@ -276,10 +276,10 @@ impl GpuKernelsDemo {
                     ui.label(format!("P{j}"));
                 }
                 ui.end_row();
-                for i in 0..show_n {
+                for (i, row) in self.dist_matrix.iter().enumerate().take(show_n) {
                     ui.label(format!("P{i}"));
-                    for j in 0..show_n {
-                        ui.label(format!("{:.2}", self.dist_matrix[i][j]));
+                    for value in row.iter().take(show_n) {
+                        ui.label(format!("{:.2}", value));
                     }
                     ui.end_row();
                 }
