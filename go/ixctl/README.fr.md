@@ -857,6 +857,21 @@ est `unknown`, jamais supposé démarré.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Un bind joker (`0.0.0.0`) sur le port le
   tient aussi. Rien ne se connecte au port.
+- `ready_journal` (avec `service`, à la place de `listen`) : le journal d'hôte du service, pour
+  un hôte démarré avec `--addr 127.0.0.1:0`, dont le port change à chaque démarrage. Chaque
+  contrôle lit les 64 derniers Kio du journal et prend l'adresse de sa dernière ligne
+  `host.ready`, seulement quand le PID de cette ligne est le processus que le service exécute
+  maintenant ; `health` est alors un chemin (`/health`) sur cette adresse. Une ligne d'un autre
+  PID (un démarrage précédent, un hôte qui ne s'est pas dit prêt, le journal d'un autre hôte), une
+  adresse hors boucle locale ou un journal illisible donne `unknown`, et rien n'est sondé.
+  L'inventaire reste le même d'un redémarrage à l'autre :
+
+  ```json
+  {"name": "control", "after": ["plane"], "service": "ixctl",
+   "ready_journal": "C:\\ProgramData\\ixctl\\ixctl-trial.service.log",
+   "health": "/health", "health_expect": "\"ok\":true",
+   "health_fields": {"name": "ixctl-trial", "version": "0.1.0-ixforge.7"}}
+  ```
 - `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui
   écoute, par exemple `delta-remote-v0.6.0-21-g2ca5e6c.exe` (sans chemin, casse ignorée) : quelle
   version est revenue. Le PID vient de la table TCP ; le processus est ouvert avec les seuls droits

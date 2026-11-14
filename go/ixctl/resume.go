@@ -73,8 +73,13 @@ type resumeComponent struct {
 	// Durable is where the component's state lives (projects, mandates, receipts): each path is
 	// reported present or missing, never opened or changed.
 	Durable []string `json:"durable,omitempty"`
-	Owner   string   `json:"owner,omitempty"`
-	Remedy  string   `json:"remedy,omitempty"`
+	// ReadyJournal is the service's ixctl host log (service run writes it): the address is read
+	// at each check from its last host.ready line, for a host started with --addr 127.0.0.1:0,
+	// whose port changes at each boot. Requires service; replaces listen, and health is then a
+	// path ("/health") on that address.
+	ReadyJournal string `json:"ready_journal,omitempty"`
+	Owner        string `json:"owner,omitempty"`
+	Remedy       string `json:"remedy,omitempty"`
 }
 
 // resumeProbes is how a check observes the machine; tests replace it.
@@ -97,7 +102,15 @@ type resumeProbes struct {
 	listDir func(dir string) ([]string, error)
 	// hashFile is a file's SHA-256 in hex, read whole, never written.
 	hashFile func(path string) (string, error)
+	// servicePID is the process a running service runs as, 0 when it runs none.
+	servicePID func(name string) (uint32, error)
+	// readTail reads the last max bytes of a file (a host log), never writes it.
+	readTail func(path string, max int64) ([]byte, error)
 }
+
+// resumeJournalTail is how much of a host log's end ready_journal reads: a host.ready line is
+// about 200 bytes and each start or stop adds one line.
+const resumeJournalTail = 64 << 10
 
 // listenerImage is the executable file name of the process holding addr, "" when nobody holds
 // it. The PID is read from the table, the process opened (Windows does not reuse a PID while a
@@ -162,6 +175,24 @@ func realResumeProbesOver(rt http.RoundTripper) resumeProbes {
 				return "", err
 			}
 			return hex.EncodeToString(h.Sum(nil)), nil
+		},
+		servicePID: queryServicePID,
+		readTail: func(p string, max int64) ([]byte, error) {
+			f, err := os.Open(p)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+			st, err := f.Stat()
+			if err != nil {
+				return nil, err
+			}
+			if st.Size() > max {
+				if _, err := f.Seek(st.Size()-max, io.SeekStart); err != nil {
+					return nil, err
+				}
+			}
+			return io.ReadAll(io.LimitReader(f, max))
 		},
 		listDir: func(dir string) ([]string, error) {
 			entries, err := os.ReadDir(dir)
@@ -462,6 +493,45 @@ func serviceImageVerdict(c resumeComponent, p resumeProbes, svcImage string, svc
 	return verdictOK, fmt.Sprintf("service %s starts %s, SHA-256 %s", c.Service, exe, sum)
 }
 
+// readyAddr is the address the service's current host said it listens on, from the last
+// host.ready line in the last resumeJournalTail bytes of c.ReadyJournal, "" with an unknown
+// verdict when it cannot be trusted: a line from another PID is an earlier boot or another host's
+// journal, never a guess at this one's port.
+func readyAddr(c resumeComponent, p resumeProbes) (addr, verdict, line string) {
+	pid, err := p.servicePID(c.Service)
+	switch {
+	case err != nil:
+		return "", verdictUnknown, fmt.Sprintf("service %s's process: %v", c.Service, err)
+	case pid == 0:
+		return "", verdictUnknown, fmt.Sprintf("service %s runs no process: no address to read from %s", c.Service, c.ReadyJournal)
+	}
+	tail, err := p.readTail(c.ReadyJournal, resumeJournalTail)
+	if err != nil {
+		return "", verdictUnknown, fmt.Sprintf("journal %s: %v", c.ReadyJournal, err)
+	}
+	lines := strings.Split(string(tail), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev struct {
+			Event string `json:"event"`
+			Addr  string `json:"addr"`
+			Pid   uint32 `json:"pid"`
+		}
+		// The first line may be cut by the tail read and the last one still being written.
+		if json.Unmarshal([]byte(lines[i]), &ev) != nil || ev.Event != "host.ready" {
+			continue
+		}
+		if ev.Pid != pid {
+			return "", verdictUnknown, fmt.Sprintf("the last host.ready line in %s is PID %d's, the service runs PID %d: this host has not said ready, or the journal is another host's", c.ReadyJournal, ev.Pid, pid)
+		}
+		host, _, err := net.SplitHostPort(ev.Addr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			return "", verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s says %s, which is not a loopback address", pid, c.ReadyJournal, ev.Addr)
+		}
+		return ev.Addr, verdictOK, fmt.Sprintf("journal %s: host.ready of PID %d, the service's process, says %s", c.ReadyJournal, pid, ev.Addr)
+	}
+	return "", verdictUnknown, fmt.Sprintf("no host.ready line in the last %d bytes of %s", resumeJournalTail, c.ReadyJournal)
+}
+
 // readAllCapped reads r whole, or fails once it holds more than max bytes: a prefix that happens
 // to parse is never handed back as the whole body or file.
 // @ai:invariant a capped read never returns a prefix as the whole [T:test conf:0.9 src:resume_capped_test.go]
@@ -513,9 +583,21 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 			return nil, fmt.Errorf("inventory: %s has nothing to observe (service, health or listen)", c.Name)
 		}
 		seen[c.Name] = true
+		if c.ReadyJournal != "" {
+			switch {
+			case c.Service == "":
+				return nil, fmt.Errorf("inventory: %s ready_journal needs service, whose process wrote the host.ready line", c.Name)
+			case c.Listen != "":
+				return nil, fmt.Errorf("inventory: %s has listen and ready_journal: the journal gives the address", c.Name)
+			case c.Health != "" && (!strings.HasPrefix(c.Health, "/") || strings.HasPrefix(c.Health, "//")):
+				return nil, fmt.Errorf("inventory: %s health with ready_journal is a path such as /health, the journal gives the address", c.Name)
+			}
+		}
 		if c.Health != "" {
-			if err := loopbackURL(c.Health); err != nil {
-				return nil, fmt.Errorf("inventory: %s health: %w", c.Name, err)
+			if c.ReadyJournal == "" {
+				if err := loopbackURL(c.Health); err != nil {
+					return nil, fmt.Errorf("inventory: %s health: %w", c.Name, err)
+				}
 			}
 		} else if c.HealthHost != "" || c.HealthExpect != "" || c.HealthFields != nil {
 			return nil, fmt.Errorf("inventory: %s has health_host, health_expect or health_fields without health", c.Name)
@@ -642,6 +724,18 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 			}
 			if c.ServiceImageSHA256 != "" {
 				worse(serviceImageVerdict(c, p, svcImage, svcErr))
+			}
+		}
+		if c.ReadyJournal != "" {
+			addr, v, line := readyAddr(c, p)
+			worse(v, line)
+			if addr == "" {
+				c.Health = "" // a path with no trusted address to put it on
+			} else {
+				c.Listen = addr
+				if c.Health != "" {
+					c.Health = "http://" + addr + c.Health
+				}
 			}
 		}
 		if c.Listen != "" {

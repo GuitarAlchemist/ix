@@ -13,6 +13,31 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
+// queryServicePID is the process a service runs as (QueryServiceStatusEx), 0 when it runs none,
+// with query rights only, like queryService.
+func queryServicePID(name string) (uint32, error) {
+	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseServiceHandle(m)
+	n, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return 0, err
+	}
+	h, err := windows.OpenService(m, n, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return 0, err
+	}
+	s := &mgr.Service{Name: name, Handle: h}
+	defer s.Close()
+	st, err := s.Query()
+	if err != nil {
+		return 0, err
+	}
+	return st.ProcessId, nil
+}
+
 // queryService reads a service's state and start type with query rights only
 // (SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS|SERVICE_QUERY_CONFIG): no elevation, no control.
 // image is the configured command line (BinaryPathName), read from the same configuration.

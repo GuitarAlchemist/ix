@@ -805,6 +805,20 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). A wildcard bind (`0.0.0.0`) on the port
   holds it too. Nothing connects to the port.
+- `ready_journal` (with `service`, in place of `listen`): the service's host log, for a host
+  started with `--addr 127.0.0.1:0`, whose port changes at each boot. Each check reads the last
+  64 KiB of the log and takes the address from its last `host.ready` line, only when that line's
+  PID is the process the service runs now; `health` is then a path (`/health`) on that address.
+  A line from another PID (an earlier boot, a host that has not said ready, another host's log),
+  an address off loopback or an unreadable log is `unknown`, and nothing is probed. The
+  inventory stays the same across reboots:
+
+  ```json
+  {"name": "control", "after": ["plane"], "service": "ixctl",
+   "ready_journal": "C:\\ProgramData\\ixctl\\ixctl-trial.service.log",
+   "health": "/health", "health_expect": "\"ok\":true",
+   "health_fields": {"name": "ixctl-trial", "version": "0.1.0-ixforge.7"}}
+  ```
 - `listen_image` (Windows): the file name the listening process's executable must have, such as
   `delta-remote-v0.6.0-21-g2ca5e6c.exe` (no path, case ignored): which build came back. The PID
   comes from the TCP table; the process is opened with query rights only, which keeps its PID
