@@ -213,12 +213,12 @@ mod tests {
         let product = Octonion::mul(&conj, &o);
         let ns = o.norm_squared();
         assert!((product.components[0] - ns).abs() < EPS);
-        for i in 1..8 {
+        for (i, value) in product.components.iter().enumerate().skip(1) {
             assert!(
-                product.components[i].abs() < EPS,
+                value.abs() < EPS,
                 "imaginary part {} should be 0, got {}",
                 i,
-                product.components[i]
+                value
             );
         }
     }
@@ -297,8 +297,8 @@ mod tests {
         let a = Octonion::new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let b = Octonion::new([8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]);
         let sum = a + b;
-        for i in 0..8 {
-            assert!((sum.components[i] - 9.0).abs() < EPS);
+        for value in sum.components.iter() {
+            assert!((value - 9.0).abs() < EPS);
         }
         let diff = a - b;
         assert!((diff.components[0] - (-7.0)).abs() < EPS);

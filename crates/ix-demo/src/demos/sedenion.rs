@@ -115,10 +115,9 @@ impl SedenionDemo {
                         }
                         ui.end_row();
 
-                        for i in 0..dim {
+                        for (i, row) in self.cd_table.iter().enumerate().take(dim) {
                             ui.label(format!("e{}", i));
-                            for j in 0..dim {
-                                let product = &self.cd_table[i][j];
+                            for product in row.iter().take(dim) {
                                 let label = format_basis_product(product);
                                 ui.label(label);
                             }

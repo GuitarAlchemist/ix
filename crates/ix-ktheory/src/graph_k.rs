@@ -52,8 +52,8 @@ pub fn k0_from_adjacency(adj: &Array2<f64>) -> Result<KGroupResult, KTheoryError
     let mut rank = 0;
     let mut torsion = Vec::new();
 
-    for i in 0..n {
-        let d = snf.diagonal[i].abs();
+    for value in &snf.diagonal[..n] {
+        let d = value.abs();
         if d == 0 {
             rank += 1;
         } else if d > 1 {

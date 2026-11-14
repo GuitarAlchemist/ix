@@ -125,11 +125,7 @@ fn has_fact_contradiction(verdicts: &[JudgeVerdict]) -> bool {
 
     let safe_true = verdicts.iter().any(|v| v.safe);
     let safe_false = verdicts.iter().any(|v| !v.safe);
-    if safe_true && safe_false {
-        return true;
-    }
-
-    false
+    safe_true && safe_false
 }
 
 #[cfg(test)]

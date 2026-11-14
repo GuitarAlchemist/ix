@@ -302,12 +302,12 @@ mod tests {
             product.components[0],
             ns
         );
-        for i in 1..16 {
+        for (i, value) in product.components.iter().enumerate().skip(1) {
             assert!(
-                product.components[i].abs() < EPS,
+                value.abs() < EPS,
                 "imaginary part {} should be 0, got {}",
                 i,
-                product.components[i]
+                value
             );
         }
     }
@@ -367,12 +367,12 @@ mod tests {
         let a = Sedenion::new([1.0; 16]);
         let b = Sedenion::new([2.0; 16]);
         let sum = a + b;
-        for i in 0..16 {
-            assert!((sum.components[i] - 3.0).abs() < EPS);
+        for value in sum.components.iter() {
+            assert!((value - 3.0).abs() < EPS);
         }
         let diff = b - a;
-        for i in 0..16 {
-            assert!((diff.components[i] - 1.0).abs() < EPS);
+        for value in diff.components.iter() {
+            assert!((value - 1.0).abs() < EPS);
         }
     }
 
@@ -401,8 +401,8 @@ mod tests {
         let z = Sedenion::zero();
         let e = z.exp();
         assert!((e.components[0] - 1.0).abs() < EPS);
-        for i in 1..16 {
-            assert!(e.components[i].abs() < EPS);
+        for value in e.components.iter().skip(1) {
+            assert!(value.abs() < EPS);
         }
     }
 
@@ -413,8 +413,8 @@ mod tests {
         let s = Sedenion::new(comps);
         let e = s.exp();
         assert!((e.components[0] - 2.0_f64.exp()).abs() < EPS);
-        for i in 1..16 {
-            assert!(e.components[i].abs() < EPS);
+        for value in e.components.iter().skip(1) {
+            assert!(value.abs() < EPS);
         }
     }
 
@@ -430,8 +430,8 @@ mod tests {
     fn test_log_of_one_is_zero() {
         let one = Sedenion::one();
         let l = one.log();
-        for i in 0..16 {
-            assert!(l.components[i].abs() < EPS);
+        for value in l.components.iter() {
+            assert!(value.abs() < EPS);
         }
     }
 
@@ -447,8 +447,8 @@ mod tests {
         assert!(l.components[0].abs() < EPS);
         // Imaginary part: pi on e_1
         assert!((l.components[1] - std::f64::consts::PI).abs() < 1e-10);
-        for i in 2..16 {
-            assert!(l.components[i].abs() < EPS);
+        for value in l.components.iter().skip(2) {
+            assert!(value.abs() < EPS);
         }
         // Round trip: exp(log(-1)) == -1
         let back = l.exp();
@@ -457,8 +457,8 @@ mod tests {
             "exp(log(-1)) scalar = {}, expected -1",
             back.components[0]
         );
-        for i in 1..16 {
-            assert!(back.components[i].abs() < 1e-10);
+        for value in back.components.iter().skip(1) {
+            assert!(value.abs() < 1e-10);
         }
     }
 
