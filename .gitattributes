@@ -19,3 +19,9 @@ crates/ix-origami/tests/fixtures/*.fold -text
 # The ixctl gate and its helpers run on both CI rows; LF on every checkout keeps the Windows
 # worktree free of "LF will be replaced by CRLF" noise on each diff of the gate.
 go/ixctl/e2e/*.py text eol=lf
+
+# The workshop client is embedded and hashed byte for byte: sw.js carries the digest of the
+# other files (TestClientReleaseIncludesEveryAsset), so git must never rewrite their EOLs.
+# A Windows checkout with autocrlf made that test fail in CI (#531).
+go/ixctl/internal/workshop/web/** -text
+go/ixctl/internal/workshop/owner/** -text
