@@ -22,7 +22,15 @@ existed, and there was no WASI 0.2, 0.3 or Component Model work.
   A trap, running out of fuel, a non-zero exit or a malformed report is an `Err`, which fails the run.
 - `validator/main.go`: a **fixture validator**. It uses only the standard library and checks a
   small, invented "sandbox candidate" shape. **It is not the previously validated Go package**,
-  which is not in this repository.
+  which is not in this repository. Its input must be exactly one JSON value: trailing data such
+  as `{…} {…}` or `{…}junk` exits 2. Before 2026-11-14 it judged only the first value and ignored
+  the rest; the WasmEdge comparison below ran on that earlier version (none of its 5 cases has
+  trailing data).
+- `validator/main_test.go`: Go tests of the validator's stdin → stdout/stderr path (field errors,
+  unknown fields, error order over 200 runs, empty, malformed and trailing input, and the
+  invalid fixture's output against `p3-spike/expected/validator-invalid.stdout`). Standard library
+  only; `validator/go.mod` exists for `go test` and is not used by the ix-wasm build, which
+  compiles `main.go` alone.
 - `fixtures/`: `pipeline.ixql`, one valid candidate and one invalid candidate (sandbox data only).
 - `tests/pipeline.rs`: 3 end-to-end tests: valid → T → written; invalid → F → alert only, with
   the Go errors passed through verbatim; fuel exhaustion → run error, nothing written.
@@ -37,6 +45,10 @@ existed, and there was no WASI 0.2, 0.3 or Component Model work.
 
 ```bash
 cd prototypes/ixql-wasi-validator && cargo test   # needs go 1.21+ on PATH (or IX_GO); Cargo.lock is gitignored repo-wide
+```
+
+```bash
+cd prototypes/ixql-wasi-validator/validator && go test ./... && go vet ./... && gofmt -l .
 ```
 
 ```bash

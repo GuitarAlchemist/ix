@@ -6,9 +6,9 @@
 //
 // Contract (one JSON value each way, the ix-wasm stage convention):
 //
-//	stdin : any JSON value (the candidate)
+//	stdin : exactly one JSON value (the candidate), optionally followed by whitespace
 //	stdout: {"validator": "...", "valid": bool, "errors": ["..."]}   exit 0
-//	stderr: a message, exit 2, when stdin is not JSON at all
+//	stderr: a message, exit 2, when stdin is not exactly one JSON value
 //
 // Standard library only: ix-wasm builds with GOPROXY=off, so no module can be fetched.
 package main
@@ -16,6 +16,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 )
@@ -63,12 +64,24 @@ func validate(v any) []string {
 	return errs
 }
 
-func main() {
+// run is main with its streams and exit code made explicit, so tests drive the real path.
+func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	var v any
-	if err := json.NewDecoder(os.Stdin).Decode(&v); err != nil {
-		os.Stderr.WriteString("not JSON: " + err.Error() + "\n")
-		os.Exit(2)
+	dec := json.NewDecoder(stdin)
+	if err := dec.Decode(&v); err != nil {
+		io.WriteString(stderr, "not JSON: "+err.Error()+"\n")
+		return 2
+	}
+	// Exactly one value: a Decoder stops after the first, so `{...} {...}` or `{...}junk` would
+	// otherwise be judged on the first value alone. Trailing whitespace is fine.
+	// @ai:invariant stdin holding anything but one JSON value plus whitespace exits 2 with no stdout [T:test conf:0.95 src:main_test.go:115]
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		io.WriteString(stderr, "not JSON: trailing data after the first value\n")
+		return 2
 	}
 	errs := validate(v)
-	json.NewEncoder(os.Stdout).Encode(report{Validator: name, Valid: len(errs) == 0, Errors: errs})
+	json.NewEncoder(stdout).Encode(report{Validator: name, Valid: len(errs) == 0, Errors: errs})
+	return 0
 }
+
+func main() { os.Exit(run(os.Stdin, os.Stdout, os.Stderr)) }
