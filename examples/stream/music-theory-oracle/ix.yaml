@@ -2,7 +2,7 @@
 # -> GA theory facts from GaApi REST (:5232) -> a deterministic theory-oracle judge (DuckDB SQL,
 # no LLM) -> a report. One stage, one ix-stream graph, run by the stream.run skill:
 #
-#   cargo build -p ix-skill -p ix-stream --features ix-stream/world --bin ix
+#   cargo build -p ix-cli -p ix-stream --features ix-stream/world --bin ix
 #   target/debug/ix pipeline run --file examples/stream/music-theory-oracle/ix.yaml   (from the repo root)
 #
 # The questions. Only 1 of the 100 Music.SE titles of state/router-spike/jev/corpora/music-se.json

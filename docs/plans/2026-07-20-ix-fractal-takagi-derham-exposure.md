@@ -53,7 +53,7 @@ This matters because the issue's candidate list partially duplicates live surfac
 | MCP tool `ix_fractal` (`crates/ix-agent/src/handlers.rs:1627`) | **YES** — `operation:"takagi"` with `n_points`+`terms`, returns `{points:[[t,y]],…}` via `takagi_series` | **NO** |
 | Claude skill `.claude/skills/ix-fractal/SKILL.md` | listed as a capability | **NO** — de Rham is not mentioned at all |
 | DuckDB (`crates/ix-duck/`) | **NO** — `ix-fractal` is not even a dependency in `crates/ix-duck/Cargo.toml` | **NO** |
-| CLI `ix run <skill>` (`ix-registry`) | **NO** — no fractal skill registered | **NO** |
+| CLI `ix run <skill>` (`ix-registry`) | **NO** — no fractal tool registered | **NO** |
 | `ix-demo` egui app (`crates/ix-demo/src/demos/fractal.rs`) | yes (interactive only) | **NO** |
 
 Also relevant and **unexposed anywhere**: `ix_chaos::fractal::hurst_exponent(data: &[f64]) -> f64`,
@@ -104,7 +104,7 @@ Two facts drive every design choice below:
 | `ifs_iterate`, L-systems, `hilbert/peano/morton` | **NO** | already covered | no | no | Explicitly out of scope of #203; space-filling is already on MCP. `morton_encode/decode` would be a defensible future SQL scalar for spatial hashing — noted, not proposed here. |
 
 **Surfaces deliberately left empty.** Nothing here belongs on the `ix run` CLI or in a
-`ix-pipeline` DAG stage. `ix-registry` today registers algorithm skills that transform *user
+`ix-pipeline` DAG stage. `ix-registry` today registers algorithm tools that transform *user
 data*; these are *generators* with no input dataset. Adding CLI verbs would be surface for its
 own sake with no caller. If a pipeline ever needs synthetic fractal noise (e.g. an
 `ix-evolution` perturbation operator), that is a separate issue with a real consumer attached.
@@ -178,8 +178,8 @@ not after.
 
 ## 4. skill_candidate_list
 
-Skills here mean `.claude/skills/<name>/SKILL.md` (the markdown surface), not `ix-skill` verbs —
-`crates/ix-skill/src/verbs/` holds only generic verbs (`run`, `list`, `describe`, `demo`,
+Skills here mean `.claude/skills/<name>/SKILL.md` (the markdown surface), not `ix-cli` verbs —
+`crates/ix-cli/src/verbs/` holds only generic verbs (`run`, `list`, `describe`, `demo`,
 `compile`, `pipeline`), and `ix-registry` has no fractal entry.
 
 **Recommendation: extend the existing `.claude/skills/ix-fractal/SKILL.md` rather than create

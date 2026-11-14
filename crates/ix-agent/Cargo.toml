@@ -31,7 +31,7 @@ ix-acoustic-tune = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
 ix-petri = { workspace = true }
-# `stream.run` (ix_stream_run) is registered by ix-stream itself; see src/skills/mod.rs.
+# `stream.run` (ix_stream_run) is registered by ix-stream itself; see src/registered/mod.rs.
 ix-stream = { workspace = true }
 ix-origami = { workspace = true }
 ix-knot = { workspace = true }
@@ -70,7 +70,7 @@ ix-assumption-graph = { workspace = true }
 ix-optick = { path = "../ix-optick" }
 ix-types = { workspace = true }
 ix-registry = { workspace = true }
-ix-skill-macros = { workspace = true }
+ix-tool-macros = { workspace = true }
 linkme = { workspace = true }
 serde = { workspace = true }
 # float_roundtrip: parse a JSON double to the nearest f64. The default parse

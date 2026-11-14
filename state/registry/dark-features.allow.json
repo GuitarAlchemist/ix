@@ -1,5 +1,5 @@
 {
-  "note": "Cargo features that no workspace member enables, and are therefore never compiled by `cargo {build,clippy,test} --workspace`. Checked by `ix doctor` (see crates/ix-skill/src/doctor/dark_features.rs, ix#315). A feature only needs an entry once the source behind it is substantial — at least one test, or 100+ lines. Every entry needs a non-empty `reason`: the point of this file is that a human said why the code may stay uncompiled. `kind` is either `environment` (enabling it here is blocked or unreasonably costly for reasons outside the code — a native toolchain, an external binary, GPU hardware, a toolchain newer than the workspace MSRV; these are expected to stay) or `tracked` (nothing environmental stops it, it simply is not wired up yet — these require an `issue` and are counted as outstanding debt). Entries whose feature stops being dark are reported as stale and must be removed. This list is a baseline of what was already true when the check landed — it is not a place to park new dark code.",
+  "note": "Cargo features that no workspace member enables, and are therefore never compiled by `cargo {build,clippy,test} --workspace`. Checked by `ix doctor` (see crates/ix-cli/src/doctor/dark_features.rs, ix#315). A feature only needs an entry once the source behind it is substantial — at least one test, or 100+ lines. Every entry needs a non-empty `reason`: the point of this file is that a human said why the code may stay uncompiled. `kind` is either `environment` (enabling it here is blocked or unreasonably costly for reasons outside the code — a native toolchain, an external binary, GPU hardware, a toolchain newer than the workspace MSRV; these are expected to stay) or `tracked` (nothing environmental stops it, it simply is not wired up yet — these require an `issue` and are counted as outstanding debt). Entries whose feature stops being dark are reported as stale and must be removed. This list is a baseline of what was already true when the check landed — it is not a place to park new dark code.",
   "allow": [
     {
       "crate": "ix-duck",
@@ -16,10 +16,10 @@
       "issue": "ix#315"
     },
     {
-      "crate": "ix-skill",
+      "crate": "ix-cli",
       "feature": "embeddings",
       "kind": "environment",
-      "reason": "Pulls fastembed on ONNX Runtime — a native library, not pure Rust. crates/ix-skill/Cargo.toml states the intent explicitly: the pure-Rust TF-IDF gate is the default and the graceful fallback, and the CI path must never pull ONNX. Its coverage test additionally downloads the bge-base-en model on first run.",
+      "reason": "Pulls fastembed on ONNX Runtime — a native library, not pure Rust. crates/ix-cli/Cargo.toml states the intent explicitly: the pure-Rust TF-IDF gate is the default and the graceful fallback, and the CI path must never pull ONNX. Its coverage test additionally downloads the bge-base-en model on first run.",
       "issue": "ix#315"
     },
     {
@@ -68,7 +68,7 @@
       "crate": "ix-stream",
       "feature": "wasm",
       "kind": "tracked",
-      "reason": "The `wasm` nodes of stream.run (crates/ix-stream/src/skill/wasm.rs, 110 lines; seven integration tests in tests/wasm.rs, three of them #[ignore] for Go). It links ix-wasm, whose `wasm.run` skill registers at link time, so enabling it from any workspace member puts `ix_wasm_run` on ix-agent's MCP surface: from ix-wasm's dev-dependencies that edge also made the workspace graph cyclic, and from ix-skill's it failed parity through feature unification. Whether wasm.run belongs on the MCP surface is a separate decision; until it is taken, the gated-features CI job compiles, lints and tests the feature, and it stays dark by this check's definition.",
+      "reason": "The `wasm` nodes of stream.run (crates/ix-stream/src/skill/wasm.rs, 110 lines; seven integration tests in tests/wasm.rs, three of them #[ignore] for Go). It links ix-wasm, whose `wasm.run` skill registers at link time, so enabling it from any workspace member puts `ix_wasm_run` on ix-agent's MCP surface: from ix-wasm's dev-dependencies that edge also made the workspace graph cyclic, and from ix-cli's it failed parity through feature unification. Whether wasm.run belongs on the MCP surface is a separate decision; until it is taken, the gated-features CI job compiles, lints and tests the feature, and it stays dark by this check's definition.",
       "issue": "ix#393"
     }
   ]

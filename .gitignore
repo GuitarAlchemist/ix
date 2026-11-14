@@ -45,6 +45,8 @@ state/viz/
 .claude/agent-memory/
 .claude/agent-memory-local/
 .claude/scheduled_tasks.lock
+# The hooks binary, built from go/claudehooks by the session-start hook.
+.claude/hooks/bin/
 
 # Local IX scratch dir: cargo/clippy round JSONLs, decision briefs,
 # remediation snapshots, reports. Regenerable from the source.

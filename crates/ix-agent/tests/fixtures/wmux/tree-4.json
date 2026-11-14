@@ -1,0 +1,52 @@
+{
+  "tree": {
+    "type": "branch",
+    "direction": "horizontal",
+    "ratio": 0.5,
+    "children": [
+      {
+        "type": "leaf",
+        "paneId": "id-32",
+        "surfaces": [
+          {
+            "id": "id-33",
+            "type": "terminal",
+            "resolvedShell": "pwsh.exe",
+            "currentCwd": "<home>\\proj-4",
+            "customTitle": "text-14",
+            "cwd": "<home>\\proj-4",
+            "claudeSessionId": "id-34"
+          },
+          {
+            "id": "id-35",
+            "type": "markdown",
+            "markdownContent": "<dropped>",
+            "markdownFileName": "<dropped>",
+            "markdownFilePath": "<dropped>",
+            "markdownFileMtime": "<dropped>",
+            "markdownDirty": "<dropped>"
+          },
+          {
+            "id": "id-36",
+            "type": "diff"
+          }
+        ],
+        "activeSurfaceIndex": 0
+      },
+      {
+        "type": "leaf",
+        "paneId": "id-37",
+        "surfaces": [
+          {
+            "id": "id-38",
+            "type": "browser",
+            "url": "<url>",
+            "browserEngine": "<dropped>",
+            "browserHistory": "<dropped>"
+          }
+        ],
+        "activeSurfaceIndex": 0
+      }
+    ]
+  }
+}

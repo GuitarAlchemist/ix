@@ -1,7 +1,7 @@
 //! `FromValue` / `IntoValue` — the glue between native Rust types and [`Value`].
 //!
-//! Every skill argument type must implement [`FromValue`] (Value → T decode)
-//! and every skill return type must implement [`IntoValue`] (T → Value encode).
+//! Every tool argument type must implement [`FromValue`] (Value → T decode)
+//! and every tool return type must implement [`IntoValue`] (T → Value encode).
 //! Blanket impls are provided for the universal numeric/text scalars plus the
 //! `IxVector` / `IxMatrix` newtypes that carry ndarray data.
 
@@ -244,7 +244,7 @@ impl IntoValue for IxMatrix {
 }
 
 // ---------------------------------------------------------------------------
-// Unit return (skills with no meaningful output value)
+// Unit return (tools with no meaningful output value)
 // ---------------------------------------------------------------------------
 
 impl IntoValue for () {

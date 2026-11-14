@@ -31,7 +31,7 @@
           "allTargets": false
         },
         "procMacro": {
-          // Required for ix-skill-macros (#[ix_skill]) and linkme.
+          // Required for ix-tool-macros (#[ix_tool]) and linkme.
           "enable": true
         },
         "diagnostics": {

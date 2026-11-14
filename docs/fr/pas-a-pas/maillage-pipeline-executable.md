@@ -3,7 +3,7 @@
 Là où [`ix_voicing_mesh`](maillage-voicings.md) **matérialisait** un DAG d'opérateurs pour
 l'*affichage* (le vrai calcul tournait en SQL DuckDB), celui-ci construit un véritable
 `ix_pipeline::PipelineSpec`, le `lower()`-ise en `Dag`, et l'**`execute()`** via l'exécuteur
-ix-pipeline — chaque nœud est une invocation de *skill* `ix-agent` réelle. Voir le plan :
+ix-pipeline — chaque nœud est une invocation d’*outil* `ix-agent` réelle. Voir le plan :
 `docs/plans/2026-06-23-executable-pipeline-mesh.md`.
 
 > _English version: [`docs/walkthroughs/executable-pipeline-mesh.md`](../../walkthroughs/executable-pipeline-mesh.md)._
@@ -15,7 +15,7 @@ cargo run -p ix-agent --example ix_pipeline_mesh
 ## Ce que « exécutable » signifie ici
 
 La pile de pipelines IX est `PipelineSpec` (YAML ou construit en code) → `lower()` →
-`Dag<PipelineNode>` → `executor::execute`, où chaque étape invoque un **skill enregistré**
+`Dag<PipelineNode>` → `executor::execute`, où chaque étape invoque un **outil enregistré**
 (`ix-registry`). (IXQL — le DSL de gouvernance de Demerzel — exécute les pipelines de
 gouvernance avec son propre exécuteur, `ix-ixql`, et n'exécute pas ce maillage ; cf. ADR-0001.
 `ix-pipeline` est la couche de pipelines IX exécutable.)
@@ -23,7 +23,7 @@ gouvernance avec son propre exécuteur, `ix-ixql`, et n'exécute pas ce maillage
 ```text
 executable pipeline mesh — 136 stages (N=16 streams)
 lowered → 136 nodes, 240 edges, 2 levels (widest 120 — the pairwise tier)
-✓ executed 136 real skill nodes through ix_pipeline::executor (not reified)
+✓ executed 136 real tool nodes through ix_pipeline::executor (not reified)
 ```
 
 La forme (Option C du plan) :
@@ -63,7 +63,7 @@ au moment de la construction** car les poids sont des valeurs d'exécution.
 Le maillage exécutable est donc l'**étage par paires** (les 100+ nœuds qui tournent
 réellement), et l'agrégation seuillée/de centralité est calculée localement à partir des
 sorties exécutées. Une centralité pondérée/seuillée *dans* le pipeline nécessiterait un
-skill de réduction dédié (Option A du plan) — reporté, car cela figerait un contrat de skill
+outil de réduction dédié (Option A du plan) — reporté, car cela figerait un contrat d’outil
 public.
 
 ## Portée et réserves

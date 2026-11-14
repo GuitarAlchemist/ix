@@ -1,6 +1,6 @@
-# `mesh_correlate` — the in-pipeline correlation-mesh fan-in skill
+# `mesh_correlate` — the in-pipeline correlation-mesh fan-in tool
 
-A registered `ix-agent` skill (`#[ix_skill] name = "mesh_correlate"`) that turns N series
+A registered `ix-agent` tool (`#[ix_tool] name = "mesh_correlate"`) that turns N series
 into a correlation graph **inside an executable pipeline**, computing centrality where a
 spec otherwise couldn't.
 
@@ -21,7 +21,7 @@ mesh_correlate({ series: [[…],[…],…], threshold: τ })
 ```
 
 It wraps `ix_math::inference::pearson` + `ix_graph::graph::Graph` (`betweenness_centrality`,
-`connected_components`) — no new algorithm, just the fan-in shape as a skill.
+`connected_components`) — no new algorithm, just the fan-in shape as a tool.
 
 ## In a pipeline
 
@@ -51,7 +51,7 @@ through the pipeline like any other stage output.
   explicit mesh DAG vs. in-pipeline centrality.
 - The example passes streams to `mesh_correlate` directly rather than through N per-stream
   cond stages, because the obvious cond (`autocorrelation`) distorts correlation (every ACF
-  shares the lag-0 = 1 spike). A correlation-preserving *identity* cond skill would restore
+  shares the lag-0 = 1 spike). A correlation-preserving *identity* cond tool would restore
   the N-per-stream-pipeline shape — a follow-up.
 - A betweenness hub needs **hub-and-spoke** structure; a set of mutually-correlated streams
   is a clique with no hub (the same lesson as the voicing mesh).

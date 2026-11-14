@@ -8,7 +8,7 @@
 //! could smuggle an unreviewed operation past a template-time check.
 //!
 //! `ix-pipeline` stays governance-agnostic: it defines the seam but ships no
-//! policy. Callers inject whatever gate they want (e.g. `ix-skill` supplies a
+//! policy. Callers inject whatever gate they want (e.g. `ix-cli` supplies a
 //! Demerzel-constitution-backed gate); the default [`AllowAll`] is a no-op so
 //! existing `lower()` callers are unaffected.
 

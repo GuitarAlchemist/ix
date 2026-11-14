@@ -12,7 +12,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/governance-check.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" governance-check"
           }
         ]
       },
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/pipeline-validate.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" pipeline-validate"
           }
         ]
       }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/precompact-digest.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" precompact-digest"
           }
         ]
       }
@@ -41,7 +41,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/sessionstart-digest.sh"
+            "command": "go -C \"$CLAUDE_PROJECT_DIR/go/claudehooks\" run ./cmd/ix-hooks session-start",
+            "timeout": 120
           }
         ]
       }
@@ -51,11 +52,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/digest-staleness-nudge.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" digest-staleness-nudge"
           },
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/correction-detector.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" correction-detector"
           }
         ]
       }
@@ -66,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/rust-check.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" rust-check"
           }
         ]
       },
@@ -75,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/digest-activity-tracker.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" digest-activity-tracker"
           }
         ]
       },
@@ -84,7 +85,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/pr-rationale-capture.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" pr-rationale-capture"
           }
         ]
       }
@@ -94,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/digest-stop-finalize.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" digest-stop-finalize"
           }
         ]
       }
@@ -135,7 +136,20 @@
       "mcp__ga__ga_chord_intervals",
       "mcp__ga__ga_set_class_subs",
       "mcp__ga__ga_chord_to_set",
-      "mcp__notebooklm__get_health"
+      "mcp__notebooklm__get_health",
+      "PowerShell(wmux ping)",
+      "PowerShell(wmux browser get-text*)",
+      "mcp__ga-chatbot__chord_diagram",
+      "mcp__session-inbox__group_list",
+      "mcp__ga__ga_common_tones",
+      "mcp__ga__ga_search_voicings",
+      "mcp__ga__ga_parse_chord",
+      "mcp__ga__ga_transpose_chord",
+      "mcp__ga__get_key_signature_info",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__list_pages",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_take_screenshot"
     ]
   }
 }

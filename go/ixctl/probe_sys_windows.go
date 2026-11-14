@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"runtime"
 	"unsafe"
 
@@ -61,3 +62,23 @@ func (memProbe) sample() (map[string]any, error) {
 }
 
 func cpuCores() int { return runtime.NumCPU() }
+
+// procStartMs is the creation time of process pid, in Unix milliseconds: what tells the
+// process a session started from apart from a later one given the same pid. An exited process
+// (its object kept alive by a handle elsewhere) is refused.
+func procStartMs(pid int) (int64, error) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(h)
+	// Signalled means exited; an exit code is no proof of life (a process may exit with 259).
+	if ev, err := windows.WaitForSingleObject(h, 0); err != nil || ev != uint32(windows.WAIT_TIMEOUT) {
+		return 0, fmt.Errorf("process %d has exited", pid)
+	}
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return created.Nanoseconds() / 1e6, nil
+}

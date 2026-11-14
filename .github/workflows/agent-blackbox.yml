@@ -37,6 +37,37 @@ jobs:
           # already sets submodules) and locally — a false risk-report verdict.
           submodules: recursive
 
+      # The label attests a review of the PR's changes to the policy's blocked and one-way paths. A push that
+      # changes them, or that cannot be compared with the head before it, takes it off until the next review.
+      # It runs first, so no failing step skips it, and once per push: a re-run replays an old push and would
+      # take off a label applied since. It catches a label outliving a push, not a hostile PR, which can edit
+      # this step away (that would need pull_request_target). A DELETE that fails fails the job: the label may
+      # still be on.
+      - name: Withdraw the review label on a push that changes protected paths
+        if: github.event.action == 'synchronize' && github.run_attempt == 1
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/review_label_guard.py --base "$BASE_SHA" --before "$BEFORE_SHA" --after "$AFTER_SHA"
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            exit 0
+          fi
+          label=agent-blackbox-reviewed
+          labeled="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" --jq "any(.[]; .name == \"$label\")" 2>/dev/null || echo unknown)"
+          if [ "$labeled" = false ]; then
+            exit 0
+          fi
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/${label}" > /dev/null
+          echo "::notice title=Agent Blackbox::this push changes the protected paths that were reviewed; $label is off until the next review"
+
       - name: Checkout Agent Blackbox
         uses: actions/checkout@v4
         with:
@@ -45,12 +76,39 @@ jobs:
           path: .agent-blackbox
           token: ${{ secrets.AGENT_BLACKBOX_TOKEN || github.token }}
 
+      # What the PR changes is the test merge against its first parent: the base branch as it
+      # is now. `pull_request.base.sha` is the base when the PR was last pushed; diffing from
+      # it adds every commit main took since, so #507 (go/ixctl only) was reported as
+      # changing ci.yml and failed as a blocked path. If the test merge is not the merge of
+      # this head, the changeset cannot be established and the job fails: it never guesses.
+      - name: Establish the changeset of this PR
+        shell: bash
+        env:
+          MERGE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p dist
+          fail() { echo "::error title=Agent Blackbox::cannot establish what this PR changes: $1"; exit 1; }
+          parents="$(git rev-list --parents -n 1 "$MERGE_SHA")" || fail "$MERGE_SHA is not a commit of this checkout"
+          set -- $parents
+          if [ "$#" -ne 3 ]; then
+            fail "$MERGE_SHA has $(($# - 1)) parent(s); a test merge has two"
+          fi
+          base="$2"
+          if [ "$3" != "$HEAD_SHA" ]; then
+            fail "the test merge $MERGE_SHA merges $3, not this PR's head $HEAD_SHA"
+          fi
+          # --no-renames: a moved file is listed under both names, so moving a protected
+          # file away does not take its old path out of the list.
+          git diff --no-renames --name-only "$base" "$MERGE_SHA" > dist/changed-files.txt
+          git diff --no-renames "$base" "$MERGE_SHA" > dist/diff.patch
+          printf '{"base_sha":"%s","head_sha":"%s","merge_sha":"%s"}\n' "$base" "$HEAD_SHA" "$MERGE_SHA" > dist/changeset.json
+          echo "changeset: base $base, head $HEAD_SHA, merge $MERGE_SHA, $(wc -l < dist/changed-files.txt) file(s)"
+
       - name: Collect PR evidence
         shell: bash
         run: |
           mkdir -p dist
-          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/changed-files.txt
-          git diff "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/diff.patch
           if [ -n "${IX_BLAST_RADIUS_BUILD_COMMAND:-}" ]; then
             bash -lc "$IX_BLAST_RADIUS_BUILD_COMMAND"
           fi
@@ -87,7 +145,7 @@ jobs:
                   tool="git.diff",
                   status="ok",
                   path="dist/changed-files.txt",
-                  data={"changed_file_count": len(changed_files)},
+                  data={"changed_file_count": len(changed_files), **json.loads(Path("dist/changeset.json").read_text(encoding="utf-8"))},
               ),
               event(
                   event="verification",
@@ -191,6 +249,9 @@ jobs:
           name: agent-blackbox-risk-report
           path: dist/
 
+      # `enforce` is enforce() in cli/agent_blackbox.py at AGENT_BLACKBOX_REF: it prints "Agent Blackbox verdict:
+      # <verdict>" and exits 1 on fail, 0 on warn or pass, and 2 with "Agent Blackbox verdict is invalid or
+      # missing" otherwise. A crash exits 1 with a traceback and no verdict line.
       - name: Enforce verdict
         shell: bash
         env:

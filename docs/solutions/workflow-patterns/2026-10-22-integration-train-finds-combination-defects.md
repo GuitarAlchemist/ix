@@ -66,5 +66,5 @@ job only runs on events a PR does not produce:
   check); revert those rather than widen the diff.
 - Give the train's worktree a `CARGO_TARGET_DIR` of its own. Shared with a worktree of `main`,
   cargo served one the other's rlibs (path crates hash to the same artifact in both), and
-  `cargo build -p ix-skill` failed with E0432 on a function the train has, while `cargo check`
+  `cargo build -p ix-cli` failed with E0432 on a function the train has, while `cargo check`
   passed.

@@ -154,7 +154,7 @@ implementations.
 
 ### Crate Layout
 
-**(deepen-plan refinement)**: layout flattened per workspace conventions. `ix-bracelet` (9 sibling files, no subdirs) and `ix-quality-trend` (4 modules, flat) are the templates; the brainstorm's `targets/` subdir was an accidental divergence. Test files collapsed from 6 → 3 thematic files matching `ix-skill`'s pattern.
+**(deepen-plan refinement)**: layout flattened per workspace conventions. `ix-bracelet` (9 sibling files, no subdirs) and `ix-quality-trend` (4 modules, flat) are the templates; the brainstorm's `targets/` subdir was an accidental divergence. Test files collapsed from 6 → 3 thematic files matching `ix-cli`'s pattern.
 
 ```
 crates/ix-autoresearch/
@@ -629,7 +629,7 @@ Dependencies below).
 
 #### Phase 3: CLI binary + MCP wrapper
 
-- `src/bin/ix-autoresearch.rs` with clap multi-verb (`ix-skill` template, `crates/ix-skill/src/main.rs:11-100`):
+- `src/bin/ix-autoresearch.rs` with clap multi-verb (`ix-cli` template, `crates/ix-cli/src/main.rs:11-100`):
   - `run --target <C|B|A> --iterations <N> --strategy <Greedy|SA> --seed <S> [--soft <secs>] [--hard <secs>]`
   - `list` — show `state/autoresearch/runs/` with summary stats per run
   - `promote <run-id> --note <slug>` — copy `runs/<id>/` to `milestones/<date>-<target>-<slug>/`
@@ -1101,7 +1101,7 @@ The accepted simplifications are already in the layout/trait sections above. The
   - `crates/ga-chatbot/src/qa.rs:102, 254-262` — hardcoded thresholds to be parametrized (Target B).
   - `crates/ix-optick-invariants/src/main.rs` — invariant runner output schema (Target A).
 - Surface patterns:
-  - `crates/ix-skill/src/main.rs:11-100` — multi-verb CLI template.
+  - `crates/ix-cli/src/main.rs:11-100` — multi-verb CLI template.
   - `crates/ix-quality-trend/src/main.rs:14-105` — single-verb CLI + JSON artifact pattern.
   - `crates/ix-agent/src/{handlers.rs:5012-5095, tools.rs:2387-2462}` (commit 5b31e30) — recent MCP tool registration template.
   - `crates/ix-agent/tests/parity.rs:20` — parity allowlist.

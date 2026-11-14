@@ -236,11 +236,26 @@ fn the_enforce_step_takes_nothing_from_the_event_but_the_pr_number() {
     let types = wf["on"]["pull_request"]["types"]
         .as_sequence()
         .expect("pull_request types");
-    assert!(
-        types.iter().any(|t| t.as_str() == Some("ready_for_review")),
-        "marking a PR ready must run the gate again"
-    );
+    // Each change the step reads must run it again, or the last result outlives the change: a push, the label
+    // applied or removed, the PR marked ready or reopened.
+    for t in [
+        "synchronize",
+        "labeled",
+        "unlabeled",
+        "ready_for_review",
+        "reopened",
+    ] {
+        assert!(
+            types.iter().any(|x| x.as_str() == Some(t)),
+            "`{t}` must run the gate again"
+        );
+    }
     let step = enforce_step();
+    assert_eq!(
+        step["shell"].as_str(),
+        Some("bash"),
+        "the step runs under bash, as the test runs it"
+    );
     let env = step["env"].as_mapping().expect("the enforce step's env");
     assert_eq!(
         step["env"]["PR_NUMBER"].as_str(),
@@ -285,13 +300,14 @@ fn bash() -> PathBuf {
     "bash".into()
 }
 
-/// `gh api repos/<repo>/pulls/<n> --jq ...` answers the live PR from `STUB_*`; nothing else is expected.
+/// `gh api repos/<repo>/pulls/<n> --jq <filter>` answers the live PR from `STUB_*`, for the two exact filters
+/// only: an inverted or edited filter is unexpected, which the step reads as unlabeled and ready.
 const GH: &str = r#"#!/bin/bash
-[ "$1 $2" = "api repos/GuitarAlchemist/ix/pulls/429" ] || { echo "unexpected: gh $*" >&2; exit 2; }
+[ "$1 $2 $3" = "api repos/GuitarAlchemist/ix/pulls/429 --jq" ] && [ $# = 4 ] || { echo "unexpected: gh $*" >&2; exit 2; }
 [ -z "$STUB_GH_DOWN" ] || exit 1
-case "$*" in
-  *labels*) echo "$STUB_LABELED" ;;
-  *.draft*) echo "$STUB_DRAFT" ;;
+case "$4" in
+  'any(.labels[]; .name == "agent-blackbox-reviewed")') echo "$STUB_LABELED" ;;
+  '.draft') echo "$STUB_DRAFT" ;;
   *) echo "unexpected: gh $*" >&2; exit 2 ;;
 esac
 "#;

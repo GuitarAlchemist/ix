@@ -1,0 +1,50 @@
+{
+  "tree": {
+    "type": "branch",
+    "direction": "horizontal",
+    "ratio": 0.5,
+    "children": [
+      {
+        "type": "leaf",
+        "paneId": "id-60",
+        "surfaces": [
+          {
+            "id": "id-61",
+            "type": "terminal",
+            "customTitle": "text-19",
+            "claudeSessionId": "id-62",
+            "resolvedShell": "pwsh.exe",
+            "currentCwd": "<home>\\proj-9",
+            "cwd": "<home>\\proj-9"
+          },
+          {
+            "id": "id-63",
+            "type": "terminal",
+            "claudeSessionId": "id-64",
+            "resolvedShell": "pwsh.exe",
+            "currentCwd": "<home>\\proj-9",
+            "cwd": "<home>\\proj-9"
+          },
+          {
+            "id": "id-65",
+            "type": "diff"
+          }
+        ],
+        "activeSurfaceIndex": 0
+      },
+      {
+        "type": "leaf",
+        "paneId": "id-66",
+        "surfaces": [
+          {
+            "id": "id-67",
+            "type": "browser",
+            "url": "<url>",
+            "browserHistory": "<dropped>"
+          }
+        ],
+        "activeSurfaceIndex": 0
+      }
+    ]
+  }
+}

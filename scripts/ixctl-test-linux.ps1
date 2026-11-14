@@ -1,4 +1,4 @@
-# Runs the ixctl Go suite on a Linux kernel from Windows, through WSL, the way CI's ixctl-go
+# Runs the ixctl Go suite on a Linux kernel from Windows, through WSL, the way CI's go-modules
 # (ubuntu-latest) row does: `go vet`, then `go test -race` (cgo on, gcc in the distro).
 #
 # Why: the suite passes on Windows and can still fail on Linux. The first CI run of PR #423 lost two
@@ -41,7 +41,7 @@ $q = { param($s) "'" + $s.Replace("'", "'\''") + "'" }
 $runFlag = if ($Run) { "-run " + (& $q $Run) } else { '' }
 # Go is called by its path: the distro's PATH holds the Windows one too, with spaces and parentheses
 # bash will not take unquoted. The module cache lives in the distro, the sources on /mnt/c.
-# `./...` as CI's ixctl-go job (ci.yml), so a subpackage added later is covered here too.
+# `./...` as CI's go-modules job (ci.yml), so a subpackage added later is covered here too.
 $go = '/usr/local/go/bin/go'
 $cmd = "export CGO_ENABLED=$cgo; cd " + (& $q $linux) + " && $go version && $go vet ./... && $go test $race -timeout $Timeout -count=$Count $runFlag ./..."
 Write-Host "wsl -d $Distro -- bash -lc `"$cmd`""

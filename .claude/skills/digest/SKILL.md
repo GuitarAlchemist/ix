@@ -9,9 +9,9 @@ karpathy_rules: [R1-think-before-coding, R4-goal-driven-execution]
 # /digest
 
 Captures the **meaningful state of the current session** to
-`state/digests/latest.md`. The `.claude/hooks/sessionstart-digest.sh` hook
-reads it on the next session start and emits it as `additionalContext` for
-the model. Pairs with `.claude/hooks/precompact-digest.sh` which provides
+`state/digests/latest.md`. The `session-start` hook (`go/claudehooks`, the `ix-hooks`
+program) reads it on the next session start and emits it as `additionalContext` for
+the model. Pairs with the `precompact-digest` hook, which provides
 a metadata-only fallback when /digest isn't invoked before auto-compaction.
 
 ## When to run
@@ -81,7 +81,7 @@ When a prior digest exists, this section reports the status delta:
 4. Synthesize content; derive 1–3 testable `success_criteria` from Next action.
 5. Write to `state/digests/latest.md`. Set `trigger: digest-skill` + `last_model_update`.
 6. `rm -f state/digests/.activity-counter` to reset the staleness nudge.
-7. Validate: `bash .claude/hooks/digest-validate.sh`. Non-zero = fix.
+7. Validate: `"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks" digest-validate` (or `go -C go/claudehooks run ./cmd/ix-hooks digest-validate`). Non-zero = fix.
 8. Report: `Digest updated: <branch>@<sha> · next: <one-line> · criteria: <N>`.
 
 ## Driving criteria autonomously with `/goal`
@@ -114,5 +114,5 @@ evidence.
 
 - `/learnings` — captures surprises into `docs/solutions/`.
 - `/correct` — captures user corrections as permanent `CLAUDE.md` rules.
-- `.claude/hooks/{precompact,sessionstart}-digest.sh` — auto-fallback + read-back.
+- `go/claudehooks` (`ix-hooks precompact-digest`, `ix-hooks session-start`) — auto-fallback + read-back.
 - `state/digests/README.md` — directory layout.

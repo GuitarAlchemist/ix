@@ -469,3 +469,237 @@ func TestAListWithoutACursorOrAnIdentityIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// cursorList is a probe list read with its cursor, as the link reads it.
+type cursorList struct {
+	Cursor struct {
+		Seq   uint64 `json:"seq"`
+		Epoch string `json:"epoch"`
+	} `json:"cursor"`
+	Nodes []struct {
+		Name       string `json:"name"`
+		State      string `json:"state"`
+		Export     bool   `json:"export"`
+		CreatedSeq uint64 `json:"created_seq"`
+	} `json:"nodes"`
+}
+
+// listAt reads in's probe list with its cursor and returns it with the named node's created_seq
+// and state (zero and empty when the list does not have it).
+func listAt(t *testing.T, in *instance, name string) (list cursorList, created uint64, state string) {
+	t.Helper()
+	raw, err := probeOp(t, in.plane, Request{Op: "probe.list", WithCursor: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range list.Nodes {
+		if n.Name == name {
+			created, state = n.CreatedSeq, n.State
+		}
+	}
+	return list, created, state
+}
+
+// Criterion 3 of ix#408, the snapshot taken while a leaf is `stopping` (D4 ix#402 Q9: the one
+// documented inversion is a leaf's probe.stopped, published after its loop ends, outside the
+// lock, "with `stopping` exposed in the snapshot so the reader expects the event after `head`").
+// Here the exported, wanted leaf's stop is in progress on the peer when the link attaches: the
+// list the link reads says `stopping` and stands at a cursor before the probe.stopped; the link
+// mirrors the pipe under the incarnation the list names and is reconciled while the stop is
+// still in progress; once the read ends, the probe.stopped crosses on the mirrored ctl once,
+// with a source seq past the cursor, and the pipe keeps its identity.
+func TestALinkAttachedWhileALeafIsStoppingReadsItsStopAfterTheCursor(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	blk := blockKind(t)
+	p, epoch := b.plane, b.plane.Epoch()
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("cpu", "block@1", 10, map[string]any{"export": true})}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "cpu"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-blk.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the read never started")
+	}
+	stopped := make(chan error, 1)
+	go func() {
+		_, err := probeOp(t, p, Request{Op: "probe.stop", Node: "cpu"})
+		stopped <- err
+	}()
+	waitListed(t, p, "cpu", probeStopping)
+	list, created, state := listAt(t, b, "cpu")
+	if state != probeStopping || created == 0 || list.Cursor.Epoch != epoch || list.Cursor.Seq < created {
+		t.Fatalf("the list during the stop: cpu %s created at %d, cursor %+v, want stopping at a cursor of %s", state, created, list.Cursor, epoch)
+	}
+
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"cpu"}}, NewHub("a"))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go l.run(ctx)
+	st := waitLinkStatus(t, l, func(st PeerStatus) bool {
+		return st.State == "up" && st.Reconciled && st.Probes[0].State == pipeMirrored
+	})
+	if id := st.Probes[0]; id.CreatedSeq != created || id.SrcEpoch != epoch {
+		t.Fatalf("the pipe of a stopping leaf: %+v, want the incarnation created at %d of %s", id, created, epoch)
+	}
+	l.mu.Lock()
+	cursor := l.cursor
+	l.mu.Unlock()
+	select {
+	case err := <-stopped:
+		t.Fatalf("the stop ended (err %v) before the link had read its list: the snapshot was not taken while stopping", err)
+	default:
+	}
+	if _, _, now := listAt(t, b, "cpu"); now != probeStopping {
+		t.Fatalf("cpu is %s once the link is reconciled, want still stopping", now)
+	}
+	if cursor.epoch != epoch || cursor.seq < list.Cursor.Seq {
+		t.Fatalf("the link's snapshot stands at %+v, want %s at or past %d", cursor, epoch, list.Cursor.Seq)
+	}
+
+	close(blk.release)
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stop did not return once the read had ended")
+	}
+	var said *Envelope
+	for said == nil {
+		e := nextEnvWithin(t, cur, 5*time.Second)
+		if e.Ch != "peer/b/ctl" || dataOf(e)["node"] != "cpu" {
+			continue
+		}
+		if e.Ev.Kind != "probe.stopped" {
+			t.Fatalf("the mirrored ctl said %s of cpu: the list held it at its cursor, only the stop follows", e.Raw())
+		}
+		said = e
+	}
+	if said.SrcSeq <= cursor.seq || said.SrcEpoch != epoch || said.Origin != "b" {
+		t.Fatalf("the mirrored probe.stopped is %s, want b's envelope of %s past the snapshot's cursor %d", said.Raw(), epoch, cursor.seq)
+	}
+	st = waitLinkStatus(t, l, func(st PeerStatus) bool { return st.Reconciled && st.Live && !st.Degraded })
+	if id := st.Probes[0]; id.State != pipeMirrored || id.CreatedSeq != created || id.SrcEpoch != epoch {
+		t.Fatalf("the pipe after the stop: %+v, want the same incarnation still mirrored (a stopped node is still there)", id)
+	}
+	if _, _, now := listAt(t, b, "cpu"); now != probeStopped {
+		t.Fatalf("cpu is %s after its probe.stopped", now)
+	}
+}
+
+// Criteria 3 and 4 of ix#408: a node present before the link attaches, and the peer restarted
+// while the parent was not attached (D4 ix#402 Q5, Q6, Q9). The exported, wanted node exists on
+// the peer before the link's first session, and again, as another incarnation of a new boot,
+// before its second: the link never sees a probe.created of it, so each time the identity it
+// mirrors under (`created_seq`, `src_epoch` on the status) can only come from the cursor-bound
+// list. Across the restart the mirrored ctl says `epoch-changed`, old boot to new, before
+// anything of the new boot; the pipe's live start names the new boot and the last frame mirrored
+// of the old one; the two series are never merged (the identity changes with the boot).
+func TestAPeerRestartedWhileTheLinkWasDownIsReconciledFromANewSnapshot(t *testing.T) {
+	dirB := t.TempDir()
+	specB := fakeSpec(t, "b", nil)
+	b := newTestInstance(t, specB, dirB)
+	epoch1 := b.plane.Epoch()
+	export := map[string]any{"export": true}
+	c1 := dial(t, b)
+	do(t, c1, Request{Op: "probe.create", Probe: node("cpu", "heartbeat@1", 10, export)})
+	do(t, c1, Request{Op: "probe.start", Node: "cpu"})
+	_, created1, _ := listAt(t, b, "cpu")
+
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"cpu"}}, NewHub("a"))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	mirrored := func(epoch string) func(PeerStatus) bool {
+		return func(st PeerStatus) bool {
+			return st.State == "up" && st.Live && st.Reconciled && !st.Degraded && st.Probes[0].State == pipeMirrored && st.Probes[0].SrcEpoch == epoch
+		}
+	}
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	go l.run(ctx1)
+	if id := waitLinkStatus(t, l, mirrored(epoch1)).Probes[0]; id.CreatedSeq != created1 {
+		t.Fatalf("a node present before the attach: %+v, want the incarnation created at %d of %s", id, created1, epoch1)
+	}
+	// The first session: the pipe opens with its live-start marker, then b's samples; no
+	// probe.created of cpu ever crossed.
+	var lastOld uint64
+	for first := true; lastOld == 0; {
+		e := nextEnvWithin(t, cur, 5*time.Second)
+		switch {
+		case e.Ev.Kind == "probe.created":
+			t.Fatalf("a probe.created crossed for a node present before the attach: %s", e.Raw())
+		case e.Ch != "peer/b/probe/cpu":
+		case first:
+			if g := gapOf(t, e); g.Reason != "live-start" || g.SrcEpoch != epoch1 || g.LastSrcSeq != 0 {
+				t.Fatalf("the pipe's first envelope: %s, want the live start of %s with nothing mirrored before", e.Raw(), epoch1)
+			}
+			first = false
+		case e.Ev.Kind == "sample":
+			if e.SrcEpoch != epoch1 {
+				t.Fatalf("a sample of %s, want %s", e.SrcEpoch, epoch1)
+			}
+			lastOld = e.SrcSeq
+		}
+	}
+
+	// The peer restarts while the parent is not attached; its tree is not persisted, so the same
+	// name is created again on the new boot, after another node so that its created_seq differs.
+	cancel1()
+	waitLink(t, l, "down")
+	b.close()
+	b2 := newTestInstance(t, specB, dirB)
+	epoch2 := b2.plane.Epoch()
+	c2 := dial(t, b2)
+	do(t, c2, Request{Op: "probe.create", Probe: node("pad", "heartbeat@1", 1000, nil)})
+	do(t, c2, Request{Op: "probe.create", Probe: node("cpu", "heartbeat@1", 10, export)})
+	do(t, c2, Request{Op: "probe.start", Node: "cpu"})
+	_, created2, _ := listAt(t, b2, "cpu")
+	if epoch2 == epoch1 || created2 == created1 || created2 == 0 {
+		t.Fatalf("the second incarnation is %d of %s, the first was %d of %s: the test cannot tell them apart", created2, epoch2, created1, epoch1)
+	}
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go l.run(ctx2)
+	if id := waitLinkStatus(t, l, mirrored(epoch2)).Probes[0]; id.CreatedSeq != created2 {
+		t.Fatalf("after the restart: %+v, want the incarnation created at %d of %s, from the new snapshot", id, created2, epoch2)
+	}
+	boundary, started := false, false
+	for done := false; !done; {
+		e := nextEnvWithin(t, cur, 5*time.Second)
+		switch {
+		case e.Ev.Kind == "probe.created":
+			t.Fatalf("a probe.created crossed: the identity was to come from the snapshot alone: %s", e.Raw())
+		case e.Ch == "peer/b/ctl" && e.Ev.Kind == linkGapKind && dataOf(e)["reason"] == "epoch-changed":
+			if g := gapOf(t, e); boundary || g.SrcEpoch != epoch2 || g.LastSrcEpoch != epoch1 || e.Origin != "a" || e.SrcSeq != 0 {
+				t.Fatalf("the boundary: %s (already marked: %v), want one epoch-changed of the parent's own from %s to %s", e.Raw(), boundary, epoch1, epoch2)
+			}
+			boundary = true
+		case e.SrcEpoch == epoch2 && !boundary:
+			t.Fatalf("an envelope of the new boot before the epoch-changed marker: %s", e.Raw())
+		case e.Ch != "peer/b/probe/cpu":
+		case e.SrcEpoch == epoch1: // what the first session mirrored after the sample read above
+			lastOld = e.SrcSeq
+		case !started:
+			if g := gapOf(t, e); g.Reason != "live-start" || g.SrcEpoch != epoch2 || g.LastSrcEpoch != epoch1 || g.LastSrcSeq != lastOld {
+				t.Fatalf("the pipe's live start after the restart: %s, want %s after frame %d of %s", e.Raw(), epoch2, lastOld, epoch1)
+			}
+			started = true
+		case e.Ev.Kind == "sample":
+			if e.SrcEpoch != epoch2 {
+				t.Fatalf("a sample of %s after the live start of %s", e.SrcEpoch, epoch2)
+			}
+			done = true
+		}
+	}
+	if !boundary {
+		t.Fatal("the new boot's samples crossed without an epoch-changed marker")
+	}
+}

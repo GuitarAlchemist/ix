@@ -1,0 +1,58 @@
+{
+  "tree": {
+    "type": "branch",
+    "direction": "horizontal",
+    "ratio": 0.5,
+    "children": [
+      {
+        "type": "leaf",
+        "paneId": "id-72",
+        "surfaces": [
+          {
+            "id": "id-73",
+            "type": "terminal",
+            "resolvedShell": "pwsh.exe",
+            "currentCwd": "<home>\\proj-11",
+            "cwd": "<home>\\proj-11",
+            "claudeSessionId": "id-74"
+          },
+          {
+            "id": "id-75",
+            "type": "diff"
+          },
+          {
+            "id": "id-76",
+            "type": "markdown",
+            "markdownContent": "<dropped>",
+            "markdownFileName": "<dropped>",
+            "markdownFilePath": "<dropped>",
+            "markdownFileMtime": "<dropped>",
+            "markdownDirty": "<dropped>"
+          },
+          {
+            "id": "id-77",
+            "type": "markdown",
+            "markdownContent": "<dropped>",
+            "markdownFileName": "<dropped>",
+            "markdownFilePath": "<dropped>",
+            "markdownFileMtime": "<dropped>",
+            "markdownDirty": "<dropped>"
+          }
+        ],
+        "activeSurfaceIndex": 0
+      },
+      {
+        "type": "leaf",
+        "paneId": "id-78",
+        "surfaces": [
+          {
+            "id": "id-79",
+            "type": "browser",
+            "url": "<url>"
+          }
+        ],
+        "activeSurfaceIndex": 0
+      }
+    ]
+  }
+}

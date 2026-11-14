@@ -64,7 +64,7 @@ it — not the local tests.
 
 ### Break 5 is the trap
 
-`ix-skill`'s test asserted `proceed_autonomously.is_number()`, which now failed
+`ix-cli`'s test asserted `proceed_autonomously.is_number()`, which now failed
 because the value was the string `"ref:confidence#autonomous"`. The tempting fix
 is to relax the assertion to accept a string. That turns CI green while shipping
 a real defect: `ix describe policy alignment` would print the raw token to a

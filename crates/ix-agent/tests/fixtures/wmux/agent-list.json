@@ -1,0 +1,16 @@
+{
+  "agents": [
+    {
+      "agentId": "id-80",
+      "surfaceId": "id-81",
+      "paneId": "id-82",
+      "workspaceId": "id-83",
+      "label": "text-21",
+      "cmd": "<cmd>",
+      "status": "exited",
+      "spawnTime": 1792941254731,
+      "pid": 132984,
+      "exitCode": 1
+    }
+  ]
+}

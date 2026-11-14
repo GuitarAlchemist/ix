@@ -6,7 +6,7 @@ primitives as Claude Code tools. Binary: `ix-mcp`.
 This README is intentionally short — it documents only the things that
 matter when **operating** the server (start, env vars, scopes). For the
 internal architecture, read `src/main.rs` (dispatcher), `src/tools.rs`
-(registry), and `src/registry_bridge.rs` (skill ↔ MCP adapter).
+(registry), and `src/registry_bridge.rs` (tool ↔ MCP adapter).
 
 ## Quick start
 
