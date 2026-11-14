@@ -1,4 +1,4 @@
-const CACHE = 'ix-workshop-shell-c541267158e62d63';
+const CACHE = 'ix-workshop-shell-670f8c1a14e2c4aa';
 const SHELL = ['/workshop/', '/workshop/style.css', '/workshop/app.js', '/workshop/sync.js', '/workshop/voice.js', '/workshop/updates.js', '/workshop/branding.json', '/workshop/vendor/i18next.min.js', '/workshop/manifest.webmanifest', '/workshop/icon-192.png', '/workshop/icon-512.png'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
 self.addEventListener('activate', event => event.waitUntil((async () => {
