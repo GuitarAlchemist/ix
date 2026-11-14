@@ -50,7 +50,7 @@ Le modèle de résultat est `HashMap<String, serde_json::Value>` — **les sorti
   - Pas de schémas JSON Schema par outil dans le registre (chaque serveur renvoie son propre `inputSchema` au runtime via `tools/list`, mais rien n'est validé au design-time).
   - Pas de CI de compatibilité : un renommage côté `tars` casserait silencieusement les appels `ix_tars_bridge`.
   - Les bridges sont unidirectionnels (ix appelle tars/ga, aucun retour).
-- **Inventaire** : 52 crates au total (le CLAUDE.md disait 32 — drift documentation/réalité) dont ~33 algorithmes et ~15 crates de plomberie (`ix-agent`, `ix-cache`, `ix-governance`, `ix-registry`, `ix-types`, `ix-context`, `ix-session`, `ix-memory`, `ix-skill`, `ix-code`, `ix-loop-detect`, `ix-approval`, `ix-pipeline`, plus les harnais tars/cargo/ga/github/signing/clippy).
+- **Inventaire** : 52 crates au total (le CLAUDE.md disait 32 — drift documentation/réalité) dont ~33 algorithmes et ~15 crates de plomberie (`ix-agent`, `ix-cache`, `ix-governance`, `ix-registry`, `ix-types`, `ix-context`, `ix-session`, `ix-memory`, `ix-cli`, `ix-code`, `ix-loop-detect`, `ix-approval`, `ix-pipeline`, plus les harnais tars/cargo/ga/github/signing/clippy).
 
 ### 2.4 Démos produits dans `target/demo/*`
 

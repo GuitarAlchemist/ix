@@ -245,7 +245,7 @@ for (idx, score) in &top_5 {
 ```
 Guitar Alchemist (.NET)
     │
-    ├─ calls via subprocess ─→ ix-skill CLI (Rust)
+    ├─ calls via subprocess ─→ ix-cli CLI (Rust)
     │                            ├── mcts_search
     │                            ├── genetic_algorithm
     │                            ├── wavelet_analysis
@@ -255,7 +255,7 @@ Guitar Alchemist (.NET)
     └─ or via MCP server ────→ ix MCP tools
 ```
 
-TARS's `MachinBridge.fs` already supports calling `cargo run -p ix-skill` with JSON I/O, providing a ready bridge between the .NET and Rust worlds.
+TARS's `MachinBridge.fs` already supports calling `cargo run -p ix-cli` with JSON I/O, providing a ready bridge between the .NET and Rust worlds.
 
 ## Algorithms Used
 

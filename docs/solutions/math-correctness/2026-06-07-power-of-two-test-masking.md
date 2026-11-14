@@ -11,7 +11,7 @@ root_cause: "ix-signal's rfft zero-pads each frame to the next power of two, and
 
 ## Problem
 
-Wrapping `ix-signal` algorithms as catalog skills (`spectrogram`,
+Wrapping `ix-signal` algorithms as catalog tools (`spectrogram`,
 `wavelet_denoise`), the unit tests all passed and a live pipeline run produced
 plausible output. An adversarial review (numerical-correctness lens) probed
 inputs the tests didn't and found two real bugs:
@@ -29,7 +29,7 @@ inputs the tests didn't and found two real bugs:
    `haar_forward` uses `n = signal.len() / 2` (integer division, dropping the
    last sample of an odd-length block); multi-level decomposition compounds it.
    A length-15 signal at `levels=1` came back length **14**; length-13 at
-   `levels=3` came back length **8**. The skill's `@ai:invariant` and output
+   `levels=3` came back length **8**. The tool's `@ai:invariant` and output
    schema both claimed "same length as the input." A caller doing element-wise
    comparison to the original signal gets a silently misaligned array.
 
@@ -69,7 +69,7 @@ add tests that encode the reviewer's exact counterexamples.
   pass if length-preservation broke for odd inputs — the test couldn't fail.
   Either narrow the claim to what the test covers, or add the edge-case test.
 - **This is exactly what adversarial review buys over green CI.** Three lenses
-  (correctness / @ai-binding / integration) on a 6-skill batch that was already
+  (correctness / @ai-binding / integration) on a 6-tool batch that was already
   "all tests pass, runs end-to-end" surfaced 4 P1s. The executable oracle (the
   new boundary tests) is the final arbiter, but the review is what *pointed* at
   the branch to test.

@@ -355,7 +355,7 @@ Content covers:
 - **MCP tool**: `ix_ml_pipeline` (primary), `ix_ml_predict` (secondary)
 - **Skill**: `ix-ml-builder` (Claude Code orchestration)
 - **Rust API**: No new public crate API (handler-only, uses existing crate APIs internally)
-- **CLI**: Not wired into ix-skill for v1 (future enhancement)
+- **CLI**: Not wired into ix-cli for v1 (future enhancement)
 
 ## Acceptance Criteria
 

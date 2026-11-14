@@ -39,7 +39,7 @@ fn nl_to_pipeline_run_request_is_refused_by_the_approval_gate() {
 /// `ANTHROPIC_API_KEY` and the network. Run manually:
 ///
 /// ```text
-/// cargo build -p ix-skill
+/// cargo build -p ix-cli
 /// cargo test -p ix-agent --test nl_to_pipeline_live -- --ignored --nocapture
 /// ```
 #[test]
@@ -53,7 +53,7 @@ fn ix_cli_pipeline_compile_handles_in_and_out_of_domain() {
         .expect("profile dir");
     assert!(
         bin.is_file(),
-        "build the CLI first: cargo build -p ix-skill ({} missing)",
+        "build the CLI first: cargo build -p ix-cli ({} missing)",
         bin.display()
     );
     let compile = |sentence: &str| -> serde_json::Value {

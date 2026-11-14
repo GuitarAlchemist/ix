@@ -49,6 +49,8 @@ eta: unknown
 | `next` | The next action and who owns it, or `none`. |
 | `eta` | `unknown`, or `measured <duration> (<basis>)` when a measurement backs it, such as the duration of a previous run. A guess is never written as an estimate. |
 
+The block holds one `key: value` pair per line, split at the first `: `. Every value is a string; it is not YAML. All ten fields are required, and no other field is allowed. [The schema](2026-10-17-pr-coordination-room.schema.json) checks the parsed pairs, and [the fixtures](fixtures/pr-coordination-room/fixtures.json) show valid and invalid comments.
+
 Each type has a fixed meaning:
 
 - **`request`** asks the recipient for one thing. Its `state` is `open`.
@@ -65,6 +67,27 @@ Each type has a fixed meaning:
 4. A recipient sends at most one `ack` and one `result` per request.
 5. A comment without a `coord` block is conversation for humans and calls for no action.
 6. If a block does not parse, the reader ignores it and does not reply in the room. It may tell its operator.
+
+## Deduplication
+
+The `id` is the only key. A reader never compares contents to decide that two messages are the same.
+
+- **The same id seen twice.** The reader handles the oldest comment that carries the id and ignores the others. If their blocks differ, it reports this to the operator.
+- **An edited comment.** An edit is not a new message. The reader keeps the version it handled and ignores the edit, even when the edit changes a field.
+- **The same request re-posted with a new id.** A new id is a new request, and it gets its own ack and result. A sender therefore never re-posts on its own; see [Recovery](#recovery).
+- **An ack arriving after the result.** A request's state only moves forward: `open`, then `received`, then `done`, `failed` or `cancelled`. A late ack leaves the request finished. A second ack or a second result for the same request is reported to the operator and otherwise ignored.
+
+## Recovery
+
+The room is the record. A reader's local list of handled ids is only a cache.
+
+When a reader restarts, it reads the whole room in order and rebuilds what it knows from its own messages: those whose `from` names it and whose GitHub author is its account.
+
+- The `reply_to` values of its own acks and results are the requests it has already answered. It never answers them again.
+- If a request has only its ack, it does not ack again. It posts the one result when the work is finished. If it cannot tell whether the work already ran, it asks the operator before running it again.
+- Its next `id` is one more than the highest `id` it has posted, so an id is never reused.
+
+A request that has no result 24 hours after its `at` is reported to the operator by its sender. It is never re-sent automatically.
 
 ## Identity
 

@@ -12,7 +12,7 @@ probes** (104 in-domain, 56 near-miss-OOD, 24 far-OOD), every method calibrated
 **ID-only** (threshold = 3rd percentile of in-domain scores → recall ≈ 0.97) so
 the comparison is apples-to-apples.
 
-Reproduce: `cargo test -p ix-skill --features embeddings ood_scoring_method_sweep_over_probe_corpus -- --nocapture`
+Reproduce: `cargo test -p ix-cli --features embeddings ood_scoring_method_sweep_over_probe_corpus -- --nocapture`
 
 ## Methods
 
@@ -84,7 +84,7 @@ CI** (CI never pulls ONNX) and **skips** (early return, zero assertions) if the
 probe corpus is absent. "Fails loudly" means *when a human re-runs the sweep*
 after touching the embedder or probes — this is a decision record plus a manual /
 PR-time check, not an auto-firing alarm. Re-run:
-`cargo test -p ix-skill --features embeddings ood_scoring_method_sweep_over_probe_corpus -- --nocapture`.
+`cargo test -p ix-cli --features embeddings ood_scoring_method_sweep_over_probe_corpus -- --nocapture`.
 
 Reversibility: **two-way door** (the gate already runs raw cosine; this only
 records *not* adding a method). Revisit trigger: a new embedder, a materially

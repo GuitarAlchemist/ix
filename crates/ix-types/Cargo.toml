@@ -7,7 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 categories = ["data-structures", "science"]
 keywords = ["machine-learning", "types", "pipeline"]
-description = "Shared value lattice and socket types for the ix skill registry"
+description = "Shared value lattice and socket types for the ix tool registry"
 
 [dependencies]
 ndarray = { workspace = true }

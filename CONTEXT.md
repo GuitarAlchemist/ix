@@ -9,7 +9,7 @@
 
 A Rust workspace (77 crates) implementing foundational **ML/math algorithms** and
 **AI governance** as composable crates, exposed via an MCP server (`ix-agent`) and
-CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (**ix** + **tars** + **ga**
+CLI (`ix-cli`). Part of the GuitarAlchemist ecosystem (**ix** + **tars** + **ga**
 + **Demerzel**). Source-of-truth for cross-repo collaboration is JSON-on-disk
 contracts (see `docs/contracts/`), not runtime coupling.
 
@@ -24,6 +24,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
   Distinct from a **crate** (Rust library) and a **tool** (MCP-callable function).
 - **Tool** — an MCP-callable function (registered in `ix-agent`; the count is
   asserted by `crates/ix-agent/tests/parity.rs` — every tool-adding PR bumps it).
+  The code says tool too (`#[ix_tool]`, `ix-tool-macros`, the `registry_tools`
+  list of `state/registry/tools.snapshot.json`; ix#474). In prose, docs and
+  conversation say **tool** (FR: *outil IX*), never *skill*, which is the Claude
+  Code term above. Until their deprecation window (ix#479), the surfaces a file
+  or a script outside the repo can depend on still say skill: the `skill:` key
+  of `ix.yaml` / `ix.lock`, `ix list skills` and `ix describe skill`.
 - **Governance / Demerzel constitution** — all agent actions are subject to the
   Demerzel constitution (`governance/demerzel`). The **Galactic Protocol** is the
   cross-repo contract layer; **Prime Radiant** is the 3D governance-graph viz.
@@ -106,6 +112,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
   cannot be registered over, so no adapter can route around the schema gate. Distinct
   from a **tool** (MCP-callable) and a **skill**: a capability is how one IXQL run
   reaches either, or something else entirely.
+- **BAML step (IXQL)** (`ix_baml::BamlOperation`, dispatched by `ix_ixql::eval` for
+  `→ baml.<Function>()`) — the LLM call of an IXQL run, through a function registered in
+  the run's `BamlRegistry`. The registry starts empty: an unregistered function fails the
+  run rather than evaluating to null. Its errors are `UnknownFunction`, `InputShape` and
+  `Invocation`; it has no timeout or abstention outcome of its own. The `baml.` namespace
+  is the registry's: no **capability** can be registered under it.
 - **Verdict gate** — consecutive `→ when T >= 0.8: …` / `→ when C: …` steps, read as
   **one** match over the verdict (hexavalent truth + confidence) the previous
   capability attached — not as successive filters. The verdict travels *beside* the
@@ -215,6 +227,95 @@ contracts (see `docs/contracts/`), not runtime coupling.
   pipe is still opening); **degraded** is lifted only when both hold. Distinct from a **replay**
   from a bookmark (a consumer's) and from the **continuity markers** of a pipe (`live-start`,
   `dropped`, `overflow`). _Avoid_: resync, backfill, lag.
+
+## Agent strategy measurement
+
+- **Declarative agentic plan** — a description of intended work and dependencies,
+  not admission or execution. The [bounded-plan entry point](docs/methodology/agentic-plan-entrypoint.md)
+  anchors intervention, independent verification and parent resumption in a
+  versioned data-only IXQL example; compiling its graph does not enforce its
+  written requirements or prove the work happened.
+- **Strategy baseline** — a matched comparison of A (Stef's direct dictation and usual
+  human loop), B (Gaia prepares the prompt, Claude executes), and C (a supervised
+  branch/leaves workflow). A is the reference control, not the presumed winner.
+- **Trial** — one assigned strategy on one frozen task instance and initial state,
+  including preparation, handoffs, every child, retries, verification and any required
+  parent resumption, until acceptance or the declared stopping condition. A retry is
+  not a new trial that erases a failure. A repeat is a separately assigned fresh trial.
+- **Candidate validated** — the independent, predeclared candidate checks pass on the
+  identified artifact. This does not establish that the blocked parent consumed it.
+- **Parent unblocked** — the identified parent consumes the candidate, performs the
+  previously blocked action, and reaches its predeclared result. A resume receipt,
+  a child exit code or a green build alone is insufficient.
+- **Accepted task** — one task meeting the frozen independent oracle, constraints
+  and regression checks, including parent unblocked when required. Unit: binary
+  0/1 per terminal trial; missing evidence is not an accepted success.
+- **Human attention** — observed active human work attributable to the trial, in
+  person-seconds, including dictation, reading, decisions and manual handoffs.
+  Waiting or the duration of a voice call is not automatically attention.
+- **Intervention** — a discrete human correction, clarification, approval or recovery
+  after the initial assignment. **Clipboard handoff** is one manual transfer across
+  a tool/session boundary; count it separately even if it is also an intervention.
+- **Resource efficiency** — resources consumed for accepted work, reported separately
+  as elapsed seconds, human person-seconds, interventions, handoffs and model usage.
+  Include unsuccessful trials. No weighted intelligence or entropy score substitutes
+  for these units, and tokens on a subscription are not actual marginal currency cost.
+- **Construction cost** — resources used to build or tune a reusable workflow before
+  its evaluated use. **Reuse cost** is the resource use of a frozen workflow on a new
+  trial; amortization must name the actual number of uses and include failed uses.
+- **Transfer evidence** — acceptance on distinct, previously unused real cases without
+  case-specific workflow tuning. One micro-unblock demonstrates neither reusable
+  transfer nor superiority over the other strategies.
+
+Measurement rules, units, empty templates and the launch gate live in
+[the three-strategy baseline protocol](docs/methodology/three-strategy-baseline.md).
+
+## IX hosts and composable capabilities
+
+These names describe the agreed vocabulary and proposed architecture, not a claim
+that the corresponding inventory, packaging or renderer integration exists today.
+Existing `ixctl` **probe** semantics above remain unchanged.
+
+- **IX Node** — a logical host for IX capabilities and their instances. The initial
+  convention is one IX Node per machine, not a verified deployment inventory or a
+  permanent one-to-one constraint. Group the existing service and desktop surface
+  under this logical host; this does not require a new daemon, merge their security
+  boundaries, or grant one component the other's permissions. Distinct from a
+  **task node** or **execution graph node**, which represents work in a graph, not
+  the host where work runs.
+- **Xlet** — a composable backend capability, independent of implementation language.
+  Its **type** defines the capability contract; an **instance** is a configured,
+  identified realization hosted by an IX Node. A Xlet need not own a separate
+  process. Persistence is optional and must be explicit in its durability contract
+  (what survives restart, where, and under whose ownership); the name alone implies
+  neither durable state nor a particular lifecycle. Spelling: **Xlet**.
+- **Observational Xlet** — a Xlet whose role is observation rather than mutation;
+  a **sonde** (probe) is the observational specialization in this proposed model.
+  Calling an existing `ixctl` probe a Xlet is a conceptual mapping, not evidence
+  that a new Xlet runtime or adapter is implemented.
+- **Observation** — source-attributed data with an observation timestamp and stated
+  meaning; distinguish time observed from time received when they differ. An
+  observation describes what was observed, not an instruction, permission, or proof
+  of a broader outcome. Missing data is unknown, not automatically zero.
+- **Channel** — the transport path carrying observations or other messages. It is
+  neither the source capability nor the data itself, and delivery alone does not
+  establish acceptance or successful execution.
+- **Xlet API** — the capability's explicit interface. Query, configuration and
+  subscription are distinct operations: reading a value, changing configuration
+  and receiving updates are not interchangeable permissions. An instance need only
+  expose the operations its contract supports; a channel is not its whole API.
+- **Widget** — a generic presentation component, not specific to IX. A web widget
+  may register a custom HTML element; that is a web capability, not a guarantee
+  that the same DOM component runs in Godot, another 3D engine or an ASCII surface.
+  Cross-surface presentation requires an appropriate renderer adapter.
+- **IXget** — an IX-specialized widget presenting IX object identity, state and
+  allowed actions. Distinct from a **Xlet** (backend capability) and an **IX Node**
+  (logical host). There is no required one-to-one IXget/Xlet pairing: an IXget may
+  compose several capabilities, and several IXgets may present the same object.
+  Proposed 2D/3D/PWA/ASCII adapters reuse object references and shared authoritative
+  state, not necessarily rendering code. A cross-surface drag transfers a reference,
+  not a copied authoritative state; the destination rechecks permissions before
+  reading or invoking actions. Adapter availability is not implied by the name.
 
 ## Conventions
 

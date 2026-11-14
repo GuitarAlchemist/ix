@@ -378,7 +378,7 @@ Its rows go straight into SQL. This pipeline lists the panes waiting on someone:
 }
 ```
 
-On the snapshot captured for the tests (anonymized), `blocked` returns two rows, one of them a terminal with no title (`"title": null`). The query is pinned by `crates/ix-agent/src/skills/wmux.rs::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes`.
+On the snapshot captured for the tests (anonymized), `blocked` returns two rows, one of them a terminal with no title (`"title": null`). The query is pinned by `crates/ix-agent/src/registered/wmux.rs::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes`.
 
 ---
 

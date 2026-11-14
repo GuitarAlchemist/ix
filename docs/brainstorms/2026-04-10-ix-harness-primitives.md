@@ -331,7 +331,7 @@ The whole strategic thesis of this meta-doc is that IX provides *deterministic* 
 
 Discovery this session: two truth types coexist in the workspace.
 
-- `ix_types::Hexavalent` (6 values, shipped, used by `ix-code::gates`, `ix-skill`, new code) ✅
+- `ix_types::Hexavalent` (6 values, shipped, used by `ix-code::gates`, `ix-cli`, new code) ✅
 - `ix_governance::TruthValue` (4 values, legacy, used by karnaugh/remediation_optimizer/violation_pattern/weight_evolution) ⚠️
 
 Plan:

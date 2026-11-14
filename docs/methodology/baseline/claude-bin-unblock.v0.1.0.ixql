@@ -1,0 +1,29 @@
+intervention <- {
+  example_version: "0.1.0",
+  case_id: "ix501-claude-bin-wiring",
+  purpose: "Repair --claude-bin wiring and preserve CLI regression coverage",
+  mode: "data_only_not_a_run_request",
+  admission: "not_granted_by_this_plan",
+  candidate_artifact: "REQUIRED_EXACT_COMMIT_AND_DIFF",
+  outcome: "not_observed_in_this_example"
+}
+
+independent_verification <- {
+  candidate: intervention,
+  oracle: "REQUIRED_FROZEN_ORACLE_DIGEST",
+  reviewer: "REQUIRED_NON_AUTHOR_CONTEXT",
+  required_checks: "CLI wiring regression plus declared constraints and regressions",
+  evidence: "REQUIRED_ARTIFACT_BOUND_CHECK_RECEIPT",
+  candidate_validated: "unknown"
+}
+
+parent_resume <- {
+  verification: independent_verification,
+  parent: "REQUIRED_EXACT_BLOCKED_PARENT_ID",
+  admission: "REQUIRED_OWNER_ADMISSION_AFTER_VERIFIED_CANDIDATE",
+  required_sequence: "consume candidate then previously blocked action then declared result",
+  evidence: "REQUIRED_PARENT_ACTION_AND_RESULT_RECEIPTS",
+  parent_unblocked: "unknown",
+  accepted: "unknown",
+  on_missing_failure_or_timeout: "stop_without_acceptance"
+}

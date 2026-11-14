@@ -2,8 +2,8 @@
 //!
 //! [`AgentHandler`] is the unified contract for an action-shaped tool
 //! call. [`LegacyAdapter`] wraps the existing
-//! `fn(serde_json::Value) -> Result<serde_json::Value, String>` skill
-//! surface so the 48 `#[ix_skill]`-annotated tools in ix-agent continue
+//! `fn(serde_json::Value) -> Result<serde_json::Value, String>` tool
+//! surface so the 48 `#[ix_tool]`-annotated tools in ix-agent continue
 //! to work without signature changes.
 
 use serde_json::Value as JsonValue;
@@ -34,14 +34,14 @@ pub trait AgentHandler: Send + Sync {
 }
 
 /// Adapter that wraps a `fn(Value) -> Result<Value, String>` legacy
-/// skill as an [`AgentHandler`].
+/// tool as an [`AgentHandler`].
 ///
-/// All 48 existing `#[ix_skill]`-annotated functions in ix-agent use
+/// All 48 existing `#[ix_tool]`-annotated functions in ix-agent use
 /// this shape. The adapter lets the new dispatch path accept them
 /// without rewrites.
 ///
 /// Handles only [`AgentAction::InvokeTool`] — other action variants
-/// return [`ActionError::Exec`] because legacy skills have no concept
+/// return [`ActionError::Exec`] because legacy tools have no concept
 /// of observations, approvals, or returns.
 #[derive(Debug, Clone, Copy)]
 pub struct LegacyAdapter {

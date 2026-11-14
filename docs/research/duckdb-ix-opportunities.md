@@ -112,7 +112,7 @@ FROM f ORDER BY cc DESC LIMIT 8;
 | `crates/ix-voicings/src/lib.rs` | 1613 | 205.0 | **0.0** |
 | `crates/ix-ixql/src/parser.rs` | 670 | 154.0 | **0.0** |
 | `crates/ix-duck/src/chatbot.rs` | 672 | 127.0 | **0.0** |
-| `crates/ix-skill/src/verbs/compile.rs` | 1505 | 124.0 | **0.0** |
+| `crates/ix-cli/src/verbs/compile.rs` | 1505 | 124.0 | **0.0** |
 | `crates/ix-ixql/src/eval.rs` | 904 | 122.0 | **0.0** |
 
 Every file in the top-8 complexity list has MI = 0. MI ranks them all identically; CC

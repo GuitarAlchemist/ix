@@ -18,7 +18,7 @@ When the user asks to optimize, minimize, maximize, find best parameters, or tun
 
 ## Execution
 ```bash
-cargo run -p ix-skill -- optimize --algo <method> --function <fn> --dim <n> --max-iter <iter>
+cargo run -p ix-cli -- optimize --algo <method> --function <fn> --dim <n> --max-iter <iter>
 ```
 
 Built-in test functions: `sphere`, `rosenbrock`, `rastrigin`

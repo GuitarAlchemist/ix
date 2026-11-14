@@ -171,8 +171,8 @@ Stats, Regression, Clustering, Neural Net, Optimization, Chaos, Signal, IK Chain
 - `ix-nn/network.rs`: Composable network (TODO)
 - `ix-rl/q_learning.rs`: Implement after Environment trait (TODO)
 - `ix-rl/env.rs`: GridWorld environment (TODO)
-- `ix-skill/src/main.rs:140,144`: Data loading for Train/Cluster commands (TODO)
-- `ix-skill/src/main.rs:350-356`: Wire up decision-tree, SVM, DBSCAN, PCA (TODO)
+- `ix-cli/src/main.rs:140,144`: Data loading for Train/Cluster commands (TODO)
+- `ix-cli/src/main.rs:350-356`: Wire up decision-tree, SVM, DBSCAN, PCA (TODO)
 
 ### README & Docs
 - Update to reflect all 27+ crates (currently documents 22)

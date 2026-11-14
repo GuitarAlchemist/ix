@@ -9,7 +9,7 @@ the 14-persona Demerzel submodule — all executed end-to-end from one
 
 ```bash
 # from the workspace root
-cargo build -p ix-skill                 # once
+cargo build -p ix-cli                 # once
 bash examples/showcase/demo.sh
 ```
 
@@ -27,7 +27,7 @@ $ ix list domains --format table
   domains [29 items]
 ```
 
-Every `#[ix_skill]`-annotated function across the workspace is visible.
+Every `#[ix_tool]`-annotated function across the workspace is visible.
 
 ### 2. Introspection
 

@@ -454,3 +454,86 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 		t.Fatalf("status after the ctl jump: %+v, want two jumps counted", st)
 	}
 }
+
+// Criterion 7 of ix#408, the bound in time (D4 ix#402 Q7: the one replay is "bounded in duration
+// and volume"): a catch-up that lasts past the link's time bound is given up although the
+// allowance in frames and bytes is far from spent. The parent spends 5 ms on every control frame
+// and may catch up for 100 ms (the test knob; 30 s in production): of the 300 frames the peer
+// kept, it replays the few that fit, then jumps, marked on the mirrored ctl from the last seq it
+// mirrored to the head its live subscription starts from, dated; it is live and reconciled again
+// at once, and what the peer publishes next crosses.
+func TestACatchUpPastItsTimeBoundJumpsWithAllowanceLeft(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json")}, NewHub("a"))
+	l.allowFor.Store(int64(100 * time.Millisecond))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	go l.run(ctx1)
+	waitLink(t, l, "up")
+	b.plane.Publish("svc/x", event("stats", map[string]any{"n": 0}))
+	var last uint64
+	for last == 0 {
+		if e := nextEnvWithin(t, cur, 10*time.Second); e.Ch == "peer/b/svc/x" {
+			last = e.SrcSeq
+		}
+	}
+	cancel1()
+	waitLink(t, l, "down")
+	const burst = 300
+	for i := 1; i <= burst; i++ {
+		b.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
+	}
+	head := b.plane.hub.Head()
+	l.ctlDelay.Store(int64(5 * time.Millisecond))
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	t0 := time.Now()
+	go l.run(ctx2)
+
+	replayed := 0
+	var m linkGap
+	var mEnv *Envelope
+	for mEnv == nil {
+		e := nextEnvWithin(t, cur, 10*time.Second)
+		switch {
+		case e.Ch == "peer/b/svc/x":
+			if replayed++; e.SrcSeq != last+1 {
+				t.Fatalf("replayed src_seq %d after %d", e.SrcSeq, last)
+			}
+			last = e.SrcSeq
+		case e.Ev.Kind == linkGapKind:
+			m, mEnv = gapOf(t, e), e
+		}
+	}
+	took := time.Since(t0)
+	if replayed >= burst {
+		t.Fatalf("all %d frames were replayed in %s: the catch-up was not bounded in time", replayed, took)
+	}
+	if mEnv.Ch != "peer/b/ctl" || mEnv.Origin != "a" || mEnv.T == 0 || m.Reason != "jumped" || m.Prefix != "svc/" ||
+		m.From != last || m.To < head || m.SrcEpoch != b.plane.Epoch() {
+		t.Fatalf("the marker: %s, want the parent's own dated `jumped` on svc/ from %d (the last mirrored) to at least %d", mEnv.Raw(), last, head)
+	}
+	l.mu.Lock()
+	left := l.replay.frames
+	l.mu.Unlock()
+	if spent := float64(replayAllowFrames) - left; spent > burst {
+		t.Fatalf("%.0f frames of the allowance spent: the volume bound, not the time bound, ended the catch-up", spent)
+	}
+	t.Logf("%d of %d frames replayed, then the jump %s after the reattach, %.0f frames of allowance left", replayed, burst, took, left)
+
+	l.ctlDelay.Store(0)
+	st := waitLinkStatus(t, l, func(st PeerStatus) bool { return st.Live && st.Reconciled && !st.Degraded })
+	if st.Jumps != 1 {
+		t.Fatalf("status after the jump: %+v, want one jump counted", st)
+	}
+	b.plane.Publish("svc/x", event("stats", map[string]any{"n": burst + 1}))
+	for {
+		if e := nextEnvWithin(t, cur, 10*time.Second); e.Ch == "peer/b/svc/x" {
+			if e.SrcSeq <= m.To {
+				t.Fatalf("after the jump: src_seq %d, the marker said live from %d", e.SrcSeq, m.To)
+			}
+			break
+		}
+	}
+}

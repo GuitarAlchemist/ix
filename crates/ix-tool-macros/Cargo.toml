@@ -1,0 +1,18 @@
+[package]
+name = "ix-tool-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools::procedural-macro-helpers"]
+keywords = ["machine-learning", "macro", "registry"]
+description = "#[ix_tool] proc-macro — registers annotated functions in the ix capability registry"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

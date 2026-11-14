@@ -10,6 +10,15 @@ For industrial engineering and robotics, IX is an **offline/advisory co-processo
 
 82 crates. 96 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
+## Agentic workflow entry point
+
+Start with the [canonical glossary](CONTEXT.md#agent-strategy-measurement), then
+[the bounded-plan guide](docs/methodology/agentic-plan-entrypoint.md) and its
+[versioned intervention example](docs/methodology/baseline/claude-bin-unblock.v0.1.0.ixql).
+Compile the data-only dependency plan with existing IXQL; it does not run agents
+or authorize parent resumption. Compare admitted trials with the
+[three-strategy baseline](docs/methodology/three-strategy-baseline.md).
+
 ## Quick Start
 
 ```bash
@@ -20,10 +29,10 @@ cargo build --workspace
 cargo test --workspace
 
 # Run the CLI
-cargo run -p ix-skill -- optimize --algo pso --function sphere --dim 10
+cargo run -p ix-cli -- optimize --algo pso --function sphere --dim 10
 
 # Build the optional local-only text embedding adapter
-cargo build -p ix-skill --features embeddings --bin ix-embed
+cargo build -p ix-cli --features embeddings --bin ix-embed
 
 # Start the MCP server (for Claude Code integration)
 cargo run -p ix-agent
@@ -77,7 +86,7 @@ root. The CLI subcommand `ix stable-surface` is the reference implementation
 used by CI and is runnable locally:
 
 ```bash
-cargo run -p ix-skill -- stable-surface --format=json
+cargo run -p ix-cli -- stable-surface --format=json
 ```
 
 The hash is a BLAKE3 over the sorted, deduplicated set of `pub` declarations
@@ -136,13 +145,14 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | ix-loop | Experimental | Agentic loops written in sandboxed Lua 5.4 that run, judge and write other loops: budgets carved from parent to child, Claude Code headless as the semantic node, host-owned oracles, a store where loops propose and a person accepts (CLI `ix-loop`; ADR-0011) |
 | ix-recover | Experimental | Provisional: publishes a run's result once under a caller-chosen run id and reconciles from durable evidence after a process kill (`ix pipeline run --run-id`) |
 | ix-voice | Experimental | Client and CLI of the local voice service (`piper-voice`, outside the workspace): speak text aloud sentence by sentence, stop, list the voices (ADR-0013) |
+| ix-wasm | Experimental | Pipeline stages in any language that targets WASI, run in `wasmi`: JSON on stdin and stdout, no files, no network, a seeded clock and random source, fuel and memory caps; builds Go and Zig stages into a content-addressed cache; the `wasm.run` skill (not yet on the MCP surface) |
 
 ### Internal Crates
 
 | Crate | Tier | Notes |
 |-------|------|-------|
-| ix-skill | Internal | CLI binary for direct command-line access |
-| ix-skill-macros | Internal | Proc macros for skill registration |
+| ix-cli | Internal | CLI binary for direct command-line access |
+| ix-tool-macros | Internal | Proc macros for tool registration |
 | ix-demo | Internal | egui desktop app with interactive tabs |
 | ix-dashboard | Internal | Dashboard utilities |
 | ix-registry | Internal | Crate registry metadata |
@@ -303,7 +313,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 | Crate | Description |
 |-------|-------------|
 | **ix-agent** | MCP server: 93 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
-| **ix-skill** | CLI binary for direct command-line access to all algorithms |
+| **ix-cli** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 
 ## Claude Code Integration

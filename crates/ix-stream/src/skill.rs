@@ -51,7 +51,7 @@ use crate::gate::{Budget, Ledger};
 use crate::petri::{self, Abstraction, Shape, ShapeNode};
 use crate::{Batch, Bus, Closed, Graph, NodeId, Out, Signal};
 use ix_pipeline::dag::Dag;
-use ix_skill_macros::ix_skill;
+use ix_tool_macros::ix_tool;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -176,7 +176,7 @@ pub fn stream_run_output_schema() -> Value {
 /// refused. The answer is `{ stopped_by, events, steps, receipts }`, the receipts holding the
 /// Petri check, the budget spent, and each node's counts; a failed wasm node stops the stream
 /// with `stopped_by: "error"` and the `error`.
-#[ix_skill(
+#[ix_tool(
     domain = "stream",
     name = "stream.run",
     governance = "safety,deterministic",
