@@ -167,6 +167,7 @@ type instance struct {
 	stateFile string
 	lock      *os.File // the per-name lock, held until close
 	ready     readyLine
+	workshop  *workshopHost
 }
 
 type readyLine struct {
@@ -266,6 +267,7 @@ func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *p
 // close stops every service tree, then the transports, then removes the
 // state file and lets go of the name.
 func (in *instance) close() {
+	in.workshop.close()
 	in.plane.Shutdown()
 	in.web.cancel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
