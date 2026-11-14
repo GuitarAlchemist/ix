@@ -133,9 +133,9 @@ impl HrrVector {
         // bind. FFT-based convolution is a future optimization.
         for (i, slot) in out.iter_mut().enumerate() {
             let mut acc = 0.0;
-            for j in 0..n {
+            for (j, a) in self.components.iter().enumerate().take(n) {
                 let k = ((i + n) - j) % n;
-                acc += self.components[j] * other.components[k];
+                acc += a * other.components[k];
             }
             *slot = acc;
         }
@@ -153,9 +153,9 @@ impl HrrVector {
         let mut out = vec![0.0; n];
         for (i, slot) in out.iter_mut().enumerate() {
             let mut acc = 0.0;
-            for j in 0..n {
+            for (j, p) in probe.components.iter().enumerate().take(n) {
                 let k = (i + j) % n;
-                acc += self.components[k] * probe.components[j];
+                acc += self.components[k] * p;
             }
             *slot = acc;
         }

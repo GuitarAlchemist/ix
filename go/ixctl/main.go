@@ -28,6 +28,7 @@ const usage = `usage:
   ixctl bench <spec.json>
   ixctl service run|plan    # host under the Windows SCM (or the console); print the install plan
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
+  ixctl resume check <inventory.json> [--json]   # after a reboot: what came back, in start order (observes only; exit 1 when not ready)
   ixctl need submit|status|claim|resolve|refuse|reserve|settle|wait --name NAME [--state DIR]   # the op's JSON on stdin
   ixctl version`
 
@@ -52,6 +53,11 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(kindsReply(defaultProbeBudget))
+	case "resume":
+		var ready bool
+		if ready, err = cmdResume(args[1:], stdout, realResumeProbes()); err == nil && !ready {
+			return 1
+		}
 	case "need":
 		err = cmdNeed(args[1:], os.Stdin, stdout)
 	case "help", "-h", "--help":
@@ -101,6 +107,9 @@ type upOptions struct {
 	// deltaJournal is the JSONL journal the `delta@1` probe kind tails; empty leaves the kind
 	// refused at create.
 	deltaJournal string
+	// claudeBin is the Claude Code CLI the `claude-sessions@1` probe kind runs; empty leaves the
+	// kind refused at create.
+	claudeBin string
 }
 
 func cmdUp(args []string, stdout io.Writer) error {
@@ -113,6 +122,7 @@ func cmdUp(args []string, stdout io.Writer) error {
 	fs.Int64Var(&o.probeRate, "probe-rate", defaultProbeBudget.maxRate, "records/s a probe subtree may declare (max_rate_per_s)")
 	fs.Int64Var(&o.probeTreeRate, "probe-tree-rate", defaultProbeBudget.treeRate, "records/s the whole probe tree may declare (tree_rate_per_s)")
 	fs.StringVar(&o.deltaJournal, "delta-journal", "", "JSONL journal the delta@1 probe kind tails (Delta's brain writes it); unset refuses the kind")
+	fs.StringVar(&o.claudeBin, "claude-bin", "", "Claude Code CLI the claude-sessions@1 probe kind runs as `agents --json` (the plane must run in that user's session); unset refuses the kind")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -131,6 +141,7 @@ func cmdUp(args []string, stdout io.Writer) error {
 	}
 	// Before the ready line: no client knows the token yet, so no node can exist.
 	in.plane.SetDeltaJournal(o.deltaJournal)
+	in.plane.SetClaudeBin(o.claudeBin)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)

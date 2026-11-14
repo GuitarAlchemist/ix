@@ -494,6 +494,7 @@ noyau figé d'`ixctl.v1`.
 | `cpu@1` | `busy_pct`, `cores` | La part d'occupation du processeur de l'hôte sur le dernier intervalle (`GetSystemTimes` ; `/proc/stat`). Le premier intervalle n'émet rien. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | La mémoire physique de l'hôte (`GlobalMemoryStatusEx` ; `/proc/meminfo`). |
 | `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, et ceux de l'événement (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | Le journal JSONL de Delta, le robot vocal, nommé par `ixctl up --delta-journal FICHIER` : une ligne par tick, chaque champ de premier niveau de la ligne tel quel, plus `offset`, la position en octets de la ligne. Sans le flag, le kind est listé et refusé à la création. |
+| `claude-sessions@1` | `read_at_ms`, `read_ms`, `count`, `sessions`, `gone` | Les sessions Claude Code vivantes de l'utilisateur du plan, lues par `claude agents --json` (le CLI que nomme `ixctl up --claude-bin`). Sans l'option, le kind est listé et refusé à la création ; `every_ms` vaut au moins 5000. |
 | `mux@1` | (ceux de ses enfants) | Pas d'échantillonneur : il porte ce que ses enfants lui passent. |
 
 `delta@1`, c'est le plan qui *lit* un fichier qu'un autre programme écrit (le `brain.exe` de
@@ -507,6 +508,60 @@ relu depuis l'offset 0. `node`, `kind` et `seq` sont les estampilles de l'arbre 
 sur un champ de ligne du même nom. Un consommateur dédoublonne sur la paire de l'écrivain
 (`pid`, `journal_seq`), qui repart à chaque brain, et reprend sur `offset`, qui appartient au
 fichier.
+
+`claude-sessions@1` dit quelles sessions Claude Code pourraient prendre du travail, sans jamais
+le dire sur une supposition. Un enregistrement par tick est un instantané de
+`claude agents --json` (aucun appel de modèle). Une lecture prend des secondes ; elle tourne dans
+un arbre de processus à elle (un job object sous Windows, un groupe de processus sous Linux), tué
+avec tout ce qu'il a lancé à 20 s, à l'arrêt de la sonde ou du plan, et dès que le CLI a fini ;
+une sortie qu'un descendant garde ouverte plus d'1 s après la fin du CLI est refusée. Chaque entrée de `sessions` sépare ce que Claude Code déclare de ce que le plan a
+vérifié : `session_id` (l'identité stable), `name`, `kind`, `declared` (le statut listé, sinon
+l'état), `pid`, `started_at_ms` et, seulement quand le processus de ce pid a été créé au plus
+60 s avant le début de la session, `identity: "verified"`, `proc_start_ms` et `incarnation`
+(`pid:creation_ms`, qui change à une reprise : `incarnation_changed: true`). Ce rapprochement est
+une corrélation, pas une authentification : il montre qu'un processus vivant (pas un zombie) au
+pid listé a été créé au plus 60 s avant le début listé, ce qu'un pid repris par un processus
+plus récent ne passe pas ; il ne prouve pas que ce processus est Claude Code, et il fait
+confiance à la liste telle que Claude Code l'a écrite. `availability`
+vaut `idle` ou `busy` pour une incarnation vérifiée seulement, `blocked` pour une attente
+déclarée, et sinon `unknown` avec une `reason` : `no-pid`, `no-started-at`,
+`process-unreadable`, `pid-reused` (un processus créé après le début de la session tient le
+pid), `start-mismatch`, `declared "…"` ou `listed-twice` : Claude Code liste une session plus d'une fois tant
+qu'elle a une entrée d'arrière-plan et une entrée interactive vivante, et le kind ne devine pas
+laquelle parle pour elle. Cette session est un seul enregistrement, avec `listed` (combien de fois)
+et sans `kind`, `declared`, `pid` ni incarnation ; les autres sessions sont publiées comme
+d'habitude. Une réponse `null` est un enregistrement d'erreur, jamais une liste vide. Une session absente d'une lecture suivante est dite
+une fois dans `gone` (`unknown`, `absent`, sa `last_incarnation`). Une lecture ratée ou trop
+lente est un enregistrement d'erreur sans disponibilité, et aucune ancienne n'est répétée : un
+silence, une erreur ou un `read_at_ms` ancien ne veulent jamais dire libre. Le plan doit tourner
+dans la session de cet utilisateur (un pair desk) ; un service en session 0 ne voit aucune
+session. La disponibilité est une observation, pas une autorité pour confier du travail.
+
+Un consommateur (Gaia, par exemple) lit un nœud `claude-sessions@1` `c` par une seule requête
+SSE en HTTP simple sur l'`addr` de bouclage du plan : `GET http://<addr>/v1/events?ch=probe/c&since=0`
+avec `Authorization: Bearer <jeton>`, le jeton étant le
+champ `token` du fichier d'état du plan (le `state_file` de la ligne ready d'`ixctl up` ; la
+ligne ready elle-même ne le porte jamais). `since=0` rejoue ce que l'anneau garde encore, puis le
+flux suit ; chaque ligne `data:` est une enveloppe (`ch`, `seq`, `epoch`, `origin`, `t`) dont
+l'`ev` vaut `{"kind": "sample", "data": {...}}` avec les champs ci-dessus ou, pour une lecture ratée, un
+enregistrement d'erreur : le même événement `sample`, dont `data` ne porte que `node`, `kind`, `seq`
+et `error`, sans `sessions` ni `read_at_ms`. On indexe sur
+(`origin`, `epoch`, `seq`) de l'enveloppe, pas sur le `seq` de `data`, qui est le compteur propre
+du nœud, et on reprend avec `Last-Event-ID`, qui vaut la ligne `id:` (`epoch:seq`). Un `since=0`
+rejoue tout l'anneau, chaque enregistrement avec la liste complète. Le `t` de l'enveloppe est
+l'horloge du plan au moment où il publie l'échantillon, en millisecondes Unix, égal ou postérieur
+au `read_at_ms` de `data` (la même horloge à la fin de la lecture) ; ce n'est pas le `t` qu'un
+service peut mettre dans son propre événement (`ev.t`, sur l'horloge de l'émetteur, voir
+`svc/<name>`). Pour distinguer un échantillon publié pendant votre lecture d'un échantillon rejoué,
+notez votre propre horloge en millisecondes Unix juste avant la requête : un échantillon dont le `t`
+est postérieur a été publié après ce moment, les autres (un `t` égal compris) sont rejoués. ixctl ne synchronise aucune
+horloge : la comparaison tient parce que le lecteur tourne sur la machine du plan (`addr` est en
+bouclage) et lit la même horloge système. Le flux ne porte pas `every_ms` : `GET /v1/probe` répond `{"nodes": [...]}`, et l'entrée dont le
+`name` est celui du nœud le porte. Un échantillon est frais tant que votre horloge a moins de
+`every_ms` + 20 s (un tick plus la borne de lecture) d'avance sur le `t` de son enveloppe ; au-delà,
+le nœud ne dit rien, ce qui ne veut jamais dire libre. Une entrée non vérifiée porte
+`identity: "unknown"`. Le flux peut aussi porter un événement `gap` (voir `GET /v1/events`) : des
+échantillons ont été perdus, ce qui n'est pas une absence de sessions.
 
 Un **nœud** est une instance d'un kind dans l'arbre :
 
@@ -774,6 +829,80 @@ génération 0 avec tous les services déclarés arrêtés, puis applique les se
 synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash peut couper la dernière
 ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
 un contrat distinct qui s'annoncerait lui-même (porte 3).
+
+## Reprise après un redémarrage
+
+`ixctl resume check <inventory.json> [--json]` dit ce qui est revenu après un redémarrage ou une
+coupure de courant, dans l'ordre de démarrage, et sort en 1 tant que tout n'est pas prêt. Il ne fait
+qu'observer : il ne démarre, n'arrête et ne rejoue rien, et un composant qu'il ne peut pas observer
+est `unknown`, jamais supposé démarré.
+
+```json
+{"components": [
+  {"name": "plane", "service": "ixctl", "durable": ["C:\\ProgramData\\ixctl\\spec.json"],
+   "owner": "…", "remedy": "elevated: sc.exe config ixctl start= delayed-auto"},
+  {"name": "voice", "after": ["plane"], "listen": "127.0.0.1:59126", "remedy": "…"}
+]}
+```
+
+- `service` : l'état et le type de démarrage d'un service Windows, lus avec les seuls droits de
+  consultation. Un service démarré dont le type de démarrage n'est pas automatique est `degraded` :
+  il ne reviendra pas après le prochain redémarrage.
+- `service_image_sha256` (avec `service`) : le SHA-256 de l'exécutable que nomme la ligne de commande
+  configurée du service, par exemple `ixctl.exe` sous `C:\Program Files\ixctl` : quel build le SCM
+  démarre, par son contenu. Le fichier est lu, pas le processus, donc cela marche pour un service
+  sous son propre compte. Un autre hachage donne `down` ; une ligne de commande illisible (voir
+  `receipt`) ou un fichier illisible donne `unknown`. Recopiez-le du fichier déployé
+  (`Get-FileHash`), et de nouveau après chaque mise à jour.
+- `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
+  `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Un bind joker (`0.0.0.0`) sur le port le
+  tient aussi. Rien ne se connecte au port.
+- `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui
+  écoute, par exemple `delta-remote-v0.6.0-21-g2ca5e6c.exe` (sans chemin, casse ignorée) : quelle
+  version est revenue. Le PID vient de la table TCP ; le processus est ouvert avec les seuls droits
+  de consultation, ce qui empêche la réutilisation de son PID, puis la table est relue, et un
+  propriétaire qui a changé entre-temps donne `unknown`. Limites de confiance : c'est le nom du
+  fichier, pas son contenu (ni empreinte ni signature), donc un programme renommé passe ; un
+  processus qui refuse la consultation, comme un service sous son propre compte (c'est le cas de
+  l'ixctl installé) ou le PID 4 de HTTP.sys, donne `unknown` ; Linux donne `unknown`.
+- `health` : une URL http(s) en boucle locale qui doit répondre 2xx en 2 s, en-têtes et corps (un
+  serveur qui bloque donne `down`, un corps de plus de 64 Kio aussi) ; tout autre hôte est refusé, et
+  une redirection n'est suivie que tant qu'elle reste en boucle locale (5 au plus). Une requête de
+  santé qui échoue (refusée, bloquée, statut d'erreur) donne `down`, pas `unknown` : l'URL a été
+  interrogée et n'a pas servi, c'est une observation.
+  `health_host` fixe l'en-tête Host de la requête, pour un serveur qui filtre sur lui (le workshop
+  d'IxForge répond 403 à tout autre hôte). `health_expect` est un texte que le corps doit contenir,
+  par exemple `"name":"IxForge"` : un 2xx d'un autre programme ou d'une autre version qui a pris le
+  port après un redémarrage est `down`.
+- `health_fields` : les champs texte que le corps de santé, un objet JSON, doit porter avec
+  exactement ces valeurs. Le `/workshop/branding.json` d'IxForge vaut `{"name":"IxForge","short_name":"IxForge","version":"0.1.1"}`
+  (contrat COMPAT-R9), d'où `{"name":"IxForge","version":"0.1.1"}`. Cette `version` est celle du
+  client web du workshop, fixée à la main dans l'asset embarqué ; ce n'est ni celle du binaire
+  ixctl (`ixctl version`, par exemple `0.1.0-ixforge.4`) ni un hachage. Recopiez-la du fichier
+  déployé, comme `listen_image`. Un corps qui n'est pas un objet JSON, un champ absent, une valeur
+  qui n'est pas du texte ou une autre valeur donnent `down`.
+- `receipt` : un reçu de mise à jour IxForge (`<DataDir>\update-<RunID>\receipt.json`), désigné par
+  l'opérateur. Un reçu est un enregistrement, jamais une preuve de l'état actuel : il ne peut
+  qu'abaisser le verdict. `reconciliation_required` donne `down` ; `available`, `backed_up`,
+  `installed` et `failed_before_replacement` donnent `degraded` ; `completed` et `rolled_back`
+  ajoutent seulement une ligne ; un reçu illisible (dont un fichier de plus de 1 Mio) ou un état
+  inconnu donne `unknown`. Un reçu seul n'est pas une observation. L'état ne s'applique qu'à un reçu
+  corrélé : un fichier nommé `receipt.json`, `Schema` 1, un `RunID`
+  de 32 chiffres hexadécimaux minuscules qui nomme son dossier, `CandidateSHA256` égal à
+  `receipt_candidate_sha256` (obligatoire), et aucune autre exécution `update-*` à côté aussi récente
+  ou plus récente. Sinon il donne `unknown`, son état affiché mais pas appliqué : un ancien
+  `reconciliation_required` ou le reçu d'un autre candidat ne décide rien.
+  Un reçu demande aussi `service` : son `Service` doit le nommer, et son `ExpectedImagePath` doit être la
+  ligne de commande configurée de ce service (l'exécutable comparé comme un chemin Windows, sans
+  tenir compte de la casse ni du sens des barres ; les arguments un à un, exactement). Un exécutable
+  sans guillemets qui contient une espace, une ligne qui commence par un blanc, une ligne mal formée
+  ou un service dont la configuration
+  ne se lit pas donnent `unknown`.
+- `durable` : où vit l'état du composant, signalé présent ou absent, jamais ouvert.
+- `after` : l'ordre de démarrage ; un composant placé après un composant arrêté le signale. Un cycle
+  est refusé.
+- `owner` et `remedy` s'affichent pour un composant qui n'est pas prêt : le remède est à lancer par
+  un humain.
 
 ## Service Windows
 

@@ -1045,3 +1045,9 @@ func (p *Plane) SetProbeBudget(maxRatePerS, treeRatePerS int64) error {
 func (p *Plane) SetDeltaJournal(path string) {
 	p.probes.setDeltaJournal(path)
 }
+
+// SetClaudeBin names the Claude Code CLI the `claude-sessions@1` kind runs (`ixctl up
+// --claude-bin`). Without it the kind is listed by `probe.kinds` and refused at create.
+func (p *Plane) SetClaudeBin(path string) {
+	p.probes.setClaudeBin(path)
+}

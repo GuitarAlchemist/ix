@@ -12,7 +12,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/governance-check.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" governance-check"
           }
         ]
       },
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/pipeline-validate.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" pipeline-validate"
           }
         ]
       }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/precompact-digest.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" precompact-digest"
           }
         ]
       }
@@ -41,7 +41,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/sessionstart-digest.sh"
+            "command": "go -C \"$CLAUDE_PROJECT_DIR/go/claudehooks\" run ./cmd/ix-hooks session-start",
+            "timeout": 120
           }
         ]
       }
@@ -51,11 +52,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/digest-staleness-nudge.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" digest-staleness-nudge"
           },
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/correction-detector.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" correction-detector"
           }
         ]
       }
@@ -66,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/rust-check.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" rust-check"
           }
         ]
       },
@@ -75,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/digest-activity-tracker.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" digest-activity-tracker"
           }
         ]
       },
@@ -84,7 +85,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/pr-rationale-capture.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" pr-rationale-capture"
           }
         ]
       }
@@ -94,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/digest-stop-finalize.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bin/ix-hooks\" digest-stop-finalize"
           }
         ]
       }

@@ -351,12 +351,12 @@ mod tests {
         let ns = x.norm_squared();
         assert!(approx_eq(prod.0[0], ns));
         // Imaginary parts should be near zero
-        for i in 1..16 {
+        for (i, value) in prod.0.iter().enumerate().skip(1) {
             assert!(
-                prod.0[i].abs() < 1e-8,
+                value.abs() < 1e-8,
                 "imaginary part {} = {} should be ~0",
                 i,
-                prod.0[i]
+                value
             );
         }
     }

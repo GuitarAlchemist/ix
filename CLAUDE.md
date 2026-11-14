@@ -20,8 +20,8 @@ cargo run -p ix-cli --bin ix -- doctor --full   # plus the CI clippy + test invo
 ```
 
 It checks registry-snapshot drift (no hand-typed tool counts), orphan public
-traits, the harness's hooks (`.claude/hooks/*.sh` present, parsing, their
-`test-*.sh` fixtures green), and the governance/state environment. Per-change-type checklists —
+traits, the harness's hooks (wired, none through a shell, the `go/claudehooks` tests green),
+and the governance/state environment. Per-change-type checklists —
 MCP tool, DuckDB UDF, public API, `@ai:` invariant — live in
 [docs/CHECKLISTS.md](docs/CHECKLISTS.md) ([FR](docs/fr/CHECKLISTS.md)).
 
@@ -99,7 +99,7 @@ Self-improvement reflex: when the user corrects you, invoke `/correct` so the ru
 
 ## Session continuity (Cherny pattern)
 
-- `/digest` — captures meaningful session state (cursor, in-flight, hypotheses, success criteria) to `state/digests/latest.md`. Auto-fallback via `.claude/hooks/precompact-digest.sh`; auto-injected on next session via `.claude/hooks/sessionstart-digest.sh`. See `.claude/skills/digest/SKILL.md`.
+- `/digest` — captures meaningful session state (cursor, in-flight, hypotheses, success criteria) to `state/digests/latest.md`. Auto-fallback via the `precompact-digest` hook; auto-injected on next session via `session-start` (both subcommands of `go/claudehooks`, the `ix-hooks` program: no shell in hooks). See `.claude/skills/digest/SKILL.md`.
 - `/learnings` — captures surprises (non-obvious facts worth grep-finding later) into `docs/solutions/<category>/<date>-<topic>.md`.
 - `/correct` — turns user corrections into permanent rules in this CLAUDE.md.
 
@@ -120,7 +120,7 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
   - All session-specific planning must use `/digest` (written to `state/digests/latest.md`) instead of generating loose `.md` files in the repo.
   - Run the `ix-streeling` indexer after document changes to maintain [catalog.jsonl](state/streeling/catalog.jsonl).
 
-- **2026-10-22 — Claude fires the reflexes, then teaches.** Run `/correct` (on a correction), `/learnings` (at the commit that closes a surprise) and `/mattpocock-skills:retro` (when a review loop closes, before calling a PR ready) yourself at the trigger; the user dictates by voice and forgets the slash command, and `.claude/hooks/correction-detector.sh` nudges in FR/EN. End the reply with one teaching line: what ran, why, and when the user could type it themselves.
+- **2026-10-22 — Claude fires the reflexes, then teaches.** Run `/correct` (on a correction), `/learnings` (at the commit that closes a surprise) and `/mattpocock-skills:retro` (when a review loop closes, before calling a PR ready) yourself at the trigger; the user dictates by voice and forgets the slash command, and the `correction-detector` hook (`go/claudehooks`) nudges in FR/EN. End the reply with one teaching line: what ran, why, and when the user could type it themselves.
 
 ## Agent skills
 

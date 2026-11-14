@@ -115,10 +115,10 @@ fn check_event(event: &str, branch: Option<&str>) {
         "scripts/verify.ps1",
         // ix doctor's hardcoded-paths check scans the Markdown under crates/.
         "crates/ix-code-tools/README.md",
-        // ix doctor's hooks check reads the wiring, parses each hook, runs each fixture.
+        // ix doctor's hooks check reads the wiring and runs the hooks' Go tests.
         ".claude/settings.json",
-        ".claude/hooks/correction-detector.sh",
-        ".claude/hooks/test-correction-detector.sh",
+        ".claude/hooks/anything",
+        "go/claudehooks/cmd/ix-hooks/correction.go",
     ] {
         assert!(triggers(&paths, file), "{event}: must trigger for {file}");
     }
