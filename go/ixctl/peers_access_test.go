@@ -8,8 +8,12 @@ import (
 
 // Test access to the peer link's per-connection state and steps. Every white-box peer test
 // reaches them through this file, so moving that state behind a session object changed this
-// file alone and not the assertions of the tests that use it. Slice 1c of the ixctl deepening
-// drives those tests through the link's frames instead and removes the file.
+// file alone and not the assertions of the tests that use it. The file stays: the tests it
+// serves set the inputs of the status table (TestDegradedIsLiftedOnlyWhenLiveAndReconciled) and
+// the preconditions of interleavings frames cannot reach deterministically (a subscription taken
+// from the link before a publish, the happens-before edge Codex rounds 47 and 48 asked for; a
+// jump between a list's request and its reply). A test that can go through frames federates over
+// the in-memory transport instead (peers_mem_test.go, peers_session_test.go).
 
 // sessOf is the state of the session the link runs now, or ran last (client, ctl, pipes, listed,
 // cursor). The caller holds l.mu when it reads or writes through it while the link runs.
