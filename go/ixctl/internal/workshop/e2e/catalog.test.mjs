@@ -1,12 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {TYPES, toolState, displayMode} from '../web/catalog.js';
+import {TYPES, TRAITS, implementsTrait, summarize, toolState, displayMode} from '../web/catalog.js';
 
 test('the catalog names every widget type the client can show, with a visible label and what it needs', () => {
   assert.deepEqual(TYPES.map(x => x.kind), ['checklist', 'counter', 'queries']);
-  assert.deepEqual(TYPES.filter(x => x.create).map(x => x.kind), ['checklist', 'counter'], 'queries are imported, not created by hand');
-  assert.deepEqual(TYPES.filter(x => !x.runtime).map(x => x.kind), ['queries'], 'a list of queries runs no IXLET');
+  assert.deepEqual(TYPES.filter(x => implementsTrait(x.kind, 'Creatable')).map(x => x.kind), ['checklist', 'counter'], 'queries are imported, not created by hand');
+  assert.deepEqual(TYPES.filter(x => !implementsTrait(x.kind, 'Runnable')).map(x => x.kind), ['queries'], 'a list of queries runs no IXLET');
   for (const x of TYPES) assert.ok(x.labelKey && x.helpKey && x.icon);
+});
+
+test('each type states the traits it implements, and only known ones', () => {
+  assert.deepEqual(TYPES.map(x => [x.kind, x.traits]), [['checklist', ['Creatable', 'Runnable', 'Collapsible']], ['counter', ['Creatable', 'Runnable', 'Collapsible']], ['queries', ['Collapsible']]]);
+  for (const x of TYPES) for (const name of x.traits) assert.ok(TRAITS.includes(name));
+  assert.equal(implementsTrait('queries', 'Runnable'), false);
+  assert.equal(implementsTrait('unknown-kind', 'Collapsible'), false, 'an unknown type implements nothing');
+});
+
+test('the Collapsible method of each type says what to show while folded', () => {
+  assert.deepEqual(summarize('checklist', {total: 4, done: 1}), {key: 'sumList', done: 1, total: 4});
+  assert.deepEqual(summarize('checklist', {total: 0, done: 0}), {key: 'sumListEmpty'});
+  assert.deepEqual(summarize('counter', {value: 7}), {key: 'sumCounter', value: 7});
+  assert.deepEqual(summarize('queries', {count: 12}), {key: 'sumQueries', count: 12});
+  assert.equal(summarize('unknown-kind', {}), null, 'no trait, no content');
 });
 
 const base = {kind: 'counter', hasDefinition: true, local: true, saved: false, status: 'local'};

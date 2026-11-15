@@ -48,6 +48,7 @@ func TestPhoneNavigationNamesTypesAndStates(t *testing.T) {
 	page.press("[data-nav='widgets']")
 	page.until("three widget types are named", `[...document.querySelectorAll('#catalog [data-type] .kind-chip span')].map(e=>e.textContent).join('|')==='Liste|Compteur|Requêtes'`)
 	page.until("only List and Counter can be made by hand", `[...document.querySelectorAll('#catalog [data-create]')].map(b=>b.dataset.create).join('|')==='checklist|counter'`)
+	page.until("each type shows its traits", `[...document.querySelectorAll('#catalog [data-type]')].map(c=>c.dataset.type+':'+[...c.querySelectorAll('[data-trait]')].map(e=>e.dataset.trait).join('+')).join('|')==='checklist:Creatable+Runnable+Collapsible|counter:Creatable+Runnable+Collapsible|queries:Collapsible'`)
 	page.until("every type has a preview", `document.querySelectorAll('#catalog [data-type] .pv').length===3`)
 	page.until("nothing is made yet", `document.querySelectorAll('#catalog [data-inst]').length===0`)
 
@@ -78,8 +79,17 @@ func TestPhoneNavigationNamesTypesAndStates(t *testing.T) {
 	page.until("pinning is visible: the label and a notice change", `document.querySelector('#pin .lbl').textContent==='Épinglé' && document.getElementById('pin').getAttribute('aria-pressed')==='true' && document.getElementById('notice').textContent.includes('Épinglé')`)
 	page.press("#surface-open")
 	page.until("on a phone the surface opens in this window, with the pinned tool and a way back", `location.hash==='#surface' && [...document.querySelectorAll('#surface [data-surface-tool] h2')].map(h=>h.textContent).join()==='Épicerie' && document.querySelector('#surface .surface-back')!==null`)
+	page.press("#surface [data-collapse]")
+	page.until("a tile folds to its summary on the surface", `document.querySelector('#surface [data-folded]')?.textContent==='0 coché(s) sur 2'`)
+	page.press("#surface [data-collapse]")
+	page.until("and unfolds again", `document.querySelector('#surface [data-folded]')===null`)
 	page.press("#surface .surface-back")
 	page.until("back in IxForge", `document.body.dataset.mode==='app'`)
+	// Collapsible: a list folds to one line with its summary, and unfolds with its items intact.
+	page.press("#collapse")
+	page.until("folded: the summary replaces the widget", `document.querySelector('#widget-host [data-folded]')?.textContent==='0 coché(s) sur 2' && document.querySelectorAll('[data-item]').length===0 && document.getElementById('collapse').getAttribute('aria-expanded')==='false' && document.querySelector('#collapse .lbl').textContent==='Déplier'`)
+	page.press("#collapse")
+	page.until("unfolded: the items are back", shownItems+`==='[ ] Lait, [ ] Pain'`)
 	page.until("nothing is pending at rest", `document.getElementById('action-busy').textContent===''`)
 	page.screenshot("telephone-liste.png")
 

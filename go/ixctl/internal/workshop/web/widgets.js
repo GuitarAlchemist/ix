@@ -20,6 +20,7 @@ const PATHS = {
   detach: 'M14 4h6v6M20 4l-8 8M18 14v6H4V6h6',
   reattach: 'M10 14l-6 6M4 14v6h6M14 4h6v16H8',
   pin: 'M9 4h6l-1 6l3 3H7l3-3zM12 13v8',
+  collapse: 'M5 9l7 7l7-7M5 4h14',
   export: 'M12 4v11M7 10l5 5l5-5M5 20h14',
   import: 'M12 15V4M7 9l5-5l5 5M5 20h14',
   plus: 'M12 5v14M5 12h14',

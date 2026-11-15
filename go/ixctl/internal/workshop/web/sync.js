@@ -145,6 +145,12 @@ export class Replica {
       p.dirty = true;
     });
   }
+  async collapse(key, folded) {
+    return this.change(state => {
+      state.collapsed = (state.collapsed || []).filter(k => k !== key);
+      if (folded) state.collapsed.push(key);
+    });
+  }
   async pin(key, pinned) {
     return this.change(state => {
       state.surface = (state.surface || []).filter(k => k !== key);

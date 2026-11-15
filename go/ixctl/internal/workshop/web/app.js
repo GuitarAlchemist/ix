@@ -3,7 +3,7 @@ import {startDictation, installLocalVoice} from './voice.js';
 import {Updates} from './updates.js';
 import {icon, parseWidget, widgetData, exportPage} from './widgets.js';
 import {askClaude} from './ai.js';
-import {TYPES, toolState, displayMode} from './catalog.js';
+import {TYPES, toolState, displayMode, implementsTrait, summarize} from './catalog.js';
 import {html, render as draw, nothing, keyed, unsafeSVG} from './vendor/lit-all.min.js';
 
 const resources = {
@@ -25,7 +25,7 @@ const resources = {
     state_draft: 'Brouillon sur cet appareil', state_sending: 'En cours d’envoi au Desktop', state_shared: 'Partagé par le Desktop', state_lastKnown: 'Dernière valeur connue', state_noRuntime: 'Non relié à un runtime',
     stepOf: 'Étape {{n}} sur {{total}}', progressUnknown: 'Progression inconnue', blocked: 'Bloqué',
     blocker_notPaired: 'cet appareil n’est pas appairé', blocker_desktopUnreachable: 'Desktop injoignable', blocker_awaitingApproval: 'en attente d’approbation sur le Desktop', blocker_accessRefused: 'accès refusé ou révoqué', blocker_noDefinition: 'aucune définition d’IXlet pour ce widget',
-    actionBusy: 'Action en cours…', pinShort: 'Épingler', pinnedShort: 'Épinglé', pinnedNotice: 'Épinglé sur la surface (bouton « surface » en haut pour la voir).', unpinnedNotice: 'Retiré de la surface.', surfaceBack: 'Retour à IxForge', exportShort: 'Exporter', detachShort: 'Détacher', reattachShort: 'Rattacher',
+    actionBusy: 'Action en cours…', pinShort: 'Épingler', pinnedShort: 'Épinglé', pinnedNotice: 'Épinglé sur la surface (bouton « surface » en haut pour la voir).', unpinnedNotice: 'Retiré de la surface.', surfaceBack: 'Retour à IxForge', collapseShort: 'Replier', expandShort: 'Déplier', traitsTitle: 'Traits', traitCreatable: 'Créable à la main', traitRunnable: 'Tourne sur le Desktop', traitCollapsible: 'Se replie', sumList: '{{done}} coché(s) sur {{total}}', sumListEmpty: 'Liste vide', sumCounter: 'Valeur : {{value}}', sumQueries: '{{count}} requête(s)', exportShort: 'Exporter', detachShort: 'Détacher', reattachShort: 'Rattacher',
     approve: 'Approuver', refuse: 'Refuser', revoke: 'Révoquer', thisDeviceShort: 'cet appareil', status_pending: 'en attente', status_approved: 'approuvé', status_refused: 'refusé', status_revoked: 'révoqué',
     language: 'Langue : français (changer)', theme: 'Apparence', system: 'système', light: 'claire', dark: 'sombre', install: 'Installer l’application', update: 'Appliquer la mise à jour',
     local: 'Sur cet appareil seulement', connecting: 'Synchronisation…', connected: 'Desktop connecté', offline: 'Hors ligne · vos modifications restent ici', device_pending: 'En attente d’approbation', device_refused: 'Accès refusé · données conservées', device_revoked: 'Accès révoqué · données conservées', store_changed: 'Base Desktop différente · synchronisation suspendue',
@@ -64,7 +64,7 @@ const resources = {
     state_draft: 'Draft on this device', state_sending: 'Being sent to the Desktop', state_shared: 'Shared by the Desktop', state_lastKnown: 'Last known value', state_noRuntime: 'Not connected to a runtime',
     stepOf: 'Step {{n}} of {{total}}', progressUnknown: 'Progress unknown', blocked: 'Blocked',
     blocker_notPaired: 'this device is not paired', blocker_desktopUnreachable: 'Desktop unreachable', blocker_awaitingApproval: 'waiting for approval on the Desktop', blocker_accessRefused: 'access refused or revoked', blocker_noDefinition: 'no IXLET definition for this widget',
-    actionBusy: 'Action in progress…', pinShort: 'Pin', pinnedShort: 'Pinned', pinnedNotice: 'Pinned to the surface (use the surface button at the top to see it).', unpinnedNotice: 'Removed from the surface.', surfaceBack: 'Back to IxForge', exportShort: 'Export', detachShort: 'Detach', reattachShort: 'Reattach',
+    actionBusy: 'Action in progress…', pinShort: 'Pin', pinnedShort: 'Pinned', pinnedNotice: 'Pinned to the surface (use the surface button at the top to see it).', unpinnedNotice: 'Removed from the surface.', surfaceBack: 'Back to IxForge', collapseShort: 'Collapse', expandShort: 'Expand', traitsTitle: 'Traits', traitCreatable: 'Can be made by hand', traitRunnable: 'Runs on the Desktop', traitCollapsible: 'Collapsible', sumList: '{{done}} of {{total}} checked', sumListEmpty: 'Empty list', sumCounter: 'Value: {{value}}', sumQueries: '{{count}} quer(ies)', exportShort: 'Export', detachShort: 'Detach', reattachShort: 'Reattach',
     approve: 'Approve', refuse: 'Refuse', revoke: 'Revoke', thisDeviceShort: 'this device', status_pending: 'waiting', status_approved: 'approved', status_refused: 'refused', status_revoked: 'revoked',
     language: 'Language: English (change)', theme: 'Appearance', system: 'system', light: 'light', dark: 'dark', install: 'Install the app', update: 'Apply update',
     local: 'On this device only', connecting: 'Syncing…', connected: 'Desktop connected', offline: 'Offline · your changes stay here', device_pending: 'Waiting for approval', device_refused: 'Access refused · data kept', device_revoked: 'Access revoked · data kept', store_changed: 'Different Desktop database · sync paused',
@@ -127,6 +127,12 @@ function runtime(state, tool) {
   return {key, x, local, usable: local || engine.status === 'connected', run, kept: !local && Boolean((state.localXlets || {})[key])};
 }
 const widget = (tool, rt, lang, compact = false) => html`<ix-widget data-xlet-local=${rt.local ? tool.definition?.id || "" : nothing} data-xlet-live=${rt.local ? nothing : tool.definition.id} kind=${tool.widget.kind} .entries=${tool.widget.entries || []} .made=${tool.widget} .x=${rt.x} definition=${tool.definition?.id || ''} ?usable=${rt.usable} .run=${rt.run} .t=${t} lang=${lang} ?compact=${compact}></ix-widget>`;
+// What a Collapsible type says about a tool while it is folded: the type's own `summary` method, fed with plain facts.
+const foldedLine = (tool, rt) => {
+  const items = rt.x?.items || [], facts = {checklist: {total: items.length, done: items.filter(i => i.done).length}, counter: {value: rt.x?.value}, queries: {count: (tool.widget.entries || []).length}}[tool.widget.kind];
+  const s = summarize(tool.widget.kind, facts);
+  return s ? t(s.key, s) : '';
+};
 const badge = (tool, rt) => tool.widget.kind === 'queries' ? String((tool.widget.entries || []).length) : tool.widget.kind === 'counter' ? String(rt.x.value) : (rt.x.items || []).length ? `${rt.x.items.filter(i => i.done).length}/${rt.x.items.length}` : '';
 function currentTool(state, list) {
   if (view.mode === 'widget') return list.find(x => x.key === view.key);
@@ -167,12 +173,12 @@ function catalogView(state, list, status, current) {
   const group = (key, items) => html`<section class="group" data-group=${key}><h3>${t(key)} <span class="count">${items.length}</span></h3>${items.length ? items.map(r => toolCard(state, r.x, status, current)) : none}</section>`;
   const held = r => ['shared', 'lastKnown'].includes(r.st.state);
   if (nav === 'ixlets') {
-    const runs = rows.filter(r => r.x.widget.kind !== 'queries' && r.st.state !== 'noRuntime');
-    return html`<h2 class="catalog-title">${t('ixletsTitle')}</h2>${group('ixletActive', runs.filter(held))}${group('ixletLocal', runs.filter(r => !held(r)))}${group('ixletNone', rows.filter(r => r.x.widget.kind === 'queries' || r.st.state === 'noRuntime'))}`;
+    const runs = rows.filter(r => implementsTrait(r.x.widget.kind, 'Runnable') && r.st.state !== 'noRuntime');
+    return html`<h2 class="catalog-title">${t('ixletsTitle')}</h2>${group('ixletActive', runs.filter(held))}${group('ixletLocal', runs.filter(r => !held(r)))}${group('ixletNone', rows.filter(r => !implementsTrait(r.x.widget.kind, 'Runnable') || r.st.state === 'noRuntime'))}`;
   }
   const typeCard = ty => html`<article class="type-card" data-type=${ty.kind}>
-      <header>${kindChip(ty.kind)}</header><p>${t(ty.helpKey)}</p><div class="pv" role="img" aria-label=${t('preview') + ' : ' + t(ty.labelKey)}>${PREVIEWS[ty.kind]()}</div>
-      ${ty.create ? html`<button data-create=${ty.kind} @click=${() => createFrom(ty.kind)}>${icon(ty.icon)}<span>${t('create')} · ${t(ty.labelKey)}</span></button>` : html`<p class="hint">${t('typeImported')}</p>`}</article>`;
+      <header>${kindChip(ty.kind)}</header><p>${t(ty.helpKey)}</p><ul class="traits" aria-label=${t('traitsTitle')}>${ty.traits.map(n => html`<li class="trait" data-trait=${n}>${t('trait' + n)}</li>`)}</ul><div class="pv" role="img" aria-label=${t('preview') + ' : ' + t(ty.labelKey)}>${PREVIEWS[ty.kind]()}</div>
+      ${implementsTrait(ty.kind, 'Creatable') ? html`<button data-create=${ty.kind} @click=${() => createFrom(ty.kind)}>${icon(ty.icon)}<span>${t('create')} · ${t(ty.labelKey)}</span></button>` : html`<p class="hint">${t('typeImported')}</p>`}</article>`;
   return html`<h2 class="catalog-title">${t('navWidgets')}</h2>
     <section class="types" data-types><h3>${t('typesTitle')} <span class="count">${TYPES.length}</span></h3><div class="type-grid">${TYPES.map(typeCard)}</div></section>
     <h3 class="catalog-sub">${t('instancesTitle')} <span class="count">${rows.length}</span></h3>
@@ -242,8 +248,9 @@ async function render() {
   if (view.mode === 'surface') {
     const pinned = (state.surface || []).map(key => list.find(x => x.key === key)).filter(Boolean);
     draw(pinned.length ? html`${window.name === 'ixforge-surface' ? '' : html`<button class="ghost surface-back" @click=${() => { location.hash = ''; }}>${t('surfaceBack')}</button>`}${pinned.map(x => html`<article class="tile" data-surface-tool=${x.key}><div class="tile-head"><h2>${x.widget.title}</h2>
+      ${implementsTrait(x.widget.kind, 'Collapsible') ? html`<button class="icon ghost" data-collapse=${x.key} aria-expanded=${String(!(state.collapsed || []).includes(x.key))} title=${t((state.collapsed || []).includes(x.key) ? 'expandShort' : 'collapseShort')} aria-label=${t((state.collapsed || []).includes(x.key) ? 'expandShort' : 'collapseShort')} @click=${() => act(() => replica.collapse(x.key, !(state.collapsed || []).includes(x.key)))}>${icon('collapse')}</button>` : nothing}
       <button class="icon ghost" data-unpin=${x.key} title=${t('unpin')} aria-label=${t('unpin')} @click=${() => act(() => replica.pin(x.key, false))}>${icon('x')}</button></div>
-      ${keyed(x.key, widget(x, runtime(state, x), state.language, true))}</article>`)}` : html`${window.name === 'ixforge-surface' ? '' : html`<button class="ghost surface-back" @click=${() => { location.hash = ''; }}>${t('surfaceBack')}</button>`}<div class="empty"><p class="big">${t('surfaceEmpty')}</p></div>`, $('surface'));
+      ${implementsTrait(x.widget.kind, 'Collapsible') && (state.collapsed || []).includes(x.key) ? html`<p class="folded" data-folded>${foldedLine(x, runtime(state, x))}</p>` : keyed(x.key, widget(x, runtime(state, x), state.language, true))}</article>`)}` : html`${window.name === 'ixforge-surface' ? '' : html`<button class="ghost surface-back" @click=${() => { location.hash = ''; }}>${t('surfaceBack')}</button>`}<div class="empty"><p class="big">${t('surfaceEmpty')}</p></div>`, $('surface'));
   }
 
   // Widgets and IXlets: a persistent choice between the types, the widgets made, and what runs.
@@ -277,7 +284,9 @@ async function render() {
   { const on = (state.surface || []).includes(tool.key); $('pin').setAttribute('aria-pressed', String(on)); $('pin').querySelector('.lbl').textContent = t(on ? 'pinnedShort' : 'pinShort'); }
   const away = view.mode === 'app' && isDetached(tool.key);
   $('detached-note').hidden = !away; $('widget-host').hidden = away;
-  draw(away ? nothing : keyed(tool.key, widget(tool, rt, state.language)), $('widget-host'));
+  const foldable = implementsTrait(tool.widget.kind, 'Collapsible'), folded = foldable && (state.collapsed || []).includes(tool.key);
+  $('collapse').hidden = !foldable; $('collapse').setAttribute('aria-expanded', String(!folded)); $('collapse').querySelector('.lbl').textContent = t(folded ? 'expandShort' : 'collapseShort');
+  draw(away ? nothing : folded ? html`<p class="folded" data-folded>${foldedLine(tool, rt)}</p>` : keyed(tool.key, widget(tool, rt, state.language)), $('widget-host'));
   $('local-kept').hidden = !rt.kept;
 }
 
@@ -422,6 +431,7 @@ async function boot() {
     await replica.create(intentFor(data.kind, data.title, data), data); engine.sync();
   });
   $('tool-title').oninput = () => act(() => replica.renameTool($('tool-title').dataset.key, $('tool-title').value));
+  $('collapse').onclick = () => act(async () => { const key = $('tool-title').dataset.key, state = await replica.read(); await replica.collapse(key, !(state.collapsed || []).includes(key)); });
   $('pin').onclick = () => act(async () => { const key = $('tool-title').dataset.key, state = await replica.read(), on = !(state.surface || []).includes(key); await replica.pin(key, on); $('notice').textContent = t(on ? 'pinnedNotice' : 'unpinnedNotice'); });
   $('export').onclick = () => exportTool();
   $('detach').onclick = () => detachTool($('tool-title').dataset.key);
