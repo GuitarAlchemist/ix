@@ -128,3 +128,4 @@ body[data-mode=widget] #rail,body[data-mode=widget] .bar,body[data-mode=widget] 
   .create-actions button:not(.icon) span[data-i18n]{display:inline!important}
   .tool-actions{flex-wrap:wrap}.stage-head{flex-wrap:wrap;gap:6px}
 }
+.surface-back{grid-column:1/-1;justify-self:start}#pin[aria-pressed=true] .lbl{font-weight:700}

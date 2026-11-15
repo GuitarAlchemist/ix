@@ -25,7 +25,7 @@ const resources = {
     state_draft: 'Brouillon sur cet appareil', state_sending: 'En cours d’envoi au Desktop', state_shared: 'Partagé par le Desktop', state_lastKnown: 'Dernière valeur connue', state_noRuntime: 'Non relié à un runtime',
     stepOf: 'Étape {{n}} sur {{total}}', progressUnknown: 'Progression inconnue', blocked: 'Bloqué',
     blocker_notPaired: 'cet appareil n’est pas appairé', blocker_desktopUnreachable: 'Desktop injoignable', blocker_awaitingApproval: 'en attente d’approbation sur le Desktop', blocker_accessRefused: 'accès refusé ou révoqué', blocker_noDefinition: 'aucune définition d’IXlet pour ce widget',
-    actionBusy: 'Action en cours…', pinShort: 'Épingler', exportShort: 'Exporter', detachShort: 'Détacher', reattachShort: 'Rattacher',
+    actionBusy: 'Action en cours…', pinShort: 'Épingler', pinnedShort: 'Épinglé', pinnedNotice: 'Épinglé sur la surface (bouton « surface » en haut pour la voir).', unpinnedNotice: 'Retiré de la surface.', surfaceBack: 'Retour à IxForge', exportShort: 'Exporter', detachShort: 'Détacher', reattachShort: 'Rattacher',
     approve: 'Approuver', refuse: 'Refuser', revoke: 'Révoquer', thisDeviceShort: 'cet appareil', status_pending: 'en attente', status_approved: 'approuvé', status_refused: 'refusé', status_revoked: 'révoqué',
     language: 'Langue : français (changer)', theme: 'Apparence', system: 'système', light: 'claire', dark: 'sombre', install: 'Installer l’application', update: 'Appliquer la mise à jour',
     local: 'Sur cet appareil seulement', connecting: 'Synchronisation…', connected: 'Desktop connecté', offline: 'Hors ligne · vos modifications restent ici', device_pending: 'En attente d’approbation', device_refused: 'Accès refusé · données conservées', device_revoked: 'Accès révoqué · données conservées', store_changed: 'Base Desktop différente · synchronisation suspendue',
@@ -64,7 +64,7 @@ const resources = {
     state_draft: 'Draft on this device', state_sending: 'Being sent to the Desktop', state_shared: 'Shared by the Desktop', state_lastKnown: 'Last known value', state_noRuntime: 'Not connected to a runtime',
     stepOf: 'Step {{n}} of {{total}}', progressUnknown: 'Progress unknown', blocked: 'Blocked',
     blocker_notPaired: 'this device is not paired', blocker_desktopUnreachable: 'Desktop unreachable', blocker_awaitingApproval: 'waiting for approval on the Desktop', blocker_accessRefused: 'access refused or revoked', blocker_noDefinition: 'no IXLET definition for this widget',
-    actionBusy: 'Action in progress…', pinShort: 'Pin', exportShort: 'Export', detachShort: 'Detach', reattachShort: 'Reattach',
+    actionBusy: 'Action in progress…', pinShort: 'Pin', pinnedShort: 'Pinned', pinnedNotice: 'Pinned to the surface (use the surface button at the top to see it).', unpinnedNotice: 'Removed from the surface.', surfaceBack: 'Back to IxForge', exportShort: 'Export', detachShort: 'Detach', reattachShort: 'Reattach',
     approve: 'Approve', refuse: 'Refuse', revoke: 'Revoke', thisDeviceShort: 'this device', status_pending: 'waiting', status_approved: 'approved', status_refused: 'refused', status_revoked: 'revoked',
     language: 'Language: English (change)', theme: 'Appearance', system: 'system', light: 'light', dark: 'dark', install: 'Install the app', update: 'Apply update',
     local: 'On this device only', connecting: 'Syncing…', connected: 'Desktop connected', offline: 'Offline · your changes stay here', device_pending: 'Waiting for approval', device_refused: 'Access refused · data kept', device_revoked: 'Access revoked · data kept', store_changed: 'Different Desktop database · sync paused',
@@ -153,7 +153,6 @@ function stateOf(state, x, status) {
 const stateLine = st => [t('state_' + st.state), st.step ? (st.progressKnown ? t('stepOf', {n: st.step, total: st.steps}) : t('progressUnknown')) : '', st.blocker ? t('blocked') + ' : ' + t('blocker_' + st.blocker) : ''].filter(Boolean).join(' · ');
 const kindChip = kind => { const ty = TYPES.find(y => y.kind === kind) || TYPES[0]; return html`<span class="kind-chip" data-kind=${kind}>${icon(ty.icon)}<span>${t(ty.labelKey)}</span></span>`; };
 function createFrom(kind) {
-  if (!$('new-name').value.trim()) { $('notice').textContent = t('nameFirst'); $('new-name').focus(); return; }
   createFromField(kind);
 }
 function toolCard(state, x, status, current) {
@@ -239,11 +238,12 @@ async function render() {
 
   // The surface: pinned tools side by side.
   $('surface').hidden = view.mode !== 'surface';
+  if (view.mode !== 'surface') draw(html``, $('surface')); // nothing stays alive in the hidden surface
   if (view.mode === 'surface') {
     const pinned = (state.surface || []).map(key => list.find(x => x.key === key)).filter(Boolean);
-    draw(pinned.length ? html`${pinned.map(x => html`<article class="tile" data-surface-tool=${x.key}><div class="tile-head"><h2>${x.widget.title}</h2>
+    draw(pinned.length ? html`${window.name === 'ixforge-surface' ? '' : html`<button class="ghost surface-back" @click=${() => { location.hash = ''; }}>${t('surfaceBack')}</button>`}${pinned.map(x => html`<article class="tile" data-surface-tool=${x.key}><div class="tile-head"><h2>${x.widget.title}</h2>
       <button class="icon ghost" data-unpin=${x.key} title=${t('unpin')} aria-label=${t('unpin')} @click=${() => act(() => replica.pin(x.key, false))}>${icon('x')}</button></div>
-      ${keyed(x.key, widget(x, runtime(state, x), state.language, true))}</article>`)}` : html`<div class="empty"><p class="big">${t('surfaceEmpty')}</p></div>`, $('surface'));
+      ${keyed(x.key, widget(x, runtime(state, x), state.language, true))}</article>`)}` : html`${window.name === 'ixforge-surface' ? '' : html`<button class="ghost surface-back" @click=${() => { location.hash = ''; }}>${t('surfaceBack')}</button>`}<div class="empty"><p class="big">${t('surfaceEmpty')}</p></div>`, $('surface'));
   }
 
   // Widgets and IXlets: a persistent choice between the types, the widgets made, and what runs.
@@ -274,7 +274,7 @@ async function render() {
   const saved = project.revision > 0 && !project.dirty && !state.outbox.some(op => op.project.id === tool.projectID);
   $('tool-status').textContent = tool.widget.kind === 'queries' ? (saved ? t('queriesShared', {count: (tool.widget.entries || []).length}) : t(state.token ? 'toolWaiting' : 'toolLocal'))
     : rt.local ? t(state.token ? 'toolWaiting' : 'toolLocal') : t(engine.status === 'connected' ? 'toolShared' : 'toolLastKnown', {version: rt.x.version});
-  $('pin').setAttribute('aria-pressed', String((state.surface || []).includes(tool.key)));
+  { const on = (state.surface || []).includes(tool.key); $('pin').setAttribute('aria-pressed', String(on)); $('pin').querySelector('.lbl').textContent = t(on ? 'pinnedShort' : 'pinShort'); }
   const away = view.mode === 'app' && isDetached(tool.key);
   $('detached-note').hidden = !away; $('widget-host').hidden = away;
   draw(away ? nothing : keyed(tool.key, widget(tool, rt, state.language)), $('widget-host'));
@@ -291,11 +291,16 @@ async function loadDevices() {
 
 // A new tool from the field: a sentence ("Créer un workspace … avec une liste …"), a pasted widget (JSON or an
 // exported page), or a plain name with the kind of the button pressed (Enter makes a list).
+// A name is optional: without one the tool is called "List", then "List 2", "List 3"...
+function defaultName(state, kind) {
+  const base = t(TYPES.find(y => y.kind === kind).labelKey), taken = new Set(tools(state).map(x => x.widget.title));
+  for (let n = 1; ; n++) { const name = n === 1 ? base : base + ' ' + n; if (!taken.has(name)) return name; }
+}
 async function createFromField(kind) {
-  const text = $('new-name').value.trim();
-  if (!text) { $('new-name').focus(); return; }
+  const typed = $('new-name').value.trim();
   const kept = await act(async () => {
     const state = await replica.read();
+    const text = typed || defaultName(state, kind);
     if (/^[{<]/.test(text)) { const data = parseWidget(text); await replica.create(intentFor(data.kind, data.title, data), data); }
     else {
       let intent;
@@ -404,7 +409,7 @@ async function boot() {
   window.addEventListener('hashchange', () => { if (takePairing()) linkThisPC(); view = readView(); render().catch(message); });
   listen();
 
-  $('new-name').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); createFromField('checklist'); } };
+  $('new-name').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); if ($('new-name').value.trim()) createFromField('checklist'); } };
   $('new-list').onclick = () => createFromField('checklist');
   $('new-counter').onclick = () => createFromField('counter');
   for (const b of document.querySelectorAll('[data-nav]')) b.onclick = () => { nav = nav === b.dataset.nav ? null : b.dataset.nav; render().catch(message); };
@@ -417,12 +422,12 @@ async function boot() {
     await replica.create(intentFor(data.kind, data.title, data), data); engine.sync();
   });
   $('tool-title').oninput = () => act(() => replica.renameTool($('tool-title').dataset.key, $('tool-title').value));
-  $('pin').onclick = () => act(async () => { const key = $('tool-title').dataset.key, state = await replica.read(); await replica.pin(key, !(state.surface || []).includes(key)); });
+  $('pin').onclick = () => act(async () => { const key = $('tool-title').dataset.key, state = await replica.read(), on = !(state.surface || []).includes(key); await replica.pin(key, on); $('notice').textContent = t(on ? 'pinnedNotice' : 'unpinnedNotice'); });
   $('export').onclick = () => exportTool();
   $('detach').onclick = () => detachTool($('tool-title').dataset.key);
   $('reattach').onclick = () => { channel?.postMessage({type: 'gone', key: view.key}); window.close(); };
   $('reattach-main').onclick = () => { const key = $('tool-title').dataset.key; channel?.postMessage({type: 'reattach', key}); delete detached[key]; render().catch(message); };
-  $('surface-open').onclick = () => { window.open(home() + '#surface', 'ixforge-surface', 'popup,width=1100,height=760'); };
+  $('surface-open').onclick = () => { if (matchMedia('(pointer: coarse)').matches) { location.hash = 'surface'; return; } window.open(home() + '#surface', 'ixforge-surface', 'popup,width=1100,height=760'); };
   $('devices-open').onclick = () => { $('devices').hidden = false; loadDevices(); render().catch(message); $('devices-close').focus(); };
   $('devices-close').onclick = () => { $('devices').hidden = true; $('devices-open').focus(); };
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('devices').hidden) $('devices-close').click(); });

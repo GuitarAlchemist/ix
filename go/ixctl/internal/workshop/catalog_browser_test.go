@@ -8,6 +8,7 @@ import (
 // phone and tablet widths, emulated in a real headless Chrome: this is NOT a real device.
 func emulate(page *cdpPage, width, height int) {
 	page.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": width, "height": height, "deviceScaleFactor": 2, "mobile": true})
+	page.call("Emulation.setTouchEmulationEnabled", map[string]any{"enabled": true})
 }
 
 // openFromCatalog presses the Widgets or IXlets navigation (when it is not already the open one) and opens a tool by its title.
@@ -50,20 +51,22 @@ func TestPhoneNavigationNamesTypesAndStates(t *testing.T) {
 	page.until("every type has a preview", `document.querySelectorAll('#catalog [data-type] .pv').length===3`)
 	page.until("nothing is made yet", `document.querySelectorAll('#catalog [data-inst]').length===0`)
 
-	// A name is needed first; the card says so instead of making an unnamed tool.
+	// The name is optional: an empty field makes "Liste", then "Liste 2".
 	page.press("[data-create='checklist']")
-	page.until("asks for a name", `document.getElementById('notice').textContent.includes('nom')`)
+	page.until("an unnamed list is called Liste", `[...document.querySelectorAll('#catalog [data-inst] .inst-title')].some(e=>e.textContent==='Liste')`)
+	page.press("[data-create='checklist']")
+	page.until("the second unnamed list is Liste 2", `[...document.querySelectorAll('#catalog [data-inst] .inst-title')].some(e=>e.textContent==='Liste 2')`)
 	page.typeInto("new-name", "Épicerie")
 	page.press("[data-create='checklist']")
-	page.until("the list is a draft, with its step and its blocker", `(()=>{const e=document.querySelector("#catalog [data-group='groupDraft'] [data-inst]");return e&&e.dataset.state==='draft'&&e.textContent.includes('Brouillon sur cet appareil')&&e.textContent.includes('Étape 1 sur 3')&&e.textContent.includes('Bloqué : cet appareil n’est pas appairé')&&!/%/.test(e.textContent)})()`)
+	page.until("the list is a draft, with its step and its blocker", `(()=>{const e=[...document.querySelectorAll("#catalog [data-group='groupDraft'] [data-inst]")].find(b=>b.querySelector('.inst-title').textContent==='Épicerie');return e&&e.dataset.state==='draft'&&e.textContent.includes('Brouillon sur cet appareil')&&e.textContent.includes('Étape 1 sur 3')&&e.textContent.includes('Bloqué : cet appareil n’est pas appairé')&&!/%/.test(e.textContent)})()`)
 	page.typeInto("new-name", "Tasses")
 	page.press("[data-create='counter']")
-	page.until("two drafts", `document.querySelectorAll("#catalog [data-group='groupDraft'] [data-inst]").length===2`)
+	page.until("four drafts", `document.querySelectorAll("#catalog [data-group='groupDraft'] [data-inst]").length===4`)
 	page.until("no tool is shared yet", `document.querySelectorAll("#catalog [data-group='groupShared'] [data-inst]").length===0`)
 	page.screenshot("telephone-widgets.png")
 
 	page.press("[data-nav='ixlets']")
-	page.until("IXlets: both run only on this device", `document.querySelectorAll("#catalog [data-group='ixletLocal'] [data-inst]").length===2 && document.querySelectorAll("#catalog [data-group='ixletActive'] [data-inst]").length===0`)
+	page.until("IXlets: both run only on this device", `document.querySelectorAll("#catalog [data-group='ixletLocal'] [data-inst]").length===4 && document.querySelectorAll("#catalog [data-group='ixletActive'] [data-inst]").length===0`)
 	page.screenshot("telephone-ixlets.png")
 
 	openFromCatalog(t, page, "widgets", "Épicerie")
@@ -71,6 +74,12 @@ func TestPhoneNavigationNamesTypesAndStates(t *testing.T) {
 	page.until("its actions have visible names", `[...document.querySelectorAll('.tool-actions .lbl')].filter(e=>e.getBoundingClientRect().width>0).map(e=>e.textContent).join('|').includes('Épingler')`)
 	addListItem(t, page, "Lait")
 	addListItem(t, page, "Pain")
+	page.press("#pin")
+	page.until("pinning is visible: the label and a notice change", `document.querySelector('#pin .lbl').textContent==='Épinglé' && document.getElementById('pin').getAttribute('aria-pressed')==='true' && document.getElementById('notice').textContent.includes('Épinglé')`)
+	page.press("#surface-open")
+	page.until("on a phone the surface opens in this window, with the pinned tool and a way back", `location.hash==='#surface' && [...document.querySelectorAll('#surface [data-surface-tool] h2')].map(h=>h.textContent).join()==='Épicerie' && document.querySelector('#surface .surface-back')!==null`)
+	page.press("#surface .surface-back")
+	page.until("back in IxForge", `document.body.dataset.mode==='app'`)
 	page.until("nothing is pending at rest", `document.getElementById('action-busy').textContent===''`)
 	page.screenshot("telephone-liste.png")
 
