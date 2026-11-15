@@ -139,8 +139,8 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 		return stopped(exitStartFailed)
 	}
 	in.plane.Start()
-	log.event("host.ready", map[string]any{"name": in.ready.Name, "addr": in.addr, "pid": in.ready.Pid,
-		"epoch": in.plane.Epoch(), "state_file": in.stateFile, "version": version})
+	log.ready(hostReady{Name: in.ready.Name, Addr: in.addr, Pid: uint32(in.ready.Pid),
+		Epoch: in.plane.Epoch(), StateFile: in.stateFile, Version: version})
 	set(hostStatus{State: hostRunning, Accepts: true})
 
 	source := ""

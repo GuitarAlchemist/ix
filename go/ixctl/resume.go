@@ -511,22 +511,11 @@ func readyAddr(c resumeComponent, p resumeProbes) (h readyHost, verdict, line st
 	case pid == 0:
 		return readyHost{}, verdictUnknown, fmt.Sprintf("service %s runs no process: no address to read from %s", c.Service, c.ReadyJournal)
 	}
-	tail, err := p.readTail(c.ReadyJournal, resumeJournalTail)
+	ev, _, found, err := lastReady(p.readTail, c.ReadyJournal, resumeJournalTail)
 	if err != nil {
 		return readyHost{}, verdictUnknown, fmt.Sprintf("journal %s: %v", c.ReadyJournal, err)
 	}
-	lines := strings.Split(string(tail), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		var ev struct {
-			Event string `json:"event"`
-			Addr  string `json:"addr"`
-			Pid   uint32 `json:"pid"`
-			Epoch string `json:"epoch"`
-		}
-		// The first line may be cut by the tail read and the last one still being written.
-		if json.Unmarshal([]byte(lines[i]), &ev) != nil || ev.Event != "host.ready" {
-			continue
-		}
+	if found {
 		if ev.Pid != pid {
 			return readyHost{}, verdictUnknown, fmt.Sprintf("the last host.ready line in %s is PID %d's, the service runs PID %d: this host has not said ready, or the journal is another host's", c.ReadyJournal, ev.Pid, pid)
 		}
@@ -541,7 +530,7 @@ func readyAddr(c resumeComponent, p resumeProbes) (h readyHost, verdict, line st
 		}
 		return readyHost{ap.String(), ev.Epoch, pid}, verdictOK, fmt.Sprintf("journal %s: host.ready of PID %d, the service's process, says %s", c.ReadyJournal, pid, ev.Addr)
 	}
-	return readyHost{}, verdictUnknown, fmt.Sprintf("no host.ready line in the last %d bytes of %s", resumeJournalTail, c.ReadyJournal)
+	return readyHost{}, verdictUnknown, fmt.Sprintf("no host.ready line in the last %d bytes of %s, nor of %s.1", resumeJournalTail, c.ReadyJournal, c.ReadyJournal)
 }
 
 // readyHost is what a trusted host.ready line says: the address, the run's epoch, its PID.
