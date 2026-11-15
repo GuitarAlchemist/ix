@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {interpret, createDraft, SyncEngine, initialState} from '../web/sync.js';
-import {startDictation} from '../web/voice.js';
+import {startDictation, installLocalVoice} from '../web/voice.js';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 
@@ -36,6 +36,59 @@ test('local voice adapter uses requested language and exposes denial without aud
   assert.equal(instance.lang, 'en-US'); assert.equal(instance.processLocally, true); assert.equal(state, 'voiceListening');
   instance.onresult({results: [[{transcript: 'Synthetic text only'}]]}); assert.equal(text, 'Synthetic text only');
   instance.onerror({error: 'not-allowed'}); assert.equal(state, 'voiceDenied');
+});
+// Fake recognizers only: these tests prove the adapter's decisions, never a real transcription.
+function fakeRecognition(availability, calls = {}) {
+  class Recognition {
+    static async available(value) { calls.available = value; return availability; }
+    static async install(value) { calls.install = value; return calls.installResult ?? true; }
+    constructor() { calls.instance = this; }
+    start() { calls.starts = (calls.starts || 0) + 1; }
+  }
+  Recognition.prototype.processLocally = false;
+  return Recognition;
+}
+test('a missing on-device pack is reported as such, without download or audio', async () => {
+  const calls = {}, states = [];
+  const result = await startDictation('fr', () => assert.fail('audio'), s => states.push(s), {SpeechRecognition: fakeRecognition('downloadable', calls)});
+  assert.equal(result, null); assert.equal(calls.starts, undefined); assert.equal(calls.install, undefined);
+  assert.deepEqual(calls.available, {langs: ['fr-FR'], processLocally: true});
+  assert.deepEqual(states, ['voicePackMissing']);
+  for (const [availability, state] of [['downloading', 'voicePackDownloading'], ['unavailable', 'voiceUnsupported']]) {
+    const seen = []; await startDictation('en', () => {}, s => seen.push(s), {SpeechRecognition: fakeRecognition(availability)});
+    assert.deepEqual(seen, [state]);
+  }
+});
+test('the prefixed Chrome constructor is accepted', async () => {
+  const calls = {}, states = [];
+  await startDictation('en', () => {}, s => states.push(s), {webkitSpeechRecognition: fakeRecognition('available', calls)});
+  assert.equal(calls.starts, 1); assert.deepEqual(states, ['voiceListening']);
+});
+test('errors after listening started keep their real cause', async () => {
+  for (const [error, state] of [['no-speech', 'voiceNoSpeech'], ['audio-capture', 'voiceNoMicrophone'], ['service-not-allowed', 'voiceDenied'], ['language-not-supported', 'voicePackMissing'], ['aborted', 'voiceReady'], ['network', 'voiceFailed'], ['bad-grammar', 'voiceFailed']]) {
+    const calls = {}, states = [];
+    await startDictation('fr', () => {}, (s, detail) => states.push([s, detail]), {SpeechRecognition: fakeRecognition('available', calls)});
+    calls.instance.onerror({error}); calls.instance.onend();
+    assert.deepEqual(states, [['voiceListening', undefined], [state, error]], error);
+  }
+});
+test('the on-device pack is installed only on request, for the chosen language', async () => {
+  const calls = {};
+  assert.equal(await installLocalVoice('fr', {SpeechRecognition: fakeRecognition('downloadable', calls)}), 'voiceReady');
+  assert.deepEqual(calls.install, {langs: ['fr-FR'], processLocally: true}); assert.equal(calls.starts, undefined);
+  const refused = {installResult: false};
+  assert.equal(await installLocalVoice('en', {SpeechRecognition: fakeRecognition('downloadable', refused)}), 'voicePackFailed');
+  const Throws = fakeRecognition('downloadable'); Throws.install = async () => { throw new Error('no'); };
+  assert.equal(await installLocalVoice('en', {SpeechRecognition: Throws}), 'voicePackFailed');
+  assert.equal(await installLocalVoice('en', {}), 'voiceUnsupported');
+});
+test('a throwing recognizer reports its error name instead of a microphone denial', async () => {
+  const Broken = fakeRecognition('available'); Broken.available = async () => { throw new TypeError('bad'); };
+  const states = []; await startDictation('en', () => {}, (s, d) => states.push([s, d]), {SpeechRecognition: Broken});
+  assert.deepEqual(states, [['voiceFailed', 'TypeError']]);
+  const Denied = fakeRecognition('available'); Denied.prototype.start = () => { throw new DOMException('no', 'NotAllowedError'); };
+  const denied = []; await startDictation('en', () => {}, s => denied.push(s), {SpeechRecognition: Denied});
+  assert.deepEqual(denied, ['voiceDenied']);
 });
 test('simultaneous update checks share one negotiation and settle all waitUntil promises', async () => {
   const listeners={},prepared=[],waiting=[];let activated=0;

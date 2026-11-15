@@ -35,6 +35,8 @@ type Widget struct {
 	Title        string `json:"title"`
 	Kind         string `json:"kind"`
 	InitialValue int64  `json:"initial_value"`
+	// Entries are a queries widget's queries (queries.go); other widgets have none.
+	Entries []QueryEntry `json:"entries,omitempty"`
 }
 type IXLETDefinition struct {
 	ID     string `json:"id"`
@@ -67,6 +69,12 @@ type ChangeSet struct {
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
 func titleOK(s string) bool { return strings.TrimSpace(s) != "" && len(s) <= 240 }
+
+// kindOK is the closed set of widget and IXLET kinds the Desktop can run.
+func kindOK(kind string) bool { return kind == "counter" || kind == "checklist" }
+
+// widgetKindOK adds the widgets that run no IXLET: a list of queries to read and copy.
+func widgetKindOK(kind string) bool { return kindOK(kind) || kind == "queries" }
 func validate(op Operation) error {
 	if !identifier.MatchString(op.OpID) || op.BaseRevision < 0 || !identifier.MatchString(op.Project.ID) || !titleOK(op.Project.Title) || op.Project.Workspaces == nil || len(op.Project.Workspaces) > 100 {
 		return ErrInvalid
@@ -84,12 +92,12 @@ func validate(op Operation) error {
 			return ErrInvalid
 		}
 		for _, w := range ws.Widgets {
-			if !add(w.ID, w.Title) || w.Kind != "counter" || w.InitialValue > 9007199254740991 || w.InitialValue < -9007199254740991 {
+			if !add(w.ID, w.Title) || !widgetKindOK(w.Kind) || !queriesOK(w) || w.InitialValue > 9007199254740991 || w.InitialValue < -9007199254740991 || (w.Kind == "checklist" && w.InitialValue != 0) {
 				return ErrInvalid
 			}
 		}
 		for _, d := range ws.IXLETDefinitions {
-			if !add(d.ID, d.Title) || d.Kind != "counter" || d.Status != "draft" {
+			if !add(d.ID, d.Title) || !kindOK(d.Kind) || d.Status != "draft" {
 				return ErrInvalid
 			}
 		}

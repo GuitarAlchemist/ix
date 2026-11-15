@@ -42,3 +42,7 @@ web/vendor/i18next.min.js : i18next 25.6.0, distribution UMD publique, licence M
 
 jsQR 1.4.0 et TypeScript 5.9.3 sont des dépendances de vérification, absentes des assets servis.
 
+
+## Lit
+
+web/vendor/lit-all.min.js : Lit 3.3.1, bundle `all/lit-all.min.js` of the public lit/dist repository (tag v3.3.1, 2025-07-11), BSD-3-Clause, licence reproduced in web/vendor/LICENSE-lit. Fetched on 2026-11-14 from jsDelivr and from raw.githubusercontent.com: both copies were byte-identical. SHA256 : e44caa21b3f434eccbb580c00dba2d895aa81c65fc0bf84524ca4326fffaf3ae. Loaded as an ES module by web/widgets.js; no build step, no npm.

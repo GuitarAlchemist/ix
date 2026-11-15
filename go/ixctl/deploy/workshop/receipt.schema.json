@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ixforge-update-receipt/1",
+  "title": "IxForge update receipt, schema 1 (workshop/update-<RunID>/receipt.json)",
+  "description": "Written by Update-IxForge.Core.ps1. Fields required here are the ones Undo-IxForgeUpdate checks before taking the maintenance lock; a receipt missing one is refused before any service stop. Neighbours (since HEALTH-R4) replaces ScribeSHA256; both are informative only and never read by a rollback, which re-observes neighbours just before it stops the service. See RECEIPTS.md.",
+  "type": "object",
+  "required": ["Schema", "RunID", "BackupDirectory", "CandidateSHA256", "PreviousSHA256", "Service", "InstalledExe", "ExpectedImagePath", "StateDir", "DataDir", "InstanceName", "ConfigPath", "ConfigSHA256", "SpecPath", "SpecSHA256", "Origin", "Listen", "PreviousClientVersion", "ExpectedClientVersion", "State"],
+  "properties": {
+    "Schema": {"const": 1},
+    "RunID": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+    "BackupDirectory": {"type": "string", "minLength": 1, "description": "Must equal DataDir\\update-<RunID> and the directory the receipt is read from."},
+    "Service": {"type": "string", "minLength": 1},
+    "Candidate": {"type": "string"},
+    "CandidateSHA256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "CandidateVersion": {"type": "string"},
+    "InstalledExe": {"type": "string", "minLength": 1},
+    "PreviousSHA256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "PreviousVersion": {"type": "string"},
+    "PreviousClientVersion": {"type": "string", "pattern": "^[0-9][A-Za-z0-9.+-]{0,80}$", "description": "branding.json \"version\" served before the update."},
+    "ExpectedClientVersion": {"type": "string", "pattern": "^[0-9][A-Za-z0-9.+-]{0,80}$", "description": "branding.json \"version\" the candidate must serve."},
+    "ExpectedImagePath": {"type": "string", "minLength": 1},
+    "StateDir": {"type": "string", "minLength": 1},
+    "DataDir": {"type": "string", "minLength": 1},
+    "InstanceName": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "ConfigPath": {"type": "string", "minLength": 1},
+    "ConfigSHA256": {"type": "string", "minLength": 1},
+    "SpecPath": {"type": "string", "minLength": 1},
+    "SpecSHA256": {"type": "string", "minLength": 1},
+    "Origin": {"type": "string", "minLength": 1},
+    "Listen": {"type": "string", "pattern": "^127\\.0\\.0\\.1:[1-9][0-9]{0,4}$"},
+    "State": {"enum": ["available", "backed_up", "installed", "completed", "failed_before_replacement", "reconciliation_required", "rolled_back"]},
+    "ScribeSHA256": {"type": "string", "deprecated": true, "description": "Receipts written before HEALTH-R4 (e998e3e). Ignored."},
+    "Neighbours": {
+      "description": "Baseline observed just before the stop of this run; null or absent until then. Informative: never trusted by a later rollback.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["Known", "Reason", "Routes"],
+          "properties": {
+            "Known": {"type": "boolean"},
+            "Reason": {"type": "string"},
+            "Routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["Key", "Value", "Target"],
+                "properties": {
+                  "Key": {"type": "string"},
+                  "Value": {"type": "string"},
+                  "Target": {"type": "string"},
+                  "Listening": {"type": "boolean"},
+                  "OwnerPID": {"type": ["integer", "null"]},
+                  "OwnerImage": {"type": ["string", "null"]},
+                  "Status": {"type": ["integer", "null"]}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "IntegrityVerified": {"type": "boolean"},
+    "SignatureVerified": {"const": false},
+    "Automatic": {"const": false},
+    "DatabaseAction": {"type": "string"},
+    "UpdatedUTC": {"type": "string"}
+  },
+  "additionalProperties": true
+}

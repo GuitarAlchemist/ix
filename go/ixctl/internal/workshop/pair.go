@@ -2,6 +2,7 @@ package workshop
 
 import (
 	"crypto/subtle"
+	"database/sql"
 	"fmt"
 	"net/url"
 	"strings"
@@ -9,9 +10,11 @@ import (
 )
 
 type Device struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Admin    bool   `json:"admin,omitempty"`    // administers the other devices from the app
+	Terminal bool   `json:"terminal,omitempty"` // runs commands on the Desktop's PC (terminal.go)
 }
 type Invite struct {
 	Code    string    `json:"-"`
@@ -34,7 +37,14 @@ func ValidateOrigin(origin string) error {
 
 // NewInvite, Devices and Decide are owner-only Go calls for the existing Desktop host's trusted UI.
 // There is deliberately no owner/admin endpoint in Handler. Never invoke these from a tablet request.
-func (s *Store) NewInvite(origin string) (Invite, error) {
+func (s *Store) NewInvite(origin string) (Invite, error) { return s.newInvite(origin, false) }
+
+// NewLinkInvite is the owner linking the IxForge of the PC that hosts this Desktop. The owner's own action is the
+// approval: the device that claims this invite is approved at once. Same secret, lifetime, single use and guess limit
+// as any invite; its URL tells the client to claim it without asking for a code.
+func (s *Store) NewLinkInvite(origin string) (Invite, error) { return s.newInvite(origin, true) }
+
+func (s *Store) newInvite(origin string, linked bool) (Invite, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var invite Invite
@@ -63,6 +73,10 @@ func (s *Store) NewInvite(origin string) (Invite, error) {
 	}
 	b.WriteString("</g></svg>")
 	invite.QRSVG = b.String()
+	if linked {
+		invite.URL += "&link=1"
+	}
+	s.inviteLinked = linked
 	s.inviteHash = digest(code)
 	s.inviteExpires = invite.Expires
 	s.inviteErrors = 0
@@ -94,17 +108,36 @@ func (s *Store) Claim(code, name string) (Device, string, error) {
 	if err != nil {
 		return d, "", err
 	}
-	d = Device{id, name, "pending"}
+	d = Device{ID: id, Name: name, Status: "pending"}
+	if s.inviteLinked {
+		d.Status = "approved"
+	}
 	if _, err = s.db.Exec(`INSERT INTO workshop_devices VALUES(?,?,?,?)`, d.ID, d.Name, digest(token), d.Status); err != nil {
 		return Device{}, "", err
 	}
-	s.inviteHash = ""
+	// The PC the owner links from the owner page also administers the other devices from the app.
+	if s.inviteLinked {
+		if _, err = s.db.Exec(`INSERT INTO workshop_admins VALUES(?)`, d.ID); err != nil {
+			return Device{}, "", err
+		}
+		d.Admin = true
+		// and has the terminal, which the owner allowed for the PC (terminal.go).
+		if _, err = s.db.Exec(`INSERT INTO workshop_terminal VALUES(?)`, d.ID); err != nil {
+			return Device{}, "", err
+		}
+		d.Terminal = true
+	}
+	s.inviteHash, s.inviteLinked = "", false
 	return d, token, nil
 }
 func (s *Store) Devices() ([]Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id,name,status FROM workshop_devices ORDER BY id`)
+	return listDevices(s.db)
+}
+
+func listDevices(db *sql.DB) ([]Device, error) {
+	rows, err := db.Query(`SELECT d.id,d.name,d.status,a.device_id IS NOT NULL,x.device_id IS NOT NULL FROM workshop_devices d LEFT JOIN workshop_admins a ON a.device_id=d.id LEFT JOIN workshop_terminal x ON x.device_id=d.id ORDER BY d.rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +145,7 @@ func (s *Store) Devices() ([]Device, error) {
 	devices := []Device{}
 	for rows.Next() {
 		var d Device
-		if err = rows.Scan(&d.ID, &d.Name, &d.Status); err != nil {
+		if err = rows.Scan(&d.ID, &d.Name, &d.Status, &d.Admin, &d.Terminal); err != nil {
 			return nil, err
 		}
 		devices = append(devices, d)

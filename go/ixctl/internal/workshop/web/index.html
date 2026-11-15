@@ -1,10 +1,98 @@
 <!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#10151e"><title>IxForge</title><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><link rel="stylesheet" href="style.css"><script src="vendor/i18next.min.js" defer></script><script type="module" src="app.js"></script></head>
-<body><header><div class="brand"><span class="mark">W</span><div><h1 id="app-name">IxForge</h1><p data-i18n="tagline"></p></div></div><div class="preferences"><label><span data-i18n="language"></span><select id="language"><option value="fr">Français</option><option value="en">English</option></select></label><label><span data-i18n="theme"></span><select id="theme"><option value="system" data-i18n="system"></option><option value="light" data-i18n="light"></option><option value="dark" data-i18n="dark"></option></select></label><button id="install" hidden data-i18n="install"></button></div></header>
-<div class="connection"><span id="connection" role="status"></span><button id="sync" data-i18n="sync"></button><button id="update" hidden data-i18n="update"></button></div>
-<main><aside><div class="section-title"><h2 data-i18n="projects"></h2><button id="new-project" data-i18n="newProject"></button></div><nav id="projects" aria-label="Projects"></nav><details id="pair-panel" open><summary data-i18n="pairTitle"></summary><p data-i18n="pairHelp"></p><label><span data-i18n="deviceName"></span><input id="device-name" maxlength="120" value="Tablet"></label><label><span data-i18n="pairCode"></span><input id="pair-code" autocomplete="off" maxlength="80"></label><button id="pair" data-i18n="pair"></button><button id="replace-access" hidden data-i18n="replaceAccess"></button><p class="hint" data-i18n="tailscale"></p></details><p class="hint" data-i18n="installHelp"></p></aside>
-<section class="content"><section class="composer"><span class="eyebrow" data-i18n="fromVoice"></span><h2 data-i18n="createTitle"></h2><p data-i18n="voiceHelp"></p><label for="transcript" data-i18n="transcript"></label><textarea id="transcript" rows="3" maxlength="1000"></textarea><div class="actions"><button id="dictate" class="secondary" data-i18n="dictate"></button><button id="stop-dictation" hidden data-i18n="stopDictation"></button><button id="interpret" data-i18n="interpret"></button></div><p id="voice-status" class="hint" role="status"></p><p id="intent" class="intent" role="status"></p><button id="apply" hidden data-i18n="apply"></button></section>
-<section class="editor"><div class="section-title"><h2 data-i18n="workspace"></h2><span id="save-status" role="status"></span></div><p id="empty" data-i18n="empty"></p><div id="project-editor" hidden><label><span data-i18n="projectTitle"></span><input id="project-title" maxlength="240"></label><div class="actions"><button id="save" data-i18n="save"></button><span id="revision" class="hint"></span></div><div id="conflict" class="conflict" hidden><p data-i18n="conflictHelp"></p><pre id="remote-title"></pre><button id="keep-local" data-i18n="keepLocal"></button><button id="use-desktop" data-i18n="useDesktop"></button></div><div id="workspaces"></div></div></section><p class="runtime" data-i18n="runtime"></p></section></main>
-<p class="runtime" id="client-version"></p><p class="runtime" id="update-status" role="status"></p><p class="runtime" data-i18n="updatePolicy"></p><p id="notice" class="notice" role="alert"></p><noscript>JavaScript est nécessaire pour garder les projets sur cet appareil. JavaScript is required for local project storage.</noscript></body></html>
-
-
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#10151e"><title>IxForge</title><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><link rel="stylesheet" href="style.css"><script src="vendor/i18next.min.js" defer></script><script type="module" src="app.js"></script></head>
+<body data-mode="app">
+<header class="bar">
+  <div class="brand"><span class="mark">W</span><h1 id="app-name">IxForge</h1></div>
+  <button id="sync" class="pill" data-state="local"><span class="dot" aria-hidden="true"></span><span id="connection" role="status"></span></button>
+  <span id="pending" role="status"></span>
+  <div class="preferences">
+    <button id="update" class="icon" hidden data-icon="update" data-i18n-label="update"></button>
+    <button id="install" class="icon" hidden data-icon="install" data-i18n-label="install"></button>
+    <button id="terminal-open" class="icon" hidden data-icon="terminal" data-i18n-label="terminal"></button>
+    <button id="surface-open" class="icon" data-icon="surface" data-i18n-label="surfaceOpen"></button>
+    <button id="devices-open" class="icon" data-icon="devices" data-i18n-label="devices"></button>
+    <button id="lang" class="icon text" data-i18n-label="language"></button>
+    <button id="theme" class="icon" data-i18n-label="theme"></button>
+  </div>
+</header>
+<div class="layout">
+  <aside id="rail">
+    <h2 class="rail-title" data-i18n="tools"></h2>
+    <nav id="tools" data-i18n-label="tools"></nav>
+    <div class="create">
+      <input id="new-name" maxlength="20000" autocomplete="off" enterkeyhint="done" data-i18n-label="newName">
+      <div class="create-actions">
+        <button id="new-list" data-icon="list"><span data-i18n="newList"></span></button>
+        <button id="new-counter" data-icon="counter"><span data-i18n="newCounter"></span></button>
+        <button id="dictate" class="icon ghost" data-icon="mic" data-i18n-label="dictate"></button>
+        <button id="import" class="icon ghost" data-icon="import" data-i18n-label="import"></button>
+        <button id="ai-create" class="ai" hidden data-icon="spark" data-i18n-label="aiCreateHelp"><span data-i18n="aiCreate"></span></button>
+        <input id="import-file" type="file" accept=".html,.htm,.json,text/html,application/json" hidden>
+      </div>
+      <button id="stop-dictation" class="ghost" hidden data-i18n="stopDictation"></button>
+      <button id="install-voice" class="ghost" hidden data-i18n="installVoice"></button>
+      <p id="voice-status" class="hint" role="status"></p>
+      <p id="ai-status" class="hint" role="status"></p>
+    </div>
+  </aside>
+  <main id="main">
+    <p id="notice" class="notice" role="alert"></p>
+    <div id="conflict" class="conflict" hidden><p data-i18n="conflictHelp"></p><p id="remote-title"></p><div class="row"><button id="keep-local" data-i18n="keepLocal"></button><button id="use-desktop" class="ghost" data-i18n="useDesktop"></button></div></div>
+    <div id="empty" class="empty"><p class="big" data-i18n="emptyTitle"></p><p data-i18n="emptyHelp"></p></div>
+    <section id="stage" hidden>
+      <header class="stage-head">
+        <input id="tool-title" maxlength="240" data-i18n-label="toolTitle">
+        <span id="tool-status" class="status" role="status"></span>
+        <div class="tool-actions">
+          <button id="pin" class="icon ghost" data-icon="pin" aria-pressed="false" data-i18n-label="pin"></button>
+          <button id="export" class="icon ghost" data-icon="export" data-i18n-label="export"></button>
+          <button id="detach" class="icon ghost" data-icon="detach" data-i18n-label="detach"></button>
+          <button id="reattach" class="icon ghost" data-icon="reattach" data-i18n-label="reattach"></button>
+        </div>
+      </header>
+      <div id="widget-host" class="widget-host"></div>
+      <div id="detached-note" class="empty" hidden><p class="big" data-i18n="detachedTitle"></p><button id="reattach-main" data-i18n="reattachHere"></button></div>
+      <p id="local-kept" class="hint" hidden data-i18n="ixletLocalKept"></p>
+    </section>
+    <section id="surface" hidden></section>
+    <section id="terminal" hidden>
+      <header class="stage-head"><h2 data-i18n="terminal"></h2><span class="status" data-i18n="terminalWho"></span><button id="terminal-close" class="icon ghost" data-icon="x" data-i18n-label="close"></button></header>
+      <div id="terminal-log" class="terminal-log" role="log" aria-live="polite"></div>
+      <form id="terminal-form" class="terminal-line"><input id="terminal-command" maxlength="4096" autocomplete="off" autocapitalize="off" spellcheck="false" data-i18n-label="terminalCommand"><button id="terminal-run" type="submit" data-icon="terminal"><span data-i18n="terminalRun"></span></button></form>
+      <p class="hint" data-i18n="terminalHelp"></p>
+    </section>
+  </main>
+</div>
+<aside id="devices" class="drawer" hidden data-i18n-label="devices">
+  <header class="drawer-head"><h2 id="drawer-title" data-i18n="devices"></h2><button id="devices-close" class="icon ghost" data-icon="x" data-i18n-label="close"></button></header>
+  <section id="pair-panel">
+    <h3 data-i18n="thisDevice"></h3>
+    <p id="pair-help" class="hint" data-i18n="pairHelp"></p>
+    <label><span data-i18n="deviceName"></span><input id="device-name" maxlength="120" value="Tablet" aria-describedby="device-name-help"></label>
+    <p id="device-name-help" class="hint"></p>
+    <label><span data-i18n="pairCode"></span><input id="pair-code" autocomplete="off" maxlength="80"></label>
+    <div class="row"><button id="pair" data-i18n="pair"></button><button id="replace-access" class="ghost" hidden data-i18n="replaceAccess"></button></div>
+  </section>
+  <section id="admin" hidden>
+    <h3 data-i18n="otherDevices"></h3>
+    <ul id="device-list"></ul>
+    <button id="invite" data-i18n="invite"></button>
+    <div id="invite-view" hidden><div id="invite-qr" class="qr"></div><p class="hint" data-i18n="inviteHelp"></p><a id="invite-link" target="_blank" rel="noopener"></a></div>
+  </section>
+  <section id="ai-panel">
+    <h3 data-i18n="aiTitle"></h3>
+    <p class="hint" data-i18n="aiHelp"></p>
+    <p id="ai-state" class="hint" role="status"></p>
+    <label><span data-i18n="aiKey"></span><input id="ai-key" type="password" autocomplete="off" spellcheck="false" maxlength="400"></label>
+    <div class="row"><button id="ai-save" data-i18n="aiSave"></button><button id="ai-forget" class="ghost" hidden data-i18n="aiForget"></button></div>
+  </section>
+  <section class="about">
+    <h3 data-i18n="about"></h3>
+    <p id="client-version" class="hint"></p>
+    <p id="update-status" class="hint" role="status"></p>
+    <p class="hint" data-i18n="updatePolicy"></p>
+    <p class="hint" data-i18n="installHelp"></p>
+  </section>
+</aside>
+<noscript>JavaScript est nécessaire pour garder les projets sur cet appareil. JavaScript is required for local project storage.</noscript>
+</body></html>

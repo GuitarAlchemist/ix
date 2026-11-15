@@ -1,12 +1,16 @@
-const CACHE = 'ix-workshop-shell-ee607a78d1558637';
-const SHELL = ['/workshop/', '/workshop/style.css', '/workshop/app.js', '/workshop/sync.js', '/workshop/voice.js', '/workshop/updates.js', '/workshop/branding.json', '/workshop/vendor/i18next.min.js', '/workshop/manifest.webmanifest', '/workshop/icon-192.png', '/workshop/icon-512.png'];
-self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
+const CACHE = 'ix-workshop-shell-f43f736fe5911ecb';
+// Paths are relative to this worker's folder, so the client runs from any folder (the Desktop's, or a static host's).
+const SHELL = ['./', './style.css', './app.js', './sync.js', './voice.js', './updates.js', './widgets.js', './ai.js', './vendor/lit-all.min.js', './branding.json', './vendor/i18next.min.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const SHELL_PATHS = SHELL.map(path => new URL(path, self.location).pathname);
+// Static hosts let browsers keep files for minutes (GitHub Pages: max-age=600): a new version must fetch its files from
+// the network, never the browser's copies of the previous version.
+self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path, {cache: 'reload'}))))));
 self.addEventListener('activate', event => event.waitUntil((async () => {
   for (const key of await caches.keys()) if (key.startsWith('ix-workshop-shell-') && key !== CACHE) await caches.delete(key);
   await self.clients.claim();
 })()));
 let negotiation = null;
-const workshopClients = async () => (await self.clients.matchAll({type: 'window', includeUncontrolled: true})).filter(client => new URL(client.url).pathname.startsWith('/workshop/'));
+const workshopClients = async () => (await self.clients.matchAll({type: 'window', includeUncontrolled: true})).filter(client => client.url.startsWith(self.registration.scope));
 async function negotiate() {
   if (negotiation) return negotiation.promise;
   const id = crypto.randomUUID();
@@ -45,7 +49,7 @@ self.addEventListener('message', event => {
 });
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  if (event.request.method !== 'GET' || url.origin !== self.location.origin || !SHELL.includes(url.pathname) || url.search) return;
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin || !SHELL_PATHS.includes(url.pathname) || url.search) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try { const response = await fetch(event.request); if (!response.ok) throw new Error('shell_unavailable'); await cache.put(event.request, response.clone()); return response; }
