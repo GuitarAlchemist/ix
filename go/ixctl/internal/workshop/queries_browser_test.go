@@ -1,6 +1,7 @@
 package workshop
 
 import (
+	"context"
 	"encoding/json"
 	"runtime"
 	"strings"
@@ -140,4 +141,49 @@ func TestReimportingOurQueriesReplacesThem(t *testing.T) {
 	if len(widgets) != 1 || len(widgets[0].Entries) != 15 || widgets[0].SourceCommit != testSourceCommit || widgets[0].GeneratedAt != "2026-11-15T01:02:03Z" {
 		t.Fatalf("the Desktop must keep one queries widget, the new one: %d widgets %+v", len(widgets), widgets)
 	}
+}
+
+// TestOurQueriesReloadThemselves: with the watcher running, a page open on our queries shows a query committed in ix
+// by itself, at its next sync, without anyone reloading it.
+func TestOurQueriesReloadThemselves(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the browser fixture runs on Windows")
+	}
+	f := newBrowserFixture(t)
+	repo := testQueriesRepo(t)
+	ctx := context.Background()
+	watcher := &DesktopClient{Origin: f.origin, HTTP: f.desktopHTTP}
+	invite, err := f.store.NewInvite(f.origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := watcher.Pair(ctx, invite.Code, "Veilleur requêtes"); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, f.store, "Veilleur requêtes")
+	watch := &QueriesWatch{Desktop: watcher, Repo: repo, Files: DefaultQueryFiles, Title: "Requêtes DuckDB", Now: time.Now}
+	if step, err := watch.Step(ctx); err != nil || !step.Pushed {
+		t.Fatalf("the watcher sends our queries: %+v %v", step, err)
+	}
+
+	link, err := f.store.NewLinkInvite(f.origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, _ := startChromeIn(t, f.chrome, f.pin, t.TempDir())
+	pc.navigate(link.URL)
+	pc.until("linked", `document.getElementById('connection').textContent==='Desktop connecté'`)
+	settle(t, pc)
+	const ours = `[...document.querySelectorAll('#tools [data-tool]')].filter(b=>b.title==='Requêtes DuckDB')`
+	pc.until("the watcher's queries on the PC", ours+`.length===1 && `+ours+`[0].querySelector('.badge').textContent==='15'`)
+	pc.evalInto(`(()=>{`+ours+`[0].click();window.__notReloaded=true;return true})()`, nil)
+	pc.until("shown", `document.querySelectorAll('#widget-host [data-query]').length===15`)
+
+	addQuery(t, repo, "6) Newest learnings first.", "SELECT * FROM learnings ORDER BY date DESC;")
+	gitIn(t, repo, "commit", "-q", "-am", "docs: add a query")
+	if step, err := watch.Step(ctx); err != nil || !step.Pushed || step.Queries != 16 {
+		t.Fatalf("the watcher sends the new query: %+v %v", step, err)
+	}
+	pc.until("the new query, without a reload", `window.__notReloaded===true && `+ours+`.length===1 && `+ours+`[0].querySelector('.badge').textContent==='16' && document.querySelectorAll('#widget-host [data-query]').length===16 && /depuis ix [0-9a-f]{7} \(docs: add a query\)$/.test(document.querySelector('#widget-host [data-query-made]')?.textContent.replace(/\s+/g,' ').trim())`)
+	pc.screenshot("requetes-rechargees.png")
 }

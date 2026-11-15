@@ -25,7 +25,8 @@ type browserFixture struct {
 	reader      string
 	actions     atomic.Int64
 	loseReplies atomic.Bool
-	unreachable atomic.Bool // every request's connection is dropped, as when the Desktop cannot be reached
+	unreachable atomic.Bool  // every request's connection is dropped, as when the Desktop cannot be reached
+	desktopHTTP *http.Client // reaches the Desktop from Go, as a client outside the browser (the queries watcher)
 }
 
 func newBrowserFixture(t *testing.T) *browserFixture {
@@ -72,6 +73,7 @@ func newBrowserFixture(t *testing.T) *browserFixture {
 	if handler, err = Handler(f.store, f.origin); err != nil {
 		t.Fatal(err)
 	}
+	f.desktopHTTP = testDesktopHTTP(server)
 	sum := sha256.Sum256(server.Certificate().RawSubjectPublicKeyInfo)
 	f.pin = base64.StdEncoding.EncodeToString(sum[:])
 	return f
