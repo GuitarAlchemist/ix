@@ -73,7 +73,10 @@ func (s *subscription) liveDue() bool {
 // Next blocks until there is something to tell (at most max events, a gap, the live mark) and
 // returns it in order. A gap comes alone, followed by the live mark if it is due; an overflow
 // gap ends the subscription, and every later call returns errSubscriptionEnded. An error of ctx
-// leaves the subscription where it was: the next call goes on from there.
+// returns no item and loses none: the cursor may have passed envelopes of other channels or
+// filtered markers, never one this reader was owed, and the live mark is not spent.
+//
+// @ai:invariant items come in ring order; a live mark precedes every event with seq > head and follows every replayed one [P:assumed conf:0.8] (pinned by TestTheLiveMarkWaitsForTheWholeReplay, TestTheLiveMarkSitsBetweenReplayAndLiveInOneBatch, TestSSELiveFollowsTheReplay)
 func (s *subscription) Next(ctx context.Context, max int) ([]subItem, error) {
 	for {
 		if s.ended {

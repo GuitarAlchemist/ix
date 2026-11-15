@@ -12,8 +12,11 @@ import (
 )
 
 // sseItems reads /v1/events with the given query for d, or until n items, and returns them in
-// order: "env:<ch>" for an event, "gap:<reason>" for a gap, "live" for the live mark.
-func sseItems(t *testing.T, in *instance, query string, n int, d time.Duration) []string {
+// order: "env:<ch>" for an event, "gap:<reason>" for a gap, "live" for the live mark when it is
+// exactly `event: live` and `data: {}` with no `id:` (an id would move EventSource's
+// Last-Event-ID off the last event), "live?" for any other shape of it. onLive, if given, runs
+// once the live mark is read.
+func sseItems(t *testing.T, in *instance, query string, n int, d time.Duration, onLive ...func()) []string {
 	t.Helper()
 	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?"+query, nil)
 	req.Header.Set("Authorization", "Bearer "+in.token)
@@ -29,10 +32,14 @@ func sseItems(t *testing.T, in *instance, query string, n int, d time.Duration) 
 	}
 	var items []string
 	sc := bufio.NewScanner(resp.Body)
-	kind := ""
+	kind, id := "", false
 	for len(items) < n && sc.Scan() {
 		line := sc.Text()
 		switch {
+		case line == "":
+			kind, id = "", false
+		case strings.HasPrefix(line, "id: "):
+			id = true
 		case strings.HasPrefix(line, "event: "):
 			kind = line[7:]
 		case strings.HasPrefix(line, "data: ") && kind == "gap":
@@ -40,7 +47,14 @@ func sseItems(t *testing.T, in *instance, query string, n int, d time.Duration) 
 			json.Unmarshal([]byte(line[6:]), &g)
 			items = append(items, "gap:"+g.Reason)
 		case strings.HasPrefix(line, "data: ") && kind == "live":
+			if line != "data: {}" || id {
+				items = append(items, "live?")
+				continue
+			}
 			items = append(items, "live")
+			for _, f := range onLive {
+				f()
+			}
 		case strings.HasPrefix(line, "data: "):
 			var e Envelope
 			if err := json.Unmarshal([]byte(line[6:]), &e); err != nil {
@@ -73,11 +87,9 @@ func TestSSELiveFollowsTheReplay(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		in.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
 	}
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		in.plane.Publish("svc/x", event("stats", map[string]any{"n": 4}))
-	}()
-	got := sseItems(t, in, "ch=svc/x&since=0&live=1", 5, 3*time.Second)
+	got := sseItems(t, in, "ch=svc/x&since=0&live=1", 5, 3*time.Second, func() {
+		in.plane.Publish("svc/x", event("stats", map[string]any{"n": 4})) // live: the mark was read
+	})
 	if want := "env:svc/x env:svc/x env:svc/x live env:svc/x"; strings.Join(got, " ") != want {
 		t.Fatalf("live after a replay read %v, want %s", got, want)
 	}

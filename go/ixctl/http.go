@@ -408,7 +408,8 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if it.live {
-				sb.WriteString("event: live\ndata: {}\n\n") // no id: Last-Event-ID stays the last event's
+				// @ai:invariant the live mark carries no id, so EventSource's Last-Event-ID stays the last event's [P:assumed conf:0.8] (pinned by TestSSELiveFollowsTheReplay through sseItems)
+				sb.WriteString("event: live\ndata: {}\n\n")
 				continue
 			}
 			env := it.env
