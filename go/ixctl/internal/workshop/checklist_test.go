@@ -65,13 +65,13 @@ func TestChecklistIXLETAddsChecksAndRemovesItemsOnTheDesktop(t *testing.T) {
 	}
 
 	for name, bad := range map[string]XletAction{
-		"empty text":          {OpID: "b1", Action: "add", Text: "   "},
-		"too long":            {OpID: "b2", Action: "add", Text: strings.Repeat("x", 241)},
-		"text on check":       {OpID: "b3", Action: "check", ItemID: milk, Text: "Lait"},
-		"item on add":         {OpID: "b4", Action: "add", Text: "Thé", ItemID: milk},
-		"counter on a list":   {OpID: "b5", Action: "increment"},
-		"missing item id":     {OpID: "b6", Action: "check"},
-		"malformed item id":   {OpID: "b7", Action: "remove", ItemID: "../x"},
+		"empty text":           {OpID: "b1", Action: "add", Text: "   "},
+		"too long":             {OpID: "b2", Action: "add", Text: strings.Repeat("x", 241)},
+		"text on check":        {OpID: "b3", Action: "check", ItemID: milk, Text: "Lait"},
+		"item on add":          {OpID: "b4", Action: "add", Text: "Thé", ItemID: milk},
+		"counter on a list":    {OpID: "b5", Action: "increment"},
+		"missing item id":      {OpID: "b6", Action: "check"},
+		"malformed item id":    {OpID: "b7", Action: "remove", ItemID: "../x"},
 		"text on a counter op": {OpID: "b8", Action: "activate", Text: "x"},
 	} {
 		bad.ProjectID, bad.DefinitionID = "project-list", "ixlet-list"
