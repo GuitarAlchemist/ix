@@ -6,6 +6,7 @@ import "context"
 // peer when relay is set, and the tests walk the table. The transports decode their own
 // encoding of an op (an HTTP route's body, a WebSocket frame) into a Request and hand it to
 // Request; subscribe and unsubscribe are the WebSocket session's own and are not here.
+// @ai:invariant the ops not relayed are exactly shutdown and need.*; every other op in the table reaches a named peer [P:assumed conf:0.8] (pinned by TestEveryOpOfTheTableIsRelayedOrRefusedByName)
 type planeOp struct {
 	relay bool // a request naming a peer is handed on to it (forward); otherwise refused by name
 	run   func(p *Plane, ctx context.Context, req Request) (any, error)

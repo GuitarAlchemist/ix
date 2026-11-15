@@ -145,6 +145,7 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 // goes whole, so an optional field added later (ADR 0014, 1.2) is not lost on
 // the way; the peer field is stripped so an op crosses at most one hop, and
 // the link numbers the frame itself.
+// @ai:invariant a relayed request reaches the peer whole but for Peer (cleared) and ID (the link's) [P:assumed conf:0.8] (pinned by TestForwardCarriesTheWholeRequest)
 func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, error) {
 	l := p.peers[peer]
 	if l == nil {
