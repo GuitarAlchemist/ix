@@ -500,7 +500,9 @@ func serviceImageVerdict(c resumeComponent, p resumeProbes, svcImage string, svc
 // with an unknown verdict when it cannot be trusted: a line from another PID is an earlier boot
 // or another host's journal, never a guess at this one's port. A PID can come back after a
 // reboot, so the PID only picks the line: checkResume then requires /health to answer its epoch.
-// @ai:invariant a ready_journal address is probed only from a line of the service's PID, as a loopback IP:port, and ok needs /health to answer the line's epoch [T:test conf:0.9 src:resume_journal_test.go]
+// Pinned by TestResumeReadyJournalRefusals and TestResumeReadyJournalEpochBindsTheAnsweringHost (a
+// Go test cannot be a [T:test] drift binding, docs/CHECKLISTS.md).
+// @ai:invariant a ready_journal address is probed only from a line of the service's PID, as a loopback IP:port, and ok needs /health to answer the line's epoch [P:assumed conf:0.8]
 func readyAddr(c resumeComponent, p resumeProbes) (h readyHost, verdict, line string) {
 	pid, err := p.servicePID(c.Service)
 	switch {

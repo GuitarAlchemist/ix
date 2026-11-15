@@ -86,6 +86,23 @@ func TestResumeReadyJournalGivesTheAddress(t *testing.T) {
 	}
 }
 
+// The probed address is the parsed one, not the journal's text: a long IPv6 loopback form reaches
+// the listener and the health URL as [::1].
+func TestResumeReadyJournalProbesTheParsedAddress(t *testing.T) {
+	inv := mustInventory(t, controlInventory)
+	j := &journalRun{pid: 4242, journal: journalReady("4242", "[0:0:0:0:0:0:0:1]:59762")}
+	r := checkResume(inv, j.probes())[0]
+	if r.Verdict != verdictOK {
+		t.Fatalf("verdict %s, want ok: %q", r.Verdict, r.Checks)
+	}
+	if len(j.listened) != 1 || j.listened[0] != "[::1]:59762" {
+		t.Errorf("listened %q, want only [::1]:59762", j.listened)
+	}
+	if len(j.healthURL) != 1 || j.healthURL[0] != "http://[::1]:59762/health" {
+		t.Errorf("health %q, want only http://[::1]:59762/health", j.healthURL)
+	}
+}
+
 func TestResumeReadyJournalRefusals(t *testing.T) {
 	inv := mustInventory(t, controlInventory)
 	for _, c := range []struct {
