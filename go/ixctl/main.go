@@ -135,13 +135,12 @@ func cmdUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	in, err := startInstance(spec, o.name, o.addr, o.state, o.bookmarks, &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate})
+	in, err := bootInstance(instanceOptions{spec: spec, name: o.name, addr: o.addr, stateDir: o.state, bookmarks: o.bookmarks,
+		budget:       &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate},
+		deltaJournal: o.deltaJournal, claudeBin: o.claudeBin})
 	if err != nil {
 		return err
 	}
-	// Before the ready line: no client knows the token yet, so no node can exist.
-	in.plane.SetDeltaJournal(o.deltaJournal)
-	in.plane.SetClaudeBin(o.claudeBin)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
