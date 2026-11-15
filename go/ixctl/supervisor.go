@@ -587,39 +587,13 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 	}
 	c := s.proc
 	c.stdin.Close()
-	c.tree.kill()
-	if !treeGone(c.tree, treeGoneLimit) {
+	end := finishTree(liveTree{c.tree}, st, s.spec.Limits, reason, requested)
+	if !end.seenGone {
 		s.notGone.Add(1)
 	}
-	c.tree.drain(monitorLimit)
-	if reason == "" && !requested {
-		select {
-		case reason = <-c.tree.exceeded():
-		default:
-		}
-	}
-	peak, cpu, procs := c.tree.usage() // before close: the job is gone after
-	if st.rss > peak {
-		peak = st.rss
-	}
-	if st.cpu > cpu {
-		cpu = st.cpu
-	}
-	// The processor-time and process limits are read from these very figures: a run that
-	// went past one and ended before a poll could kill it (or between two) is past it all
-	// the same.
-	if l := s.spec.Limits; reason == "" && !requested && l != nil {
-		switch {
-		case l.CpuMs > 0 && cpu > l.CpuMs:
-			reason = reasonCPU
-		case l.Processes > 0 && procs > l.Processes:
-			reason = reasonProcesses
-		}
-	}
-	c.tree.close()
 	s.proc = nil
 	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Run: c.run, Generation: s.startGen,
-		Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
+		Reason: end.reason, PeakMemoryBytes: end.peak, CpuMs: end.cpu, PeakProcesses: end.procs}
 	s.endOutput(c, e, requested)
 	return e
 }
@@ -699,12 +673,7 @@ func (s *service) stopTree(generation uint64) {
 	select {
 	case st = <-s.proc.exited:
 	case <-time.After(stopGrace):
-		s.proc.tree.kill()
-		select {
-		case st = <-s.proc.exited:
-		case <-time.After(treeGoneLimit):
-			st = exitStat{code: -1}
-		}
+		st = killAndWait(liveTree{s.proc.tree}, s.proc.exited)
 	}
 	e := s.reap(st, "", true)
 	s.settle(stateStopped)
@@ -745,14 +714,7 @@ func (s *service) onLimit(reason string) {
 		return
 	default:
 	}
-	s.proc.tree.kill()
-	var st exitStat
-	select {
-	case st = <-s.proc.exited:
-	case <-time.After(treeGoneLimit):
-		st = exitStat{code: -1}
-	}
-	s.ended(st, reason)
+	s.ended(killAndWait(liveTree{s.proc.tree}, s.proc.exited), reason)
 }
 
 // ended handles an exit nobody asked for, by the restart policy. reason names the limit the
