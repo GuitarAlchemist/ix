@@ -40,6 +40,8 @@ type Widget struct {
 	// A queries widget says when it was generated (UTC, RFC 3339) and from which commit of its repo, for freshness.
 	GeneratedAt  string `json:"generated_at,omitempty"`
 	SourceCommit string `json:"source_commit,omitempty"`
+	// SourceSubject is that commit's subject line.
+	SourceSubject string `json:"source_subject,omitempty"`
 }
 type IXLETDefinition struct {
 	ID     string `json:"id"`

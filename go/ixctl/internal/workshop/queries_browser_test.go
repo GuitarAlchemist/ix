@@ -53,10 +53,10 @@ func TestTheDuckDBQueriesWidgetListsOurQueries(t *testing.T) {
 	// when this device last received it from the Desktop.
 	const made = `document.querySelector('#widget-host [data-query-made]')`
 	pc.until("says when and from what it was made", `/^Générée le .*2026 à \d\d:\d\d depuis ix 8c97be7 \(docs: number our DuckDB queries\)$/.test(`+made+`?.textContent.replace(/\s+/g,' ').trim())`)
-	var link string
-	pc.evalInto(made+`.querySelector('a[data-query-commit]')?.href||''`, &link)
-	if link != "https://github.com/GuitarAlchemist/ix/commit/8c97be79" {
-		t.Errorf("the commit must link to it on GitHub: %q", link)
+	var commitLink string
+	pc.evalInto(made+`.querySelector('a[data-query-commit]')?.href||''`, &commitLink)
+	if commitLink != "https://github.com/GuitarAlchemist/ix/commit/8c97be79" {
+		t.Errorf("the commit must link to it on GitHub: %q", commitLink)
 	}
 	pc.until("says when this device last synced", `/^Synchronisée le .*2026.* \d\d:\d\d$/.test(document.querySelector('#widget-host [data-query-synced]')?.textContent.replace(/\s+/g,' ').trim())`)
 	pc.screenshot("requetes-duckdb.png")

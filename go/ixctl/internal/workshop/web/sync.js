@@ -1,6 +1,6 @@
 const copy = value => structuredClone(value);
 // A queries widget's generation, without the fields it does not have.
-const madeOf = made => Object.fromEntries(['generated_at', 'source_commit'].filter(k => made?.[k]).map(k => [k, made[k]]));
+const madeOf = made => Object.fromEntries(['generated_at', 'source_commit', 'source_subject'].filter(k => made?.[k]).map(k => [k, made[k]]));
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export const initialState = () => ({token: '', storeID: '', cursor: 0, projects: {}, outbox: [], transcript: '', selected: null, tool: null, surface: [], language: 'fr', theme: 'system', deviceName: null, pairedName: '', xlets: {}});
 export const xletKey = (projectID, definitionID) => projectID + '/' + definitionID;
@@ -112,7 +112,7 @@ export class Replica {
       if (same) {
         const widget = state.projects[same.projectID].document.workspaces.find(w => w.id === same.workspace.id).widgets.find(w => w.id === same.widget.id);
         widget.entries = copy(intent.entries);
-        delete widget.generated_at; delete widget.source_commit; Object.assign(widget, madeOf(intent.made));
+        delete widget.generated_at; delete widget.source_commit; delete widget.source_subject; Object.assign(widget, madeOf(intent.made));
         state.projects[same.projectID].dirty = true; enqueueInto(state, same.projectID);
         state.selected = same.projectID; state.tool = same.key;
         return;
@@ -270,7 +270,7 @@ export class SyncEngine {
               if (event.revision > p.revision) { p.remote = event; p.conflict = 'revision_conflict'; }
             } else s.projects[event.project.id] = {document: event.project, revision: event.revision, dirty: false};
           }
-          s.cursor = changes.cursor;
+          s.cursor = changes.cursor; s.syncedAt = new Date().toISOString(); // the last time this device read the Desktop's changes
           if (s.selected === null) s.selected = Object.keys(s.projects)[0] || null;
         });
         if (changes.events.length < 100) break;

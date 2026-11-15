@@ -43,7 +43,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ixforge-queries: the query files differ from ix %.7s; commit them or set them aside first:\n%s", commit, changed)
 		os.Exit(1)
 	}
-	widget, err := workshop.QueriesWidget(*title, entries, time.Now(), strings.TrimSpace(string(commit)))
+	subject, err := exec.Command("git", "-C", *ix, "log", "-1", "--format=%s").Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ixforge-queries: cannot read the ix commit's subject:", err)
+		os.Exit(1)
+	}
+	widget, err := workshop.QueriesWidget(*title, entries, workshop.Generation{At: time.Now(), Commit: strings.TrimSpace(string(commit)), Subject: strings.TrimSpace(string(subject))})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ixforge-queries: these queries do not fit a widget (1 to 100, SQL up to 8 KiB each):", err)
 		os.Exit(1)

@@ -69,27 +69,35 @@ func ReadQueries(root string, files []string) ([]QueryEntry, error) {
 	return entries, nil
 }
 
+// Generation says when a queries widget was made and from which commit of its repo (with that commit's subject).
+type Generation struct {
+	At              time.Time
+	Commit, Subject string
+}
+
 // QueriesWidget is the ixforge-widget/1 block IxForge imports. It says when it was generated (stored in UTC) and from
 // which commit of the repo the queries were read.
-func QueriesWidget(title string, entries []QueryEntry, generatedAt time.Time, sourceCommit string) ([]byte, error) {
-	w := Widget{ID: "w", Title: title, Kind: "queries", Entries: entries, GeneratedAt: generatedAt.UTC().Format(time.RFC3339), SourceCommit: sourceCommit}
+func QueriesWidget(title string, entries []QueryEntry, made Generation) ([]byte, error) {
+	w := Widget{ID: "w", Title: title, Kind: "queries", Entries: entries, GeneratedAt: made.At.UTC().Format(time.RFC3339), SourceCommit: made.Commit, SourceSubject: made.Subject}
 	if !titleOK(title) || !queriesOK(w) {
 		return nil, errors.New("queries_invalid")
 	}
 	return json.Marshal(struct {
-		Format       string       `json:"format"`
-		Kind         string       `json:"kind"`
-		Title        string       `json:"title"`
-		Entries      []QueryEntry `json:"entries"`
-		GeneratedAt  string       `json:"generated_at"`
-		SourceCommit string       `json:"source_commit"`
-	}{"ixforge-widget/1", "queries", title, entries, w.GeneratedAt, sourceCommit})
+		Format        string       `json:"format"`
+		Kind          string       `json:"kind"`
+		Title         string       `json:"title"`
+		Entries       []QueryEntry `json:"entries"`
+		GeneratedAt   string       `json:"generated_at"`
+		SourceCommit  string       `json:"source_commit"`
+		SourceSubject string       `json:"source_subject,omitempty"`
+	}{"ixforge-widget/1", "queries", title, entries, w.GeneratedAt, w.SourceCommit, w.SourceSubject})
 }
 
 // A source commit is a git object name, abbreviated or full.
 var commitName = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
-// generationOK: a queries widget may say when it was generated, as a UTC RFC 3339 time, and from which commit.
+// generationOK: a queries widget may say when it was generated, as a UTC RFC 3339 time, from which commit, and that
+// commit's subject (at most 240 bytes).
 func generationOK(w Widget) bool {
 	if w.GeneratedAt != "" {
 		at, err := time.Parse(time.RFC3339, w.GeneratedAt)
@@ -97,14 +105,14 @@ func generationOK(w Widget) bool {
 			return false
 		}
 	}
-	return w.SourceCommit == "" || commitName.MatchString(w.SourceCommit)
+	return (w.SourceCommit == "" || commitName.MatchString(w.SourceCommit)) && (w.SourceSubject == "" || titleOK(w.SourceSubject))
 }
 
 // queriesOK says whether a widget's queries are fit to keep: only a queries widget has any (and a generation), at
 // least one and at most 100, each titled, from a named file, with SQL of at most 8 KiB.
 func queriesOK(w Widget) bool {
 	if w.Kind != "queries" {
-		return len(w.Entries) == 0 && w.GeneratedAt == "" && w.SourceCommit == ""
+		return len(w.Entries) == 0 && w.GeneratedAt == "" && w.SourceCommit == "" && w.SourceSubject == ""
 	}
 	if w.InitialValue != 0 || len(w.Entries) == 0 || len(w.Entries) > maxQueries || !generationOK(w) {
 		return false
