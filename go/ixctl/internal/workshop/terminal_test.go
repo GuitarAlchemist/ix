@@ -30,7 +30,9 @@ func TestTheTerminalRunsOnlyWhereTheOwnerAllowedIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	s.terminalTimeout = 4 * time.Second
+	// Ordinary commands get the real limit: a cold Windows PowerShell start on a loaded CI runner took more than 4 s.
+	// The time-limit case below lowers it to 4 s for itself.
+	s.terminalTimeout = defaultTerminalLimit
 	const app = "https://workshop.invalid"
 	h, err := Handler(s, app)
 	if err != nil {
@@ -83,6 +85,7 @@ func TestTheTerminalRunsOnlyWhereTheOwnerAllowedIt(t *testing.T) {
 	if code, reply, body := run(pcToken, "(Get-Location).Path"); code != 200 || !strings.EqualFold(strings.TrimSpace(reply.Output), filepath.Join(dir, "terminal")) {
 		t.Fatalf("commands run in the terminal's own folder: %d %s", code, body)
 	}
+	s.terminalTimeout = 4 * time.Second
 	started := time.Now()
 	if code, reply, body := run(pcToken, "Start-Sleep -Seconds 60"); code != 200 || !reply.TimedOut || reply.ExitCode != -1 || time.Since(started) > 15*time.Second {
 		t.Fatalf("a command that runs too long is stopped: %d %s after %s", code, body, time.Since(started))
