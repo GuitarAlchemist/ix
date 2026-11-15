@@ -67,7 +67,7 @@ func checkLocalDrafts(t *testing.T, origin string, start func(profile string, un
 	page.until("on this device only", `document.getElementById('connection').textContent==='Sur cet appareil seulement'`)
 	settle(t, page) // typing during the first load's takeover lock is lost
 
-	names :=`[...document.querySelectorAll('#tools [data-tool-title]')].map(e=>e.textContent).join(', ')`
+	names := `[...document.querySelectorAll('#tools [data-tool-title]')].map(e=>e.textContent).join(', ')`
 	page.typeInto("new-name", "Créer un workspace « Courses » avec une liste « Épicerie »")
 	page.press("#new-list")
 	page.until("tool kept on this device", names+`==='Épicerie' && document.getElementById('tool-status').textContent==='Sur cet appareil seulement'`)
