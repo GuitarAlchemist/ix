@@ -60,7 +60,7 @@ const memInQueue = 64
 // TestMemFramesWriteFailsOnceClosed and TestMemFramesHandsFramesInOrder:
 // @ai:invariant a frame serve or Read takes once the session has ended goes no further; one taken just before may still be handled or read, as ws.go may handle a frame it read just before [P:assumed conf:0.8]
 // @ai:invariant Write returns nil only if its frame was queued while the session ran [P:assumed conf:0.8]
-// @ai:invariant serve invokes Handle for one frame at a time, in the order the frames were written [P:assumed conf:0.8]
+// @ai:invariant serve invokes Handle for one frame at a time, in the order the frames were queued (the order of sequential writes) [P:assumed conf:0.8]
 type memFrames struct {
 	s      *session
 	in     chan []byte
