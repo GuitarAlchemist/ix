@@ -3,13 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -116,41 +113,10 @@ func (s *bookmarkStore) save(list []bookmark) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
-		return fmt.Errorf("bookmarks: %w", err)
-	}
-	if err := renameOver(tmp, s.path); err != nil {
-		os.Remove(tmp)
+	if err := replaceFile(s.path, append(b, '\n')); err != nil {
 		return fmt.Errorf("bookmarks: %w", err)
 	}
 	return nil
-}
-
-// renameOver replaces path with tmp. On Windows the replace is refused (access denied, or
-// a sharing violation) for as long as another process holds the file it replaces (an
-// indexer or an antivirus reading what the previous save wrote); a few short retries, about
-// a second in all, ride that out. Any other error, and a file that stays held, come back at
-// once: the caller holds the store's lock meanwhile.
-func renameOver(tmp, path string) error {
-	const attempts = 20
-	for i := 1; ; i++ {
-		err := os.Rename(tmp, path)
-		if err == nil || i == attempts || !heldByAnother(err) {
-			return err
-		}
-		time.Sleep(time.Duration(5*i) * time.Millisecond)
-	}
-}
-
-// heldByAnother says whether a rename failed because the target is open elsewhere:
-// ERROR_ACCESS_DENIED (os.IsPermission) or ERROR_SHARING_VIOLATION (32) on Windows.
-func heldByAnother(err error) bool {
-	var errno syscall.Errno
-	if runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 32 {
-		return true
-	}
-	return os.IsPermission(err)
 }
 
 func (s *bookmarkStore) find(name string) int {

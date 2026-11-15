@@ -300,16 +300,7 @@ func instanceAlive(st stateFile) bool {
 // writeFileAtomic writes through `path.tmp` and renames. The content is the
 // state file, token included, so a failed rename does not leave the copy.
 func writeFileAtomic(path string, b []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return replaceFile(path, b)
 }
 
 func defaultStateDir() string {
