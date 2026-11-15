@@ -1,6 +1,6 @@
-const CACHE = 'ix-workshop-shell-50b92c4c68f85bea';
+const CACHE = 'ix-workshop-shell-adbe603c8aa1c422';
 // Paths are relative to this worker's folder, so the client runs from any folder (the Desktop's, or a static host's).
-const SHELL = ['./', './style.css', './app.js', './sync.js', './voice.js', './catalog.js', './updates.js', './widgets.js', './ai.js', './vendor/lit-all.min.js', './branding.json', './vendor/i18next.min.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const SHELL = ['./', './style.css', './app.js', './sync.js', './voice.js', './updates.js', './widgets.js', './ai.js', './vendor/lit-all.min.js', './branding.json', './vendor/i18next.min.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 const SHELL_PATHS = SHELL.map(path => new URL(path, self.location).pathname);
 // Static hosts let browsers keep files for minutes (GitHub Pages: max-age=600): a new version must fetch its files from
 // the network, never the browser's copies of the previous version.
