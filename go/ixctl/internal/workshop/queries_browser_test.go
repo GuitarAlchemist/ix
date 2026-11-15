@@ -17,7 +17,7 @@ func TestTheDuckDBQueriesWidgetListsOurQueries(t *testing.T) {
 		t.Skip("the browser fixture runs on Windows")
 	}
 	f := newBrowserFixture(t)
-	widget, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMadeAt, testSourceCommit)
+	widget, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMade)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,16 @@ func TestTheDuckDBQueriesWidgetListsOurQueries(t *testing.T) {
 	pc.evalInto(`(()=>{`+first+`.querySelector('[data-query-copy]').click();return true})()`, nil)
 	pc.until("the SQL copied", `window.__copied!==null && window.__copied.startsWith('SELECT repo, kind, count(*) AS n') && window.__copied.endsWith('ORDER BY n DESC;') && `+first+`.querySelector('[data-query-copied]').textContent==='Copié'`)
 	pc.until("kept by the Desktop", `document.getElementById('tool-status').textContent==='15 requêtes · partagé par le Desktop'`)
-	pc.until("says how fresh it is", `/^Générée le .*2026 depuis ix 8c97be7$/.test(document.querySelector('#widget-host [data-query-made]')?.textContent.trim())`)
+	// How fresh it is: when it was generated (date and time), from which ix commit (a link to it, with its subject), and
+	// when this device last received it from the Desktop.
+	const made = `document.querySelector('#widget-host [data-query-made]')`
+	pc.until("says when and from what it was made", `/^Générée le .*2026 à \d\d:\d\d depuis ix 8c97be7 \(docs: number our DuckDB queries\)$/.test(`+made+`?.textContent.replace(/\s+/g,' ').trim())`)
+	var link string
+	pc.evalInto(made+`.querySelector('a[data-query-commit]')?.href||''`, &link)
+	if link != "https://github.com/GuitarAlchemist/ix/commit/8c97be79" {
+		t.Errorf("the commit must link to it on GitHub: %q", link)
+	}
+	pc.until("says when this device last synced", `/^Synchronisée le .*2026.* \d\d:\d\d$/.test(document.querySelector('#widget-host [data-query-synced]')?.textContent.replace(/\s+/g,' ').trim())`)
 	pc.screenshot("requetes-duckdb.png")
 
 	// The export: a page that lists the same queries, offline.
@@ -77,11 +86,11 @@ func TestReimportingOurQueriesReplacesThem(t *testing.T) {
 	}
 	f := newBrowserFixture(t)
 	entries := readTestQueries(t)
-	before, err := QueriesWidget("Requêtes DuckDB", entries[:2], testMadeAt.Add(-24*time.Hour), "1111111")
+	before, err := QueriesWidget("Requêtes DuckDB", entries[:2], Generation{At: testMadeAt.Add(-24 * time.Hour), Commit: "1111111"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := QueriesWidget("Requêtes DuckDB", entries, testMadeAt, testSourceCommit)
+	after, err := QueriesWidget("Requêtes DuckDB", entries, testMade)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +112,7 @@ func TestReimportingOurQueriesReplacesThem(t *testing.T) {
 	pc.typeInto("new-name", string(after))
 	pc.press("#new-list")
 	pc.until("the same tool, with the new queries, kept by the Desktop", ours+`.length===1 && `+ours+`[0].querySelector('.badge').textContent==='15' && `+status+`==='15 requêtes · partagé par le Desktop'`)
-	pc.until("made from the new commit", `/depuis ix 8c97be7$/.test(document.querySelector('#widget-host [data-query-made]')?.textContent.trim())`)
+	pc.until("made from the new commit", `/depuis ix 8c97be7 \(docs: number our DuckDB queries\)$/.test(document.querySelector('#widget-host [data-query-made]')?.textContent.replace(/\s+/g,' ').trim())`)
 
 	rows, err := f.store.db.Query(`SELECT document FROM workshop_projects`)
 	if err != nil {
