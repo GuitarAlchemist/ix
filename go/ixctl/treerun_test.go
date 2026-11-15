@@ -49,6 +49,9 @@ func TestFinishTreeReadsInOrder(t *testing.T) {
 	if end.seenGone || end.peak != 150 || end.cpu != 20 || end.procs != 3 || end.reason != "" {
 		t.Fatalf("end %+v, want not seen gone, peak raised to the leader's 150, cpu 20, 3 processes, no reason", end)
 	}
+	if end := finishTree(&fakeTree{gone: true}, exitStat{}, nil, "", false); !end.seenGone {
+		t.Fatalf("a tree seen gone: end %+v", end)
+	}
 }
 
 // The monitor's limit names the end of a run that ended on its own; the processor-time and
@@ -78,12 +81,20 @@ func TestARequestedEndNamesNoLimit(t *testing.T) {
 }
 
 // killAndWait gives the leader treeGoneLimit to report its exit after the kill; past it the exit
-// is unknown.
+// is unknown. The give-up waits the whole bound (five seconds), so the test runs in parallel.
 func TestKillAndWaitTakesTheExitOrGivesUp(t *testing.T) {
+	t.Parallel()
 	exited := make(chan exitStat, 1)
 	exited <- exitStat{code: 3}
 	f := &fakeTree{}
 	if st := killAndWait(f, exited); st.code != 3 || strings.Join(f.calls, " ") != "kill" {
 		t.Fatalf("exit %+v after %v, want code 3 after one kill", st, f.calls)
+	}
+	t0 := time.Now()
+	if st := killAndWait(&fakeTree{}, make(chan exitStat)); st.code != -1 {
+		t.Fatalf("no exit reported: %+v, want code -1", st)
+	}
+	if d := time.Since(t0); d < treeGoneLimit {
+		t.Fatalf("gave up after %v, before treeGoneLimit (%v)", d, treeGoneLimit)
 	}
 }

@@ -27,7 +27,8 @@ type treeEnd struct {
 	seenGone         bool
 }
 
-// finishTree ends a tree whose leader has exited (leader is how): whatever it left behind is
+// finishTree ends a tree whose leader has exited, or was given up on (killAndWait's code -1;
+// leader is how): whatever it left behind is
 // killed and waited for within treeGoneLimit; the monitor drained within monitorLimit; then,
 // unless the plane ended the run (requested) or already named a reason, the limit the monitor
 // saw it go past, if any; the usage, read before close since the job is gone after, and raised
@@ -35,7 +36,12 @@ type treeEnd struct {
 // figures (a run that went past one and ended before a poll could kill it is past it all the
 // same); then the tree is closed.
 //
-// @ai:invariant usage is read after the drain and before close; a requested end keeps an empty reason [P:assumed conf:0.8] (pinned by TestFinishTreeReadsInOrder, TestARequestedEndNamesNoLimit)
+// Whether the tree was seen gone is known after waitGone but returned only at the end: a caller
+// counting the trees not seen gone counts one up to monitorLimit later than before this module.
+// The one reader of that count (runHost) reads it after the plane closed, once every reap
+// returned.
+//
+// @ai:invariant usage is read after the drain and before close; a requested end names no limit of its own (it keeps the reason it was given) [P:assumed conf:0.8] (pinned by TestFinishTreeReadsInOrder, TestARequestedEndNamesNoLimit)
 func finishTree(t finishable, leader exitStat, limits *Limits, reason string, requested bool) treeEnd {
 	t.kill()
 	gone := t.waitGone(treeGoneLimit)
