@@ -31,7 +31,7 @@ type Plane struct {
 	waiters   chan struct{}
 
 	applyMu sync.Mutex // one apply at a time: generations are a total order
-	gens    *genLedger // the generations: numbered at admission, ended by await, read by Status and waits
+	gens    *genLedger // the generations: numbered at admission, ended by await, read by Status, Plan and the waits
 
 	quit     chan struct{} // closed when a shutdown is requested
 	quitOnce sync.Once

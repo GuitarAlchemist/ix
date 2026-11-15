@@ -8,10 +8,11 @@ import (
 // genLedger is the life of the plane's generations (ADR 0014, 2.1): it numbers them at
 // admission, records each one's outcome as it ends (in any order), keeps the settled frontier
 // (every generation up to it has ended), and answers a generation's result, now or once it
-// ends. The plane admits and ends; Status and the waits read.
+// ends. The plane admits and ends; Status, Plan, the launch wait and the generation wait read.
 //
 // Lock order: the ledger's lock is taken before any service's (admit holds it while it reads
 // the services named by a document); no path takes a service's lock and then the ledger's.
+// @ai:invariant lock order ledger -> s.mu: only admit nests them [P:assumed conf:0.8] (by reading: every other ledger method releases its lock before returning)
 type genLedger struct {
 	mu       sync.Mutex
 	gen      uint64
@@ -113,7 +114,7 @@ func (l *genLedger) resultLocked(g uint64) (WaitReply, bool, error) {
 
 // wait blocks until g has ended, and answers its outcome; an error of ctx ends it first.
 //
-// @ai:invariant a wait on an admitted generation answers once its end is recorded, with no ctl event read [P:assumed conf:0.8] (pinned by TestALedgerWaitWakesOnTheEndOfItsGeneration)
+// @ai:invariant genLedger.wait answers once its generation's end is recorded [P:assumed conf:0.8] (TestALedgerWaitWakesOnTheEndOfItsGeneration, on the ledger alone; the plane's generation wait calls it, covered end to end by the wait_test.go generation waits)
 func (l *genLedger) wait(ctx context.Context, g uint64) (WaitReply, error) {
 	for {
 		l.mu.Lock()
