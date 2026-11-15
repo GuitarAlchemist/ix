@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestTheReadyLineIsFoundAcrossTheRotation(t *testing.T) {
 	if r.Verdict != verdictOK {
 		t.Fatalf("verdict %s after a rotation, read %v: %q", r.Verdict, read, r.Checks)
 	}
-	if !strings.Contains(resumeChecks(r), "host.ready of PID 4242") {
+	if !strings.Contains(resumeChecks(r), "host.ready of PID 4242") || !strings.Contains(resumeChecks(r), journalPath+".1:") {
 		t.Fatalf("checks %q, want the ready line of PID 4242", r.Checks)
 	}
 }
@@ -53,5 +54,55 @@ func TestTheHostsReadyRecordReadsBack(t *testing.T) {
 	r, _, found, err := lastReady(func(string, int64) ([]byte, error) { return buf.Bytes(), nil }, journalPath, resumeJournalTail)
 	if err != nil || !found || r.Addr != "127.0.0.1:59762" || r.Pid != 4242 || r.Epoch != "e" || r.Event != "host.ready" || r.T == 0 {
 		t.Fatalf("read back %+v (found %v, err %v) from %s", r, found, err, buf.String())
+	}
+}
+
+// A host that ended (its final host.stop: observed or unobserved) after its ready line is not the
+// current host: a later host under the same PID (a PID comes back) has not said ready yet, and
+// the ended host's port is not this one's. The check answers unknown and probes nothing, in the
+// current log as across the rotation. A stop still in progress (requested, received) ends
+// nothing.
+func TestAReadyLineFollowedByTheHostsEndIsNotTheCurrentHosts(t *testing.T) {
+	inv := mustInventory(t, controlInventory)
+	ready := journalReady("4242", "127.0.0.1:59762")
+	ended := `{"event":"host.stop","ms":12,"phase":"observed","source":"scm","t":5}`
+	for name, files := range map[string][2]string{
+		"across the rotation": {ended + "\n", ready + "\n"},
+		"in the current log":  {ready + "\n" + ended + "\n", ""},
+	} {
+		j := &journalRun{pid: 4242}
+		p := j.probes()
+		p.readTail = func(path string, _ int64) ([]byte, error) {
+			if strings.HasSuffix(path, ".1") {
+				return []byte(files[1]), nil
+			}
+			return []byte(files[0]), nil
+		}
+		p.listening = func(string) (bool, error) { return false, nil }
+		r := checkResume(inv, p)[0]
+		if r.Verdict != verdictUnknown || len(j.healthURL) != 0 || !strings.Contains(resumeChecks(r), "stopped") {
+			t.Fatalf("%s: verdict %s, health probed %v: %q", name, r.Verdict, j.healthURL, r.Checks)
+		}
+	}
+	inProgress := ready + "\n" + `{"event":"host.stop","phase":"requested","source":"scm","t":5}` + "\n"
+	read := func(path string, _ int64) ([]byte, error) {
+		if strings.HasSuffix(path, ".1") {
+			return nil, nil
+		}
+		return []byte(inProgress), nil
+	}
+	if _, _, found, err := lastReady(read, journalPath, resumeJournalTail); !found || err != nil {
+		t.Fatalf("a stop still in progress ended the ready line (found %v, err %v)", found, err)
+	}
+}
+
+// The host.ready line keeps the bytes the map wrote before hostReady: keys in order, every field,
+// one line.
+func TestTheHostsReadyLineKeepsItsBytes(t *testing.T) {
+	var buf bytes.Buffer
+	(&hostLog{w: &buf}).ready(hostReady{Name: "n", Addr: "127.0.0.1:59762", Pid: 4242, Epoch: "e", StateFile: "s.json", Version: "v"})
+	want := regexp.MustCompile(`^\{"addr":"127\.0\.0\.1:59762","epoch":"e","event":"host\.ready","name":"n","pid":4242,"state_file":"s\.json","t":[0-9]+,"version":"v"\}\n$`)
+	if !want.Match(buf.Bytes()) {
+		t.Fatalf("host.ready line %q", buf.String())
 	}
 }

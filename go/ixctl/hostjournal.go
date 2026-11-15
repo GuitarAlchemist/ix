@@ -32,37 +32,54 @@ func (l *hostLog) ready(r hostReady) {
 	l.mu.Unlock()
 }
 
-// lastReady finds the last host.ready record of the host log at path, through read (the last
-// max bytes of a file, never written). A line that does not parse is skipped: the first may be
-// cut by the tail read, the last still being written. When path's tail holds none, path.1's is
-// read: the rotation (rotatingLog) moves the file there once it passes its size, and a host that
-// said ready long ago has its line there; a newer line in path always wins. A path.1 that cannot
-// be read is as if it held none. from is the file the record was found in.
+// lastReady finds the current host's host.ready record in the host log at path, through read
+// (the last max bytes of a file, never written). Read from the newest line back, the first that
+// decides is either a host.ready line (the record) or a host's final host.stop (observed or
+// unobserved: that host ended after it said ready, so the host running now, maybe under the same
+// PID, has not said ready yet, and nothing is found). A line that does not parse is skipped: the
+// first may be cut by the tail read, the last still being written. When path's tail holds
+// neither, path.1's is read: the rotation (rotatingLog) moves the file there once it passes its
+// size, and a host that said ready before has its line there, while it is within that file's
+// last max bytes. A path.1 that cannot be read is as if it held none. The two reads are not one
+// snapshot: a rotation between them can hide the line (nothing found, as before the rotation
+// was read at all). from is the file the deciding line was found in: the record's, or the
+// final stop's when found is false; "" when neither file holds one.
 //
-// @ai:invariant the ready record is the last one of path, else of path.1, never an older one when path holds one [P:assumed conf:0.8] (pinned by TestTheReadyLineIsFoundAcrossTheRotation, TestTheCurrentLogsReadyLineWinsOverTheRotatedOne)
+// @ai:invariant the record is the newest host.ready of path, else of path.1, unless a final host.stop follows it [P:assumed conf:0.8] (pinned by TestTheReadyLineIsFoundAcrossTheRotation, TestTheCurrentLogsReadyLineWinsOverTheRotatedOne, TestAReadyLineFollowedByTheHostsEndIsNotTheCurrentHosts)
 func lastReady(read func(path string, max int64) ([]byte, error), path string, max int64) (r hostReady, from string, found bool, err error) {
 	tail, err := read(path, max)
 	if err != nil {
 		return hostReady{}, "", false, err
 	}
-	if r, ok := lastReadyIn(tail); ok {
-		return r, path, true, nil
+	if r, decided, ok := lastReadyIn(tail); decided {
+		return r, path, ok, nil
 	}
 	if old, err := read(path+".1", max); err == nil {
-		if r, ok := lastReadyIn(old); ok {
-			return r, path + ".1", true, nil
+		if r, decided, ok := lastReadyIn(old); decided {
+			return r, path + ".1", ok, nil
 		}
 	}
 	return hostReady{}, "", false, nil
 }
 
-func lastReadyIn(tail []byte) (hostReady, bool) {
+// lastReadyIn reads tail from its newest line back to the first that decides: a host.ready
+// record (ok), or a host's final host.stop (decided, not ok).
+func lastReadyIn(tail []byte) (r hostReady, decided, ok bool) {
 	lines := strings.Split(string(tail), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		var r hostReady
-		if json.Unmarshal([]byte(lines[i]), &r) == nil && r.Event == hostReadyEvent {
-			return r, true
+		var l struct {
+			hostReady
+			Phase string `json:"phase"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &l) != nil {
+			continue
+		}
+		switch {
+		case l.Event == hostReadyEvent:
+			return l.hostReady, true, true
+		case l.Event == "host.stop" && (l.Phase == "observed" || l.Phase == "unobserved"):
+			return hostReady{}, true, false
 		}
 	}
-	return hostReady{}, false
+	return hostReady{}, false, false
 }

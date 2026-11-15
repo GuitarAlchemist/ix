@@ -496,7 +496,8 @@ func serviceImageVerdict(c resumeComponent, p resumeProbes, svcImage string, svc
 }
 
 // readyAddr is the address the service's current host said it listens on, and that host's
-// epoch, from the last host.ready line in the last resumeJournalTail bytes of c.ReadyJournal; ""
+// epoch, from the current host's host.ready line (lastReady: the last resumeJournalTail bytes of
+// c.ReadyJournal, else of its rotation, and no host's final stop after it); ""
 // with an unknown verdict when it cannot be trusted: a line from another PID is an earlier boot
 // or another host's journal, never a guess at this one's port. A PID can come back after a
 // reboot, so the PID only picks the line: checkResume then requires /health to answer its epoch.
@@ -511,24 +512,27 @@ func readyAddr(c resumeComponent, p resumeProbes) (h readyHost, verdict, line st
 	case pid == 0:
 		return readyHost{}, verdictUnknown, fmt.Sprintf("service %s runs no process: no address to read from %s", c.Service, c.ReadyJournal)
 	}
-	ev, _, found, err := lastReady(p.readTail, c.ReadyJournal, resumeJournalTail)
+	ev, from, found, err := lastReady(p.readTail, c.ReadyJournal, resumeJournalTail)
 	if err != nil {
 		return readyHost{}, verdictUnknown, fmt.Sprintf("journal %s: %v", c.ReadyJournal, err)
 	}
 	if found {
 		if ev.Pid != pid {
-			return readyHost{}, verdictUnknown, fmt.Sprintf("the last host.ready line in %s is PID %d's, the service runs PID %d: this host has not said ready, or the journal is another host's", c.ReadyJournal, ev.Pid, pid)
+			return readyHost{}, verdictUnknown, fmt.Sprintf("the last host.ready line in %s is PID %d's, the service runs PID %d: this host has not said ready, or the journal is another host's", from, ev.Pid, pid)
 		}
 		// Strictly IP:port: the address is pasted into the health URL, where "127.0.0.1:80@host"
 		// would move its host.
 		ap, err := netip.ParseAddrPort(ev.Addr)
 		if err != nil || !ap.Addr().IsLoopback() || ap.Port() == 0 {
-			return readyHost{}, verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s says %s, which is not a loopback address", pid, c.ReadyJournal, ev.Addr)
+			return readyHost{}, verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s says %s, which is not a loopback address", pid, from, ev.Addr)
 		}
 		if ev.Epoch == "" {
-			return readyHost{}, verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s names no epoch: nothing ties it to the process that answers", pid, c.ReadyJournal)
+			return readyHost{}, verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s names no epoch: nothing ties it to the process that answers", pid, from)
 		}
-		return readyHost{ap.String(), ev.Epoch, pid}, verdictOK, fmt.Sprintf("journal %s: host.ready of PID %d, the service's process, says %s", c.ReadyJournal, pid, ev.Addr)
+		return readyHost{ap.String(), ev.Epoch, pid}, verdictOK, fmt.Sprintf("journal %s: host.ready of PID %d, the service's process, says %s", from, pid, ev.Addr)
+	}
+	if from != "" {
+		return readyHost{}, verdictUnknown, fmt.Sprintf("the last host in %s stopped after it said ready: the service's process (PID %d) has not said ready", from, pid)
 	}
 	return readyHost{}, verdictUnknown, fmt.Sprintf("no host.ready line in the last %d bytes of %s, nor of %s.1", resumeJournalTail, c.ReadyJournal, c.ReadyJournal)
 }
