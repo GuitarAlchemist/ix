@@ -24,6 +24,7 @@ label{display:block;margin:10px 0;font-size:13px}label span{display:block;margin
 .pill[data-state=offline] .dot,.pill[data-state=device_pending] .dot{background:var(--warn)}
 .pill[data-state=device_refused] .dot,.pill[data-state=device_revoked] .dot,.pill[data-state=store_changed] .dot{background:var(--bad)}
 #pending{font-size:12px;color:var(--warn)}
+#desktop-version{font-size:12px;color:var(--muted);white-space:nowrap}
 .preferences{margin-left:auto;display:flex;gap:2px;align-items:center}
 /* Layout: a rail of tools, the tool takes the rest */
 .layout{flex:1;display:grid;grid-template-columns:240px minmax(0,1fr);min-height:0}

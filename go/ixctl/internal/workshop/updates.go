@@ -66,7 +66,11 @@ type Option func(*handlerOptions)
 
 type handlerOptions struct {
 	updates *Updates
+	version string
 }
+
+// WithVersion gives /me the version the Desktop runs, so every device can say which Desktop it talks to.
+func WithVersion(version string) Option { return func(o *handlerOptions) { o.version = version } }
 
 // WithUpdates serves the update routes (GET and POST /workshop/api/updates) to admin devices.
 func WithUpdates(u *Updates) Option { return func(o *handlerOptions) { o.updates = u } }

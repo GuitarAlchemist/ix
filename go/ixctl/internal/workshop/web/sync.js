@@ -171,7 +171,7 @@ export class Replica {
 }
 
 export class SyncEngine {
-  constructor(replica, onChange = () => {}) { this.replica = replica; this.onChange = onChange; this.status = 'notConnected'; this.deniedStatus = ''; this.running = null; this.admin = false; this.terminal = false; }
+  constructor(replica, onChange = () => {}) { this.replica = replica; this.onChange = onChange; this.status = 'notConnected'; this.deniedStatus = ''; this.running = null; this.admin = false; this.terminal = false; this.desktopVersion = ''; }
   // The device the owner linked (or granted) administers the others from the app (admin.go).
   devices() { return this.api('devices'); }
   invite() { return this.api('devices/invite', {method: 'POST', body: '{}'}); }
@@ -241,6 +241,7 @@ export class SyncEngine {
       if (me.protocol !== 'workshop/1' || typeof me.store_id !== 'string') throw new Error('connection_uncertain');
       if (me.store_id !== state.storeID) throw new Error('store_changed');
       this.status = 'connected'; this.deniedStatus = ''; this.admin = me.admin === true; this.terminal = me.terminal === true;
+      this.desktopVersion = typeof me.version === 'string' ? me.version : '';
       if (typeof me.device?.name === 'string' && me.device.name !== state.pairedName) await this.replica.change(s => { s.pairedName = me.device.name; });
       // Nothing to press: every changed project without a conflict is queued for the Desktop.
       state = await this.replica.change(s => { for (const [id, p] of Object.entries(s.projects)) if (p.dirty && !p.conflict) enqueueInto(s, id); });

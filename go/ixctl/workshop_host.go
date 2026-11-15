@@ -155,7 +155,7 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 		return nil, err
 	}
 	h := &workshopHost{store: store, addr: listener.Addr().String(), ownerKey: key, statePath: filepath.Join(stateDir, name+".workshop.json"), lock: lock}
-	app, err := workshop.Handler(store, settings.Origin, workshopUpdates(stateDir)...)
+	app, err := workshop.Handler(store, settings.Origin, append(workshopUpdates(stateDir), workshop.WithVersion(version))...)
 	if err != nil {
 		listener.Close()
 		store.Close()

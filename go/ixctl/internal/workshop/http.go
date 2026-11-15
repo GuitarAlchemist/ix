@@ -73,7 +73,11 @@ func Handler(s *Store, origin string, opts ...Option) (http.Handler, error) {
 			failure(w, err)
 			return
 		}
-		respond(w, http.StatusOK, map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected", "admin": d.Admin, "terminal": d.Terminal})
+		me := map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected", "admin": d.Admin, "terminal": d.Terminal}
+		if o.version != "" {
+			me["version"] = o.version
+		}
+		respond(w, http.StatusOK, me)
 	})
 	mux.HandleFunc("POST /workshop/api/terminal", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
