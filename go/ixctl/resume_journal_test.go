@@ -31,6 +31,8 @@ type journalRun struct {
 	healthURL []string
 	tailPath  string
 	tailMax   int64
+	// healthBody is what /health answers; the default carries the epoch journalReady writes.
+	healthBody string
 }
 
 func (j *journalRun) probes() resumeProbes {
@@ -49,7 +51,10 @@ func (j *journalRun) probes() resumeProbes {
 		},
 		health: func(u, _ string) ([]byte, error) {
 			j.healthURL = append(j.healthURL, u)
-			return []byte(`{"ok":true}`), nil
+			if j.healthBody != "" {
+				return []byte(j.healthBody), nil
+			}
+			return []byte(`{"ok":true,"epoch":"e"}`), nil
 		},
 	}
 }
@@ -103,6 +108,17 @@ func TestResumeReadyJournalRefusals(t *testing.T) {
 			"host.ready of PID 4242 in " + journalPath + " says 10.0.0.5:80, which is not a loopback address"},
 		{"address without a port", journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1")},
 			"host.ready of PID 4242 in " + journalPath + " says 127.0.0.1, which is not a loopback address"},
+		// The address is pasted into the health URL: anything but IP:port could move its host.
+		{"userinfo after the port", journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1:80@example.com")},
+			"host.ready of PID 4242 in " + journalPath + " says 127.0.0.1:80@example.com, which is not a loopback address"},
+		{"empty port", journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1:")},
+			"host.ready of PID 4242 in " + journalPath + " says 127.0.0.1:, which is not a loopback address"},
+		{"port zero", journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1:0")},
+			"host.ready of PID 4242 in " + journalPath + " says 127.0.0.1:0, which is not a loopback address"},
+		{"named port", journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1:http")},
+			"host.ready of PID 4242 in " + journalPath + " says 127.0.0.1:http, which is not a loopback address"},
+		{"no epoch", journalRun{pid: 4242, journal: `{"t":1,"event":"host.ready","addr":"127.0.0.1:59762","pid":4242}`},
+			"host.ready of PID 4242 in " + journalPath + " names no epoch: nothing ties it to the process that answers"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			j := c.run
@@ -120,6 +136,26 @@ func TestResumeReadyJournalRefusals(t *testing.T) {
 	}
 }
 
+// PIDs come back after a reboot: a line an earlier run of the same PID wrote (that run died
+// without a stop line, this one has not said ready) passes the PID check. Its epoch, drawn at
+// each boot, does not match what /health answers.
+func TestResumeReadyJournalEpochBindsTheAnsweringHost(t *testing.T) {
+	inv := mustInventory(t, controlInventory)
+	j := &journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1:59762"), healthBody: `{"ok":true,"epoch":"other"}`}
+	r := checkResume(inv, j.probes())[0]
+	if r.Verdict != verdictUnknown {
+		t.Errorf("verdict %s, want unknown: %q", r.Verdict, r.Checks)
+	}
+	want := `health http://127.0.0.1:59762/health answers epoch "other", the host.ready line of PID 4242 in ` + journalPath + ` is epoch "e"'s: an earlier run wrote it, this one has not said ready`
+	if !strings.Contains(resumeChecks(r), want) {
+		t.Errorf("checks %q lack %q", r.Checks, want)
+	}
+	j = &journalRun{pid: 4242, journal: journalReady("4242", "127.0.0.1:59762"), healthBody: `{"ok":true}`}
+	if r := checkResume(inv, j.probes())[0]; r.Verdict != verdictUnknown {
+		t.Errorf("health without an epoch: verdict %s, want unknown: %q", r.Verdict, r.Checks)
+	}
+}
+
 func TestResumeReadyJournalParse(t *testing.T) {
 	for _, c := range []struct{ name, js, want string }{
 		{"without service", `{"components":[{"name":"c","ready_journal":"j","health":"/health"}]}`,
@@ -128,6 +164,8 @@ func TestResumeReadyJournalParse(t *testing.T) {
 			"inventory: c has listen and ready_journal: the journal gives the address"},
 		{"with a full health URL", `{"components":[{"name":"c","service":"s","ready_journal":"j","health":"http://127.0.0.1:1/health"}]}`,
 			"inventory: c health with ready_journal is a path such as /health, the journal gives the address"},
+		{"without health", `{"components":[{"name":"c","service":"s","ready_journal":"j"}]}`,
+			"inventory: c ready_journal needs health, whose epoch must be the host.ready line's"},
 		{"a health path without ready_journal", `{"components":[{"name":"c","health":"/health"}]}`,
 			"inventory: c health"},
 	} {

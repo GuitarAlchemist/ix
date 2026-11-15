@@ -857,14 +857,17 @@ est `unknown`, jamais supposé démarré.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Un bind joker (`0.0.0.0`) sur le port le
   tient aussi. Rien ne se connecte au port.
-- `ready_journal` (avec `service`, à la place de `listen`) : le journal d'hôte du service, pour
-  un hôte démarré avec `--addr 127.0.0.1:0`, dont le port change à chaque démarrage. Chaque
-  contrôle lit les 64 derniers Kio du journal et prend l'adresse de sa dernière ligne
-  `host.ready`, seulement quand le PID de cette ligne est le processus que le service exécute
-  maintenant ; `health` est alors un chemin (`/health`) sur cette adresse. Une ligne d'un autre
-  PID (un démarrage précédent, un hôte qui ne s'est pas dit prêt, le journal d'un autre hôte), une
-  adresse hors boucle locale ou un journal illisible donne `unknown`, et rien n'est sondé.
-  L'inventaire reste le même d'un redémarrage à l'autre :
+- `ready_journal` (avec `service` et `health`, à la place de `listen`) : le journal d'hôte du
+  service, pour un hôte démarré avec `--addr 127.0.0.1:0`, dont le port change à chaque
+  démarrage. Chaque contrôle lit les 64 derniers Kio du journal et prend l'adresse de sa dernière
+  ligne `host.ready`, seulement quand le PID de cette ligne est le processus que le service
+  exécute maintenant et que son adresse est un `IP:port` de boucle locale ; `health` est alors un
+  chemin (`/health`) sur cette adresse, et il doit répondre l'`epoch` de la ligne, tiré à chaque
+  démarrage : un PID peut revenir après un redémarrage, l'epoch non. Une ligne d'un autre PID (un
+  démarrage précédent, un hôte qui ne s'est pas dit prêt, le journal d'un autre hôte), une adresse
+  qui n'est pas un `IP:port` de boucle locale, une ligne sans epoch, un health d'un autre epoch ou
+  un journal illisible donne `unknown`, et rien n'est sondé après le refus. L'inventaire reste le
+  même d'un redémarrage à l'autre :
 
   ```json
   {"name": "control", "after": ["plane"], "service": "ixctl",

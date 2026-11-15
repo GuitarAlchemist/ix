@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -75,8 +76,8 @@ type resumeComponent struct {
 	Durable []string `json:"durable,omitempty"`
 	// ReadyJournal is the service's ixctl host log (service run writes it): the address is read
 	// at each check from its last host.ready line, for a host started with --addr 127.0.0.1:0,
-	// whose port changes at each boot. Requires service; replaces listen, and health is then a
-	// path ("/health") on that address.
+	// whose port changes at each boot. Requires service and health; replaces listen, and health
+	// is then a path ("/health") on that address, whose epoch must be the line's.
 	ReadyJournal string `json:"ready_journal,omitempty"`
 	Owner        string `json:"owner,omitempty"`
 	Remedy       string `json:"remedy,omitempty"`
@@ -110,6 +111,7 @@ type resumeProbes struct {
 
 // resumeJournalTail is how much of a host log's end ready_journal reads: a host.ready line is
 // about 200 bytes and each start or stop adds one line.
+// @ai:assumption 64 KiB holds the current run's host.ready line: the log grows by a few lines per start or stop [U:uncertain conf:0.6]
 const resumeJournalTail = 64 << 10
 
 // listenerImage is the executable file name of the process holding addr, "" when nobody holds
@@ -493,21 +495,23 @@ func serviceImageVerdict(c resumeComponent, p resumeProbes, svcImage string, svc
 	return verdictOK, fmt.Sprintf("service %s starts %s, SHA-256 %s", c.Service, exe, sum)
 }
 
-// readyAddr is the address the service's current host said it listens on, from the last
-// host.ready line in the last resumeJournalTail bytes of c.ReadyJournal, "" with an unknown
-// verdict when it cannot be trusted: a line from another PID is an earlier boot or another host's
-// journal, never a guess at this one's port.
-func readyAddr(c resumeComponent, p resumeProbes) (addr, verdict, line string) {
+// readyAddr is the address the service's current host said it listens on, and that host's
+// epoch, from the last host.ready line in the last resumeJournalTail bytes of c.ReadyJournal; ""
+// with an unknown verdict when it cannot be trusted: a line from another PID is an earlier boot
+// or another host's journal, never a guess at this one's port. A PID can come back after a
+// reboot, so the PID only picks the line: checkResume then requires /health to answer its epoch.
+// @ai:invariant a ready_journal address is probed only from a line of the service's PID, as a loopback IP:port, and ok needs /health to answer the line's epoch [T:test conf:0.9 src:resume_journal_test.go]
+func readyAddr(c resumeComponent, p resumeProbes) (h readyHost, verdict, line string) {
 	pid, err := p.servicePID(c.Service)
 	switch {
 	case err != nil:
-		return "", verdictUnknown, fmt.Sprintf("service %s's process: %v", c.Service, err)
+		return readyHost{}, verdictUnknown, fmt.Sprintf("service %s's process: %v", c.Service, err)
 	case pid == 0:
-		return "", verdictUnknown, fmt.Sprintf("service %s runs no process: no address to read from %s", c.Service, c.ReadyJournal)
+		return readyHost{}, verdictUnknown, fmt.Sprintf("service %s runs no process: no address to read from %s", c.Service, c.ReadyJournal)
 	}
 	tail, err := p.readTail(c.ReadyJournal, resumeJournalTail)
 	if err != nil {
-		return "", verdictUnknown, fmt.Sprintf("journal %s: %v", c.ReadyJournal, err)
+		return readyHost{}, verdictUnknown, fmt.Sprintf("journal %s: %v", c.ReadyJournal, err)
 	}
 	lines := strings.Split(string(tail), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -515,21 +519,44 @@ func readyAddr(c resumeComponent, p resumeProbes) (addr, verdict, line string) {
 			Event string `json:"event"`
 			Addr  string `json:"addr"`
 			Pid   uint32 `json:"pid"`
+			Epoch string `json:"epoch"`
 		}
 		// The first line may be cut by the tail read and the last one still being written.
 		if json.Unmarshal([]byte(lines[i]), &ev) != nil || ev.Event != "host.ready" {
 			continue
 		}
 		if ev.Pid != pid {
-			return "", verdictUnknown, fmt.Sprintf("the last host.ready line in %s is PID %d's, the service runs PID %d: this host has not said ready, or the journal is another host's", c.ReadyJournal, ev.Pid, pid)
+			return readyHost{}, verdictUnknown, fmt.Sprintf("the last host.ready line in %s is PID %d's, the service runs PID %d: this host has not said ready, or the journal is another host's", c.ReadyJournal, ev.Pid, pid)
 		}
-		host, _, err := net.SplitHostPort(ev.Addr)
-		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
-			return "", verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s says %s, which is not a loopback address", pid, c.ReadyJournal, ev.Addr)
+		// Strictly IP:port: the address is pasted into the health URL, where "127.0.0.1:80@host"
+		// would move its host.
+		ap, err := netip.ParseAddrPort(ev.Addr)
+		if err != nil || !ap.Addr().IsLoopback() || ap.Port() == 0 {
+			return readyHost{}, verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s says %s, which is not a loopback address", pid, c.ReadyJournal, ev.Addr)
 		}
-		return ev.Addr, verdictOK, fmt.Sprintf("journal %s: host.ready of PID %d, the service's process, says %s", c.ReadyJournal, pid, ev.Addr)
+		if ev.Epoch == "" {
+			return readyHost{}, verdictUnknown, fmt.Sprintf("host.ready of PID %d in %s names no epoch: nothing ties it to the process that answers", pid, c.ReadyJournal)
+		}
+		return readyHost{ap.String(), ev.Epoch, pid}, verdictOK, fmt.Sprintf("journal %s: host.ready of PID %d, the service's process, says %s", c.ReadyJournal, pid, ev.Addr)
 	}
-	return "", verdictUnknown, fmt.Sprintf("no host.ready line in the last %d bytes of %s", resumeJournalTail, c.ReadyJournal)
+	return readyHost{}, verdictUnknown, fmt.Sprintf("no host.ready line in the last %d bytes of %s", resumeJournalTail, c.ReadyJournal)
+}
+
+// readyHost is what a trusted host.ready line says: the address, the run's epoch, its PID.
+type readyHost struct {
+	addr, epoch string
+	pid         uint32
+}
+
+// healthEpoch is the epoch field of a /health body, "" when there is none.
+func healthEpoch(body []byte) string {
+	var h struct {
+		Epoch string `json:"epoch"`
+	}
+	if json.Unmarshal(body, &h) != nil {
+		return ""
+	}
+	return h.Epoch
 }
 
 // readAllCapped reads r whole, or fails once it holds more than max bytes: a prefix that happens
@@ -589,6 +616,8 @@ func parseResumeInventory(b []byte) (*resumeInventory, error) {
 				return nil, fmt.Errorf("inventory: %s ready_journal needs service, whose process wrote the host.ready line", c.Name)
 			case c.Listen != "":
 				return nil, fmt.Errorf("inventory: %s has listen and ready_journal: the journal gives the address", c.Name)
+			case c.Health == "":
+				return nil, fmt.Errorf("inventory: %s ready_journal needs health, whose epoch must be the host.ready line's", c.Name)
 			case c.Health != "" && (!strings.HasPrefix(c.Health, "/") || strings.HasPrefix(c.Health, "//")):
 				return nil, fmt.Errorf("inventory: %s health with ready_journal is a path such as /health, the journal gives the address", c.Name)
 			}
@@ -726,8 +755,11 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 				worse(serviceImageVerdict(c, p, svcImage, svcErr))
 			}
 		}
+		readyEpoch, readyPID := "", uint32(0)
 		if c.ReadyJournal != "" {
-			addr, v, line := readyAddr(c, p)
+			ready, v, line := readyAddr(c, p)
+			readyEpoch, readyPID = ready.epoch, ready.pid
+			addr := ready.addr
 			worse(v, line)
 			if addr == "" {
 				c.Health = "" // a path with no trusted address to put it on
@@ -765,6 +797,9 @@ func checkResume(inv *resumeInventory, p resumeProbes) []resumeResult {
 		if c.Health != "" {
 			if body, err := p.health(c.Health, c.HealthHost); err != nil {
 				worse(verdictDown, fmt.Sprintf("health %s: %v", c.Health, err))
+			} else if got := healthEpoch(body); readyEpoch != "" && got != readyEpoch {
+				worse(verdictUnknown, fmt.Sprintf("health %s answers epoch %q, the host.ready line of PID %d in %s is epoch %q's: an earlier run wrote it, this one has not said ready",
+					c.Health, got, readyPID, c.ReadyJournal, readyEpoch))
 			} else if c.HealthExpect != "" && !strings.Contains(string(body), c.HealthExpect) {
 				worse(verdictDown, fmt.Sprintf("health %s answers, but its body lacks %q: another program or version holds it", c.Health, c.HealthExpect))
 			} else if c.HealthFields != nil {

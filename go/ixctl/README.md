@@ -805,13 +805,16 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). A wildcard bind (`0.0.0.0`) on the port
   holds it too. Nothing connects to the port.
-- `ready_journal` (with `service`, in place of `listen`): the service's host log, for a host
-  started with `--addr 127.0.0.1:0`, whose port changes at each boot. Each check reads the last
-  64 KiB of the log and takes the address from its last `host.ready` line, only when that line's
-  PID is the process the service runs now; `health` is then a path (`/health`) on that address.
-  A line from another PID (an earlier boot, a host that has not said ready, another host's log),
-  an address off loopback or an unreadable log is `unknown`, and nothing is probed. The
-  inventory stays the same across reboots:
+- `ready_journal` (with `service` and `health`, in place of `listen`): the service's host log,
+  for a host started with `--addr 127.0.0.1:0`, whose port changes at each boot. Each check
+  reads the last 64 KiB of the log and takes the address from its last `host.ready` line, only
+  when that line's PID is the process the service runs now and its address is a loopback
+  `IP:port`; `health` is then a path (`/health`) on that address, and it must answer the line's
+  `epoch`, drawn at each boot: a PID can come back after a reboot, the epoch does not. A line
+  from another PID (an earlier boot, a host that has not said ready, another host's log), an
+  address that is not a loopback `IP:port`, a line without an epoch, a health with another epoch
+  or an unreadable log is `unknown`, and nothing is probed after the refusal. The inventory stays
+  the same across reboots:
 
   ```json
   {"name": "control", "after": ["plane"], "service": "ixctl",
