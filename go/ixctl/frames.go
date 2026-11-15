@@ -73,6 +73,9 @@ func (m *memFrames) serve() {
 func (m *memFrames) Read(ctx context.Context) ([]byte, error) {
 	select {
 	case f := <-m.s.Out():
+		if m.s.ctx.Err() != nil {
+			return nil, errMemClosed // the select may take a queued frame once the session has ended
+		}
 		return f, nil
 	case <-m.s.ctx.Done():
 		return nil, errMemClosed

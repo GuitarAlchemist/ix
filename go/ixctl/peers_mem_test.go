@@ -94,6 +94,23 @@ func TestMemFramesWriteDoesNotWaitForTheSession(t *testing.T) {
 	}
 }
 
+// A closed session delivers nothing more, as ws.go's writer, whose write context the session's end
+// cancels, sends nothing: a frame still queued when the session ends is dropped, not read. The
+// select between the queue and the end picks at random when both are ready, so the test closes many
+// sessions with a frame waiting.
+func TestMemFramesReadsNothingAfterTheSessionEnds(t *testing.T) {
+	p := memPlane(t, fakeSpec(t, "p", nil), "p")
+	for i := range 200 {
+		s := newSession(t.Context(), p, 1)
+		s.out <- []byte(`{"queued":true}`)
+		m := newMemFrames(s)
+		m.Close()
+		if f, err := m.Read(t.Context()); !errors.Is(err, errMemClosed) {
+			t.Fatalf("round %d: read %q, %v after the session ended, want errMemClosed", i, f, err)
+		}
+	}
+}
+
 func TestFederationOverTheInMemoryTransport(t *testing.T) {
 	b := memPlane(t, fakeSpec(t, "b", nil), "b")
 	a := memPlane(t, fakeSpec(t, "a", []PeerSpec{{Name: "b", StateFile: filepath.Join(t.TempDir(), "never-read.json")}}), "a")
