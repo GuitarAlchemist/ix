@@ -90,9 +90,44 @@ func TestOnlyWindowsRetriesARenameRefusedForPermission(t *testing.T) {
 		{"linux", denied, false},
 		{"darwin", denied, false},
 		{"linux", missing, false},
+		{"linux", sharing, false},
 	} {
 		if got := heldOn(c.goos, c.err); got != c.want {
 			t.Errorf("heldOn(%s, %v) = %v, want %v", c.goos, c.err, got, c.want)
 		}
+	}
+}
+
+// os.Rename promises no atomicity off Unix: a rename may remove the file it replaces, then fail.
+// The temp is then the only copy of either content, and the need store reads a lone temp as
+// unknown, never as empty: replaceFile keeps it. A rename refused with the old file in place
+// leaves no temp behind.
+func TestARenameThatLostTheOldFileKeepsItsTemp(t *testing.T) {
+	old := fileRename
+	t.Cleanup(func() { fileRename = old })
+
+	s, clk, path := newNeedTest(t)
+	s.submit(submitOf(clk, "n1", time.Hour))
+	fileRename = func(_, to string) error {
+		os.Remove(to)
+		return errors.New("rename failed after removing the target")
+	}
+	_, err := s.claim("n1", "resolver-x", 60_000)
+	wantStatus(t, err, 503, "unknown")
+	fileRename = old
+	_, err = newNeedStore(path, clk.now).submit(submitOf(clk, "n1", time.Hour))
+	wantStatus(t, err, 503, "missing")
+
+	state := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(state, []byte("old"), 0o600)
+	fileRename = func(string, string) error { return errors.New("rename refused") }
+	if err := replaceFile(state, []byte("new")); err == nil {
+		t.Fatal("a refused rename replaced the file")
+	}
+	if _, err := os.Stat(state + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("a rename refused with the old file in place left its temp (%v)", err)
+	}
+	if b, _ := os.ReadFile(state); string(b) != "old" {
+		t.Fatalf("after a refused rename the file holds %q, want old", b)
 	}
 }

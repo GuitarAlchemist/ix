@@ -19,16 +19,22 @@ type replaceError struct {
 func (e *replaceError) Error() string { return e.err.Error() }
 func (e *replaceError) Unwrap() error { return e.err }
 
-// fileSync makes a file's content durable (a test seam).
-var fileSync = (*os.File).Sync
+// fileSync makes a file's content durable, and fileRename replaces one file with another
+// (test seams).
+var (
+	fileSync   = (*os.File).Sync
+	fileRename = os.Rename
+)
 
-// replaceFile replaces path's content with b, whole: a reader sees the old content or the new,
-// never a part. The new content is written to path.tmp and synced before the rename (the file's
-// content, not the directory: what a power loss can still lose is in the README's need
-// section); on Windows the rename is refused while another process holds the file it replaces
-// (an indexer or an antivirus reading what the last write left), so a few short retries, about
-// a second in all, ride that out. On a failure the temp file is removed when it can be; one
-// left behind (a remove refused) is what the need store reads as unknown on its next load.
+// replaceFile replaces path's content with b by a rename: where the OS's rename is atomic
+// (Unix), a reader sees the old content or the new, never a part; Windows does not promise it.
+// The new content is written to path.tmp and synced before the rename (the file's content, not
+// the directory: what a power loss can still lose is in the README's need section); on Windows
+// the rename is refused while another process holds the file it replaces (an indexer or an
+// antivirus reading what the last write left), so a few short retries, about a second in all,
+// ride that out. On a failure the temp is removed when it can be, unless the rename failed with
+// path gone: then the temp is the only copy, and is kept. A temp with no file beside it is what
+// the need store reads as unknown on its next load.
 //
 // @ai:invariant replaceFile renames only a synced temp, and retries a rename refused because the target is held [P:assumed conf:0.8] (pinned by TestReplaceFileSyncsBeforeTheRename, TestTheStateFileIsReplacedOnceItsReaderLetsGo)
 func replaceFile(path string, b []byte) error {
@@ -38,7 +44,11 @@ func replaceFile(path string, b []byte) error {
 		return &replaceError{"temp", err}
 	}
 	if err := renameOver(tmp, path); err != nil {
-		os.Remove(tmp)
+		// A rename may remove path, then fail (os.Rename promises no atomicity off Unix): the
+		// temp is then the only copy, and the evidence a reader such as the need store goes by.
+		if _, serr := os.Stat(path); serr == nil {
+			os.Remove(tmp)
+		}
 		return &replaceError{"rename", err}
 	}
 	return nil
@@ -67,7 +77,7 @@ func writeSynced(path string, b []byte) error {
 func renameOver(tmp, path string) error {
 	const attempts = 20
 	for i := 1; ; i++ {
-		err := os.Rename(tmp, path)
+		err := fileRename(tmp, path)
 		if err == nil || i == attempts || !heldByAnother(err) {
 			return err
 		}
