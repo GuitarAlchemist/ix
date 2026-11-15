@@ -101,6 +101,22 @@ func readWorkshopKey(path string) (string, error) {
 	}
 	return "", fmt.Errorf("Workshop owner key must be explicitly provisioned before activation: %w", err)
 }
+
+// workshopUpdates lets admin devices install a newer build from the app: releases are put in
+// %ProgramData%\IxForge\releases by Publish-IxForgeRelease.ps1; the requests go to <state>\workshop\updates, which the
+// updater task (Install-IxForgeUpdater.ps1, run as SYSTEM) reads. Without ProgramData, nothing is offered.
+func workshopUpdates(stateDir string) []workshop.Option {
+	data := os.Getenv("ProgramData")
+	if data == "" || !filepath.IsAbs(data) {
+		return nil
+	}
+	requests := filepath.Join(stateDir, "updates")
+	if err := os.MkdirAll(requests, 0o755); err != nil {
+		return nil
+	}
+	return []workshop.Option{workshop.WithUpdates(&workshop.Updates{Installed: version, Releases: filepath.Join(data, "IxForge", "releases"), Requests: requests, Now: time.Now})}
+}
+
 func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopHost, error) {
 	if err := settings.validate(); err != nil {
 		return nil, err
@@ -139,7 +155,7 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 		return nil, err
 	}
 	h := &workshopHost{store: store, addr: listener.Addr().String(), ownerKey: key, statePath: filepath.Join(stateDir, name+".workshop.json"), lock: lock}
-	app, err := workshop.Handler(store, settings.Origin)
+	app, err := workshop.Handler(store, settings.Origin, workshopUpdates(stateDir)...)
 	if err != nil {
 		listener.Close()
 		store.Close()

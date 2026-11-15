@@ -19,9 +19,13 @@ var assets embed.FS
 
 // Handler is a separate application face for an explicitly configured same HTTPS origin.
 // Mount only /workshop/ on the future app-facing mux. Do not mount this behind or instead of ixctl's /v1 guard.
-func Handler(s *Store, origin string) (http.Handler, error) {
+func Handler(s *Store, origin string, opts ...Option) (http.Handler, error) {
 	if !validOrigin(origin) {
 		return nil, ErrInvalid
+	}
+	var o handlerOptions
+	for _, opt := range opts {
+		opt(&o)
 	}
 	u, _ := url.Parse(origin)
 	web, _ := fs.Sub(assets, "web")
@@ -166,6 +170,9 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 		}
 		respond(w, http.StatusOK, changes)
 	})
+	if o.updates != nil {
+		updateRoutes(mux, s, o.updates)
+	}
 	mux.HandleFunc("/workshop/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/workshop/api/") {
 			http.NotFound(w, r)
