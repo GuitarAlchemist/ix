@@ -26,10 +26,12 @@ func (e errWorkshopStart) Unwrap() error { return e.err }
 
 // bootInstance runs the start of an instance in its one order: the name's lock, the listener,
 // the plane, the state file (startInstance), then the Workshop, then the probe kinds' settings,
-// all before any client knows the token, so no node can exist yet. On a failure what was
-// started is closed. The caller announces readiness its own way, then starts the plane.
+// all before the manager announces readiness. A client that reads the state file (it holds the
+// token) during the boot may still find a probe kind unset, as before this module: the settings
+// follow the state file. On a failure what was started is closed. The caller announces
+// readiness its own way, then starts the plane.
 //
-// @ai:invariant up and the service start an instance through bootInstance only, in this order [P:assumed conf:0.8] (pinned by TestUpAndTheServiceBootTheSameInstance)
+// @ai:invariant up (cmdUp) and the service host (runHost) start an instance through bootInstance only [P:assumed conf:0.7] (by reading; TestBootInstanceAppliesEveryOption pins the options, TestAHostWhoseWorkshopFailsSaysSo the host's use)
 func bootInstance(o instanceOptions) (*instance, error) {
 	in, err := startInstance(o.spec, o.name, o.addr, o.stateDir, o.bookmarks, o.budget)
 	if err != nil {

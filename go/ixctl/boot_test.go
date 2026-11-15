@@ -2,12 +2,14 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
-// The options reach the plane before bootInstance returns: the probe kinds' settings and the
+// Every option reaches the plane before bootInstance returns: the probe kinds' settings and the
 // budget, whichever manager filled them.
-func TestUpAndTheServiceBootTheSameInstance(t *testing.T) {
+func TestBootInstanceAppliesEveryOption(t *testing.T) {
 	in, err := bootInstance(instanceOptions{spec: fakeSpec(t, "boot", nil), addr: "127.0.0.1:0", stateDir: t.TempDir(),
 		bookmarks: "memory", budget: &probeBudget{maxRate: 300, treeRate: 600},
 		deltaJournal: "delta.jsonl", claudeBin: "claude.exe"})
@@ -44,4 +46,20 @@ func TestABootThatFailsAtTheWorkshopLetsGoOfTheName(t *testing.T) {
 		t.Fatalf("the boot after a Workshop failure: %v", err)
 	}
 	in.close()
+}
+
+// The service host tells its three start failures apart in its log and its exit code: a
+// Workshop that did not start is workshop.failed (exit 1), not host.failed nor host.refused.
+func TestAHostWhoseWorkshopFailsSaysSo(t *testing.T) {
+	log := &syncBuffer{}
+	o := hostOpts(fakeSpec(t, "wsfail", nil), t.TempDir(), log)
+	o.workshop = workshopSettings{Version: 2, Enabled: true}
+	_, done := startHost(o)
+	if code := waitExit(t, done, 10*time.Second); code != exitStartFailed {
+		t.Fatalf("exit %d, want %d\n%s", code, exitStartFailed, log.String())
+	}
+	if s := log.String(); !strings.Contains(s, `"event":"workshop.failed"`) || strings.Contains(s, `"event":"host.failed"`) ||
+		!strings.Contains(s, "Workshop config version must be 1") {
+		t.Fatalf("log of a Workshop that did not start:\n%s", s)
+	}
 }
