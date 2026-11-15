@@ -1,12 +1,103 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
+
+// sseItems reads /v1/events with the given query for d, or until n items, and returns them in
+// order: "env:<ch>" for an event, "gap:<reason>" for a gap, "live" for the live mark.
+func sseItems(t *testing.T, in *instance, query string, n int, d time.Duration) []string {
+	t.Helper()
+	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?"+query, nil)
+	req.Header.Set("Authorization", "Bearer "+in.token)
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	resp, err := loopbackHTTP.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET /v1/events?%s: %d", query, resp.StatusCode)
+	}
+	var items []string
+	sc := bufio.NewScanner(resp.Body)
+	kind := ""
+	for len(items) < n && sc.Scan() {
+		line := sc.Text()
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			kind = line[7:]
+		case strings.HasPrefix(line, "data: ") && kind == "gap":
+			var g Gap
+			json.Unmarshal([]byte(line[6:]), &g)
+			items = append(items, "gap:"+g.Reason)
+		case strings.HasPrefix(line, "data: ") && kind == "live":
+			items = append(items, "live")
+		case strings.HasPrefix(line, "data: "):
+			var e Envelope
+			if err := json.Unmarshal([]byte(line[6:]), &e); err != nil {
+				t.Fatal(err)
+			}
+			items = append(items, "env:"+e.Ch)
+		}
+	}
+	return items
+}
+
+// SSE takes exact as the WebSocket's subscribe does: the whole channel name, so svc/x does not
+// cover svc/x-extra.
+func TestSSEExactMatchesTheWholeChannel(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "a", nil), "")
+	in.plane.Publish("svc/x-extra", event("stats", map[string]any{"n": 1}))
+	in.plane.Publish("svc/x", event("stats", map[string]any{"n": 2}))
+	in.plane.Publish("svc/x-extra", event("stats", map[string]any{"n": 3}))
+	in.plane.Publish("svc/x", event("stats", map[string]any{"n": 4}))
+	got := sseItems(t, in, "ch=svc/x&since=0&exact=1", 2, 2*time.Second)
+	if strings.Join(got, " ") != "env:svc/x env:svc/x" {
+		t.Fatalf("exact svc/x read %v, want svc/x's two events and nothing of svc/x-extra", got)
+	}
+}
+
+// SSE takes live as the WebSocket's subscribe does: once the replay is over, one live mark,
+// before the first live event, and at once on a channel whose replay holds nothing.
+func TestSSELiveFollowsTheReplay(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "a", nil), "")
+	for i := 1; i <= 3; i++ {
+		in.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		in.plane.Publish("svc/x", event("stats", map[string]any{"n": 4}))
+	}()
+	got := sseItems(t, in, "ch=svc/x&since=0&live=1", 5, 3*time.Second)
+	if want := "env:svc/x env:svc/x env:svc/x live env:svc/x"; strings.Join(got, " ") != want {
+		t.Fatalf("live after a replay read %v, want %s", got, want)
+	}
+	if got := sseItems(t, in, "ch=svc/quiet&since=0&live=true", 1, 2*time.Second); strings.Join(got, " ") != "live" {
+		t.Fatalf("live on a quiet channel read %v, want the live mark at once", got)
+	}
+}
+
+// A request that did not carry live or exact keeps its former meaning (ADR 0014, 1.2), and one
+// whose value is neither 1 nor true is not refused (1.3: refusing a request that was valid takes
+// a new name): it is read as before, a prefix with no live mark.
+func TestSSEReadsOtherLiveOrExactValuesAsBefore(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "a", nil), "")
+	in.plane.Publish("svc/x", event("stats", map[string]any{"n": 1}))
+	in.plane.Publish("svc/x-extra", event("stats", map[string]any{"n": 2}))
+	got := sseItems(t, in, "ch=svc/x&since=0&exact=yes&live=no", 3, time.Second)
+	if strings.Join(got, " ") != "env:svc/x env:svc/x-extra" {
+		t.Fatalf("exact=yes&live=no read %v, want the prefix's two events and no live mark", got)
+	}
+}
 
 // The subscription ends after the overflow gap it returns: a reader that fell off the ring is
 // told once, and nothing follows.
