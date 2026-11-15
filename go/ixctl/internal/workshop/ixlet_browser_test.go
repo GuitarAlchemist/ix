@@ -29,7 +29,7 @@ type browserFixture struct {
 	desktopHTTP *http.Client // reaches the Desktop from Go, as a client outside the browser (the queries watcher)
 }
 
-func newBrowserFixture(t *testing.T) *browserFixture {
+func newBrowserFixture(t *testing.T, opts ...Option) *browserFixture {
 	t.Helper()
 	if os.Getenv("WORKSHOP_CDP") != "1" {
 		t.Skip("set WORKSHOP_CDP=1 for the fresh-profile headless Chrome checks of the IXLET runtime")
@@ -70,7 +70,7 @@ func newBrowserFixture(t *testing.T) *browserFixture {
 		t.Fatal("production port refused")
 	}
 	f.origin = "https://workshop.invalid:" + u.Port()
-	if handler, err = Handler(f.store, f.origin); err != nil {
+	if handler, err = Handler(f.store, f.origin, opts...); err != nil {
 		t.Fatal(err)
 	}
 	f.desktopHTTP = testDesktopHTTP(server)
