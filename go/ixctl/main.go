@@ -297,8 +297,9 @@ func instanceAlive(st stateFile) bool {
 	return json.NewDecoder(resp.Body).Decode(&h) == nil && h.OK && h.Name == st.Name
 }
 
-// writeFileAtomic writes through `path.tmp` and renames. The content is the
-// state file, token included, so a failed rename does not leave the copy.
+// writeFileAtomic writes through `path.tmp` and renames (replaceFile). The content is the
+// state file, token included: a failed rename leaves the copy (mode 0600) only when it cannot
+// see the state file any more, the copy then being the only one.
 func writeFileAtomic(path string, b []byte) error {
 	return replaceFile(path, b)
 }

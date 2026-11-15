@@ -10,7 +10,8 @@ import (
 
 // replaceError says at which stage replaceFile failed: "temp" (writing or syncing the new
 // content beside the file: the file is as it was) or "rename" (the replace itself: the file is
-// as it was, unless the rename went through and only its answer was lost).
+// as it was, unless the rename went through and only its answer was lost, or removed the file
+// and then failed, which only the temp then holds).
 type replaceError struct {
 	stage string
 	err   error
@@ -32,9 +33,9 @@ var (
 // the directory: what a power loss can still lose is in the README's need section); on Windows
 // the rename is refused while another process holds the file it replaces (an indexer or an
 // antivirus reading what the last write left), so a few short retries, about a second in all,
-// ride that out. On a failure the temp is removed when it can be, unless the rename failed with
-// path gone: then the temp is the only copy, and is kept. A temp with no file beside it is what
-// the need store reads as unknown on its next load.
+// ride that out. On a failure the temp is removed when it can be, unless the rename failed and
+// path cannot be seen (gone, or a Stat refused): then the temp may be the only copy, and is
+// kept. A temp with no file beside it is what the need store reads as unknown on its next load.
 //
 // @ai:invariant replaceFile renames only a synced temp, and retries a rename refused because the target is held [P:assumed conf:0.8] (pinned by TestReplaceFileSyncsBeforeTheRename, TestTheStateFileIsReplacedOnceItsReaderLetsGo)
 func replaceFile(path string, b []byte) error {
