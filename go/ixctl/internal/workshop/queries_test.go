@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The DuckDB queries of the ix repo, copied verbatim into testdata/ix (ix 8c97be79).
@@ -47,22 +48,36 @@ func TestTheDuckDBQueriesAreReadFromTheirFiles(t *testing.T) {
 	}
 }
 
+// The generation the tests stamp on a queries widget: when, and from which ix commit (the one testdata/ix copies).
+var testMadeAt = time.Date(2026, 11, 15, 1, 2, 3, 0, time.UTC)
+
+const testSourceCommit = "8c97be79"
+
 // TestTheQueriesWidgetIsAnIxForgeWidget: the generator writes an ixforge-widget/1 block of kind "queries", which
-// IxForge imports like any other widget.
+// IxForge imports like any other widget. It says when it was made and from which ix commit, so a reader knows how
+// fresh the list is.
 func TestTheQueriesWidgetIsAnIxForgeWidget(t *testing.T) {
-	raw, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t))
+	raw, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMadeAt.In(time.FixedZone("EST", -5*3600)), testSourceCommit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var data struct {
 		Format, Kind, Title string
 		Entries             []QueryEntry
+		GeneratedAt         string `json:"generated_at"`
+		SourceCommit        string `json:"source_commit"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil || data.Format != "ixforge-widget/1" || data.Kind != "queries" || data.Title != "Requêtes DuckDB" || len(data.Entries) != 15 {
 		t.Fatalf("%s %v", raw, err)
 	}
-	if _, err := QueriesWidget("Vide", nil); err == nil {
+	if data.GeneratedAt != "2026-11-15T01:02:03Z" || data.SourceCommit != testSourceCommit {
+		t.Errorf("made at %q (want UTC 2026-11-15T01:02:03Z) from %q", data.GeneratedAt, data.SourceCommit)
+	}
+	if _, err := QueriesWidget("Vide", nil, testMadeAt, testSourceCommit); err == nil {
 		t.Error("a queries widget with no query must be refused")
+	}
+	if _, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMadeAt, "main"); err == nil {
+		t.Error("a source that is not a commit must be refused")
 	}
 }
 
@@ -79,6 +94,9 @@ func TestTheDesktopKeepsAQueriesWidget(t *testing.T) {
 	if err := validate(op(func(*Widget, *Workspace) {})); err != nil {
 		t.Fatalf("a queries widget must be accepted: %v", err)
 	}
+	if err := validate(op(func(w *Widget, _ *Workspace) { w.GeneratedAt, w.SourceCommit = "2026-11-15T01:02:03Z", testSourceCommit })); err != nil {
+		t.Fatalf("a queries widget that says when and from what it was made must be accepted: %v", err)
+	}
 	long := strings.Repeat("x", 8193)
 	refused := map[string]func(*Widget, *Workspace){
 		"no query":             func(w *Widget, _ *Workspace) { w.Entries = nil },
@@ -89,6 +107,12 @@ func TestTheDesktopKeepsAQueriesWidget(t *testing.T) {
 		"initial value":        func(w *Widget, _ *Workspace) { w.InitialValue = 1 },
 		"queries on a list":    func(w *Widget, _ *Workspace) { w.Kind = "checklist" },
 		"an IXLET for queries": func(_ *Widget, ws *Workspace) { ws.IXLETDefinitions = []IXLETDefinition{{ID: "d", Title: "Requêtes DuckDB", Kind: "queries", Status: "draft"}} },
+		"made at no time":      func(w *Widget, _ *Workspace) { w.GeneratedAt = "hier" },
+		"made at a local time": func(w *Widget, _ *Workspace) { w.GeneratedAt = "2026-11-14T20:02:03-05:00" },
+		"made from a branch":   func(w *Widget, _ *Workspace) { w.SourceCommit = "main" },
+		"a list's generation": func(w *Widget, _ *Workspace) {
+			w.Kind, w.Entries, w.SourceCommit = "checklist", nil, testSourceCommit
+		},
 	}
 	for name, change := range refused {
 		if err := validate(op(change)); !errors.Is(err, ErrInvalid) {

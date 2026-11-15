@@ -1,9 +1,11 @@
 package workshop
 
 import (
+	"encoding/json"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestTheDuckDBQueriesWidgetListsOurQueries: the queries widget, made by ixforge-queries from the ix repo, is imported
@@ -15,7 +17,7 @@ func TestTheDuckDBQueriesWidgetListsOurQueries(t *testing.T) {
 		t.Skip("the browser fixture runs on Windows")
 	}
 	f := newBrowserFixture(t)
-	widget, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t))
+	widget, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMadeAt, testSourceCommit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +49,7 @@ func TestTheDuckDBQueriesWidgetListsOurQueries(t *testing.T) {
 	pc.evalInto(`(()=>{`+first+`.querySelector('[data-query-copy]').click();return true})()`, nil)
 	pc.until("the SQL copied", `window.__copied!==null && window.__copied.startsWith('SELECT repo, kind, count(*) AS n') && window.__copied.endsWith('ORDER BY n DESC;') && `+first+`.querySelector('[data-query-copied]').textContent==='Copié'`)
 	pc.until("kept by the Desktop", `document.getElementById('tool-status').textContent==='15 requêtes · partagé par le Desktop'`)
+	pc.until("says how fresh it is", `/^Générée le .*2026 depuis ix 8c97be7$/.test(document.querySelector('#widget-host [data-query-made]')?.textContent.trim())`)
 	pc.screenshot("requetes-duckdb.png")
 
 	// The export: a page that lists the same queries, offline.
@@ -63,4 +66,69 @@ func TestTheDuckDBQueriesWidgetListsOurQueries(t *testing.T) {
 	tablet.until("the tool reaches the tablet", `[...document.querySelectorAll('#tools [data-tool]')].some(b=>b.title==='Requêtes DuckDB')`)
 	tablet.evalInto(`(()=>{[...document.querySelectorAll('#tools [data-tool]')].find(b=>b.title==='Requêtes DuckDB').click();return true})()`, nil)
 	tablet.until("the same queries on the tablet", groups+`==='docs/streeling/queries.sql:5, docs/value/queries.sql:3, docs/duck/pipelines.sql:7'`)
+}
+
+// TestReimportingOurQueriesReplacesThem: when the queries change in ix, the owner generates the widget again and
+// imports it. The queries widget of the same name takes the new queries and says it was made from the new commit; no
+// second tool appears, on this device or on the Desktop.
+func TestReimportingOurQueriesReplacesThem(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the browser fixture runs on Windows")
+	}
+	f := newBrowserFixture(t)
+	entries := readTestQueries(t)
+	before, err := QueriesWidget("Requêtes DuckDB", entries[:2], testMadeAt.Add(-24*time.Hour), "1111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := QueriesWidget("Requêtes DuckDB", entries, testMadeAt, testSourceCommit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := f.store.NewLinkInvite(f.origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, _ := startChromeIn(t, f.chrome, f.pin, t.TempDir())
+	pc.navigate(link.URL)
+	pc.until("linked", `document.getElementById('connection').textContent==='Desktop connecté'`)
+	settle(t, pc)
+
+	const ours = `[...document.querySelectorAll('#tools [data-tool]')].filter(b=>b.title==='Requêtes DuckDB')`
+	const status = `document.getElementById('tool-status').textContent`
+	pc.typeInto("new-name", string(before))
+	pc.press("#new-list")
+	pc.until("the first list, kept by the Desktop", ours+`.length===1 && `+ours+`[0].querySelector('.badge').textContent==='2' && `+status+`==='2 requêtes · partagé par le Desktop'`)
+
+	pc.typeInto("new-name", string(after))
+	pc.press("#new-list")
+	pc.until("the same tool, with the new queries, kept by the Desktop", ours+`.length===1 && `+ours+`[0].querySelector('.badge').textContent==='15' && `+status+`==='15 requêtes · partagé par le Desktop'`)
+	pc.until("made from the new commit", `/depuis ix 8c97be7$/.test(document.querySelector('#widget-host [data-query-made]')?.textContent.trim())`)
+
+	rows, err := f.store.db.Query(`SELECT document FROM workshop_projects`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var widgets []Widget
+	for rows.Next() {
+		var raw string
+		var p Project
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatal(err)
+		}
+		for _, ws := range p.Workspaces {
+			for _, w := range ws.Widgets {
+				if w.Kind == "queries" {
+					widgets = append(widgets, w)
+				}
+			}
+		}
+	}
+	if len(widgets) != 1 || len(widgets[0].Entries) != 15 || widgets[0].SourceCommit != testSourceCommit || widgets[0].GeneratedAt != "2026-11-15T01:02:03Z" {
+		t.Fatalf("the Desktop must keep one queries widget, the new one: %d widgets %+v", len(widgets), widgets)
+	}
 }
