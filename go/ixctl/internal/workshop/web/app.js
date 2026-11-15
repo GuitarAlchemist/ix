@@ -39,7 +39,7 @@ const resources = {
   }}
 };
 const $ = id => document.getElementById(id);
-let replica, engine, intent = null, voice = null, voiceStatus = 'voiceReady', installPrompt = null, replaceAccess = false, updates = null, pendingActions = 0, updateState = '', branding;
+let replica, engine, intent = null, voice = null, voiceStatus = 'voiceReady', installPrompt = null, replaceAccess = false, updates = null, pendingActions = 0, pairCodeWaiting = false, updateState = '', branding;
 const t = (key, options) => globalThis.i18next.t(key, options);
 const element = (tag, text, className) => { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; };
 function message(error) { $('notice').textContent = t(globalThis.i18next.exists(error.message) ? error.message : 'error'); }
@@ -103,7 +103,10 @@ async function boot() {
   await globalThis.i18next.init({lng: 'fr', fallbackLng: 'en', resources, interpolation: {escapeValue: false}});
   replica = await Replica.open(); engine = new SyncEngine(replica, () => { render().catch(message); if (!engine.running) updates?.consider(); });
   const fragment = new URLSearchParams(location.hash.slice(1));
-  if (fragment.has('pair')) { $('pair-code').value = fragment.get('pair'); history.replaceState(null, '', '/workshop/'); }
+  // The code from a scanned QR sits in a field that never had the focus and the fragment is removed at once: an automatic
+  // reload would lose it for good. Hold the reload until the code was sent, or the person emptied the field.
+  if (fragment.has('pair')) { $('pair-code').value = fragment.get('pair'); pairCodeWaiting = $('pair-code').value.trim() !== ''; history.replaceState(null, '', '/workshop/'); }
+  $('pair-code').addEventListener('input', () => { pairCodeWaiting = $('pair-code').value.trim() !== ''; });
   $('transcript').oninput = () => { intent = null; $('apply').hidden = true; $('intent').textContent = ''; act(() => replica.change(s => { s.transcript = $('transcript').value; })); };
   $('interpret').onclick = () => act(async () => { const state = await replica.read(); intent = interpret(state.transcript, state.language); });
   $('apply').onclick = () => act(async () => {
@@ -115,8 +118,8 @@ async function boot() {
     await replica.rename($('project-title').dataset.projectId, $('project-title').value);
   });
   $('save').onclick = () => act(async () => { const state = await replica.read(); await replica.enqueue(state.selected); await engine.sync(); });
-  $('pair').onclick = () => act(async () => { await engine.pair($('pair-code').value.trim(), $('device-name').value.trim(), replaceAccess); replaceAccess = false; });
-  $('replace-access').onclick = () => act(async () => { replaceAccess = true; $('pair-code').value = ''; });
+  $('pair').onclick = () => act(async () => { await engine.pair($('pair-code').value.trim(), $('device-name').value.trim(), replaceAccess); replaceAccess = false; pairCodeWaiting = false; });
+  $('replace-access').onclick = () => act(async () => { replaceAccess = true; $('pair-code').value = ''; pairCodeWaiting = false; });
   $('sync').onclick = () => act(() => engine.sync());
   for (const [id, keep] of [['keep-local', true], ['use-desktop', false]]) $(id).onclick = () => act(async () => { const state = await replica.read(); await replica.resolve(state.selected, keep); await engine.sync(); });
   $('language').onchange = () => act(async () => { voice?.abort(); intent = null; await replica.change(s => { s.language = $('language').value; }); });
@@ -128,7 +131,7 @@ async function boot() {
   $('stop-dictation').onclick = () => { voice?.stop(); };
   window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; $('install').hidden = false; });
   $('install').onclick = async () => { if (installPrompt) { await installPrompt.prompt(); installPrompt = null; $('install').hidden = true; } };
-  updates = new Updates(() => pendingActions > 0 || Boolean(engine.running) || voiceStatus === 'voiceListening' || document.activeElement?.matches('input,textarea,select'), state => { updateState = state; $('update-status').textContent = t(state); }, locked => { document.querySelector('main').inert = locked; document.querySelector('.preferences').inert = locked; });
+  updates = new Updates(() => pendingActions > 0 || pairCodeWaiting || Boolean(engine.running) || voiceStatus === 'voiceListening' || document.activeElement?.matches('input,textarea,select'), state => { updateState = state; $('update-status').textContent = t(state); }, locked => { document.querySelector('main').inert = locked; document.querySelector('.preferences').inert = locked; });
   $('update').onclick = () => updates.consider();
   updates.start().catch(() => { updateState = 'updateOffline'; $('update-status').textContent = t(updateState); });
   window.addEventListener('online', () => { engine.sync(); });
