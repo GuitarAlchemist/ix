@@ -23,6 +23,10 @@ func sessOf(l *peerLink) *linkState {
 // The tests name sessions by number, as the link did before it named them by identity: a link's
 // sessions are numbered in the order this file first sees them, the session a link starts with
 // is 0 when beginSessionT makes the next, and a number below the current one is an older session.
+// An older number stands for that session's own state, which is what an older session's step acts
+// on now; before the extraction every step acted on the one state, the number deciding only
+// whether an observation of the peer (services, boot) was ignored. The tests pass an older
+// number to setServicesT alone, where the two agree.
 var sessNumbers = struct {
 	sync.Mutex
 	of map[*peerLink]*sessIndex

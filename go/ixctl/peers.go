@@ -89,11 +89,17 @@ type peerLink struct {
 
 // linkState is what one connection to the peer knows of it, guarded by the link's mu: the client
 // once the session is up, the subscriptions of the control prefixes and of the wanted pipes, and
-// the snapshot the pipes were reconciled to. A session's end resets it in one step (gen moves on,
-// so its goroutines still in flight stand down), and the next session starts from a new one: a
+// the snapshot the pipes were reconciled to. A session that was up resets it in one step as it
+// ends (gen moves on, so its goroutines still in flight stand down); one that fails before it is
+// up leaves it as it was, the link down. Either way the next session starts from a new one: a
 // late step of the old session acts on the old state, never on the new. The link keeps what
 // outlives a connection (the instance, the seqs resumed from, the boots named, the allowance, the
-// counts); its latest says which state is now the link's, for status and forward to read.
+// counts); its latest says which state is now the link's, for status and forward to read. Until
+// the next session begins, the ended one is still latest: its refresher answering late may still
+// set the services and the boot, as it could while sess < l.sess was not yet true.
+//
+// @ai:invariant a step of a session that is no longer latest changes nothing of the latest state; its observations of the peer (services, boot) are ignored once another session began [P:assumed conf:0.8]
+// @ai:invariant status and forward read the latest state, under l.mu, and see the link down (no client) between a session's end and the next one's up [P:assumed conf:0.8]
 type linkState struct {
 	client *Client             // set once the session is up, nil before and after
 	pipes  map[string]*pipeSub // per wanted probe node, what it is now
