@@ -94,19 +94,23 @@ func TestTheDesktopKeepsAQueriesWidget(t *testing.T) {
 	if err := validate(op(func(*Widget, *Workspace) {})); err != nil {
 		t.Fatalf("a queries widget must be accepted: %v", err)
 	}
-	if err := validate(op(func(w *Widget, _ *Workspace) { w.GeneratedAt, w.SourceCommit = "2026-11-15T01:02:03Z", testSourceCommit })); err != nil {
+	if err := validate(op(func(w *Widget, _ *Workspace) {
+		w.GeneratedAt, w.SourceCommit = "2026-11-15T01:02:03Z", testSourceCommit
+	})); err != nil {
 		t.Fatalf("a queries widget that says when and from what it was made must be accepted: %v", err)
 	}
 	long := strings.Repeat("x", 8193)
 	refused := map[string]func(*Widget, *Workspace){
-		"no query":             func(w *Widget, _ *Workspace) { w.Entries = nil },
-		"empty SQL":            func(w *Widget, _ *Workspace) { w.Entries[0].SQL = "  " },
-		"SQL over 8 KiB":       func(w *Widget, _ *Workspace) { w.Entries[0].SQL = long },
-		"untitled query":       func(w *Widget, _ *Workspace) { w.Entries[0].Title = "" },
-		"over 100 queries":     func(w *Widget, _ *Workspace) { w.Entries = make([]QueryEntry, 101) },
-		"initial value":        func(w *Widget, _ *Workspace) { w.InitialValue = 1 },
-		"queries on a list":    func(w *Widget, _ *Workspace) { w.Kind = "checklist" },
-		"an IXLET for queries": func(_ *Widget, ws *Workspace) { ws.IXLETDefinitions = []IXLETDefinition{{ID: "d", Title: "Requêtes DuckDB", Kind: "queries", Status: "draft"}} },
+		"no query":          func(w *Widget, _ *Workspace) { w.Entries = nil },
+		"empty SQL":         func(w *Widget, _ *Workspace) { w.Entries[0].SQL = "  " },
+		"SQL over 8 KiB":    func(w *Widget, _ *Workspace) { w.Entries[0].SQL = long },
+		"untitled query":    func(w *Widget, _ *Workspace) { w.Entries[0].Title = "" },
+		"over 100 queries":  func(w *Widget, _ *Workspace) { w.Entries = make([]QueryEntry, 101) },
+		"initial value":     func(w *Widget, _ *Workspace) { w.InitialValue = 1 },
+		"queries on a list": func(w *Widget, _ *Workspace) { w.Kind = "checklist" },
+		"an IXLET for queries": func(_ *Widget, ws *Workspace) {
+			ws.IXLETDefinitions = []IXLETDefinition{{ID: "d", Title: "Requêtes DuckDB", Kind: "queries", Status: "draft"}}
+		},
 		"made at no time":      func(w *Widget, _ *Workspace) { w.GeneratedAt = "hier" },
 		"made at a local time": func(w *Widget, _ *Workspace) { w.GeneratedAt = "2026-11-14T20:02:03-05:00" },
 		"made from a branch":   func(w *Widget, _ *Workspace) { w.SourceCommit = "main" },

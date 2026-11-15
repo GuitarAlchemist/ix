@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -68,27 +69,44 @@ func ReadQueries(root string, files []string) ([]QueryEntry, error) {
 	return entries, nil
 }
 
-// QueriesWidget is the ixforge-widget/1 block IxForge imports.
-func QueriesWidget(title string, entries []QueryEntry) ([]byte, error) {
-	w := Widget{ID: "w", Title: title, Kind: "queries", Entries: entries}
+// QueriesWidget is the ixforge-widget/1 block IxForge imports. It says when it was generated (stored in UTC) and from
+// which commit of the repo the queries were read.
+func QueriesWidget(title string, entries []QueryEntry, generatedAt time.Time, sourceCommit string) ([]byte, error) {
+	w := Widget{ID: "w", Title: title, Kind: "queries", Entries: entries, GeneratedAt: generatedAt.UTC().Format(time.RFC3339), SourceCommit: sourceCommit}
 	if !titleOK(title) || !queriesOK(w) {
 		return nil, errors.New("queries_invalid")
 	}
 	return json.Marshal(struct {
-		Format  string       `json:"format"`
-		Kind    string       `json:"kind"`
-		Title   string       `json:"title"`
-		Entries []QueryEntry `json:"entries"`
-	}{"ixforge-widget/1", "queries", title, entries})
+		Format       string       `json:"format"`
+		Kind         string       `json:"kind"`
+		Title        string       `json:"title"`
+		Entries      []QueryEntry `json:"entries"`
+		GeneratedAt  string       `json:"generated_at"`
+		SourceCommit string       `json:"source_commit"`
+	}{"ixforge-widget/1", "queries", title, entries, w.GeneratedAt, sourceCommit})
 }
 
-// queriesOK says whether a widget's queries are fit to keep: only a queries widget has any, at least one and at most
-// 100, each titled, from a named file, with SQL of at most 8 KiB.
+// A source commit is a git object name, abbreviated or full.
+var commitName = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+// generationOK: a queries widget may say when it was generated, as a UTC RFC 3339 time, and from which commit.
+func generationOK(w Widget) bool {
+	if w.GeneratedAt != "" {
+		at, err := time.Parse(time.RFC3339, w.GeneratedAt)
+		if err != nil || at.Location() != time.UTC || !strings.HasSuffix(w.GeneratedAt, "Z") {
+			return false
+		}
+	}
+	return w.SourceCommit == "" || commitName.MatchString(w.SourceCommit)
+}
+
+// queriesOK says whether a widget's queries are fit to keep: only a queries widget has any (and a generation), at
+// least one and at most 100, each titled, from a named file, with SQL of at most 8 KiB.
 func queriesOK(w Widget) bool {
 	if w.Kind != "queries" {
-		return len(w.Entries) == 0
+		return len(w.Entries) == 0 && w.GeneratedAt == "" && w.SourceCommit == ""
 	}
-	if w.InitialValue != 0 || len(w.Entries) == 0 || len(w.Entries) > maxQueries {
+	if w.InitialValue != 0 || len(w.Entries) == 0 || len(w.Entries) > maxQueries || !generationOK(w) {
 		return false
 	}
 	for _, e := range w.Entries {

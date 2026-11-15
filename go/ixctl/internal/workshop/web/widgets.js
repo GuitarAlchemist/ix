@@ -8,7 +8,7 @@
 //
 // A block never talks to the network. It is given the IXLET state (.x), whether it can act (.usable), how to act
 // (.run, which returns true once the action is kept) and the translation function (.t, with .lang to re-render).
-import {LitElement, html, svg, repeat, live} from './vendor/lit-all.min.js';
+import {LitElement, html, svg, repeat, live, nothing} from './vendor/lit-all.min.js';
 
 const PATHS = {
   devices: 'M3 5h13v9H3zM7 18h5M9.5 14v4M18 9h3v10h-3z',
@@ -84,8 +84,8 @@ export class IxCounter extends Block {
 }
 
 export class IxQueries extends Block {
-  static properties = {...Block.properties, entries: {attribute: false}, copied: {state: true}};
-  constructor() { super(); this.entries = []; this.copied = null; }
+  static properties = {...Block.properties, entries: {attribute: false}, made: {attribute: false}, copied: {state: true}};
+  constructor() { super(); this.entries = []; this.made = {}; this.copied = null; }
   async copy(index, sql) {
     try { await navigator.clipboard.writeText(sql); this.copied = {index, ok: true}; }
     catch { this.copied = {index, ok: false}; }
@@ -97,7 +97,11 @@ export class IxQueries extends Block {
       if (!group) groups.push(group = {source: entry.source, queries: []});
       group.queries.push({entry, index});
     });
-    return html`<div class="queries">${groups.map(g => html`
+    // How fresh the list is: when it was generated, and from which commit of the repo.
+    const at = this.made?.generated_at ? new Date(this.made.generated_at).toLocaleDateString(this.lang || 'fr', {dateStyle: 'long'}) : '';
+    const commit = (this.made?.source_commit || '').slice(0, 7);
+    const made = at && commit ? t('queriesMade', {date: at, commit}) : at ? t('queriesMadeAt', {date: at}) : '';
+    return html`<div class="queries">${made ? html`<p class="hint" data-query-made>${made}</p>` : nothing}${groups.map(g => html`
       <section data-query-source=${g.source}><h3>${g.source}</h3>${g.queries.map(({entry, index}) => html`
         <details data-query=${index}><summary>${entry.title}</summary><pre>${entry.sql}</pre>
           <div class="row"><button class="ghost" data-query-copy=${index} @click=${() => this.copy(index, entry.sql)}>${icon('copy')}<span>${t('copySQL')}</span></button>
@@ -108,10 +112,10 @@ export class IxQueries extends Block {
 }
 
 export class IxWidget extends Block {
-  static properties = {...Block.properties, kind: {}, entries: {attribute: false}};
+  static properties = {...Block.properties, kind: {}, entries: {attribute: false}, made: {attribute: false}};
   render() {
     const props = {x: this.x, definition: this.definition, usable: this.usable, run: this.run, t: this.t, lang: this.lang, compact: this.compact};
-    if (this.kind === 'queries') return html`<ix-queries .entries=${this.entries} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-queries>`;
+    if (this.kind === 'queries') return html`<ix-queries .entries=${this.entries} .made=${this.made || {}} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-queries>`;
     return this.kind === 'checklist'
       ? html`<ix-checklist .x=${props.x} definition=${props.definition} ?usable=${props.usable} .run=${props.run} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-checklist>`
       : html`<ix-counter .x=${props.x} definition=${props.definition} ?usable=${props.usable} .run=${props.run} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-counter>`;
@@ -126,14 +130,17 @@ customElements.define('ix-widget', IxWidget);
 // --- Moving a widget between IxForge and elsewhere (a Claude artifact, a file) -----------------------------------
 // The exchange format is a JSON block: {"format":"ixforge-widget/1","kind":"checklist","title":"…","items":[{text,done}]}
 // or {"format":"ixforge-widget/1","kind":"counter","title":"…","value":3}
-// or {"format":"ixforge-widget/1","kind":"queries","title":"…","entries":[{title,source,sql}]}. An exported page carries it in
+// or {"format":"ixforge-widget/1","kind":"queries","title":"…","entries":[{title,source,sql}],"generated_at":"…Z","source_commit":"…"}
+// (both optional). An exported page carries it in
 // <script type="application/json" id="ixforge-widget">, works by itself, and copies its current state back.
 export const FORMAT = 'ixforge-widget/1';
 const bytes = s => new TextEncoder().encode(s).length;
 const titleOK = s => typeof s === 'string' && s.trim() !== '' && bytes(s) <= 240;
 
-export function widgetData(kind, title, x, entries) {
-  if (kind === 'queries') return {format: FORMAT, kind, title, entries: (entries || []).map(e => ({title: e.title, source: e.source, sql: e.sql}))};
+// made holds a queries widget's generation: {generated_at, source_commit}, either one optional.
+export const madeOf = made => Object.fromEntries(['generated_at', 'source_commit'].filter(k => made?.[k]).map(k => [k, made[k]]));
+export function widgetData(kind, title, x, entries, made) {
+  if (kind === 'queries') return {format: FORMAT, kind, title, entries: (entries || []).map(e => ({title: e.title, source: e.source, sql: e.sql})), ...madeOf(made)};
   return kind === 'counter' ? {format: FORMAT, kind, title, value: x?.value ?? 0}
     : {format: FORMAT, kind, title, items: (x?.items || []).map(i => ({text: i.text, done: Boolean(i.done)}))};
 }
@@ -158,7 +165,10 @@ export function parseWidget(text) {
     const entries = Array.isArray(data.entries) ? data.entries : [];
     const ok = e => e && titleOK(e.title) && titleOK(e.source) && typeof e.sql === 'string' && e.sql.trim() !== '' && bytes(e.sql) <= 8192;
     if (!entries.length || entries.length > 100 || !entries.every(ok)) throw new Error('import_invalid');
-    return {format: FORMAT, kind: 'queries', title: data.title.trim(), entries: entries.map(e => ({title: e.title, source: e.source, sql: e.sql}))};
+    // Its generation, as the Desktop keeps it: a UTC time ("…Z") and a commit name.
+    if (data.generated_at !== undefined && !(typeof data.generated_at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(data.generated_at) && !isNaN(Date.parse(data.generated_at)))) throw new Error('import_invalid');
+    if (data.source_commit !== undefined && !(typeof data.source_commit === 'string' && /^[0-9a-f]{7,40}$/.test(data.source_commit))) throw new Error('import_invalid');
+    return {format: FORMAT, kind: 'queries', title: data.title.trim(), entries: entries.map(e => ({title: e.title, source: e.source, sql: e.sql})), ...madeOf(data)};
   }
   if (data.kind !== 'checklist' || !Array.isArray(data.items ?? []) || (data.items || []).length > 200) throw new Error('import_invalid');
   const items = (data.items || []).map(i => ({text: String(i?.text ?? ''), done: i?.done === true}));

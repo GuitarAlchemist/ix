@@ -23,7 +23,7 @@ const resources = {
     pairHelp: 'Scannez le QR du Desktop ou saisissez son code temporaire ; l’appareil sera approuvé sur le Desktop.', deviceName: 'Nom de cet appareil', deviceNameHelp: 'Envoyé au Desktop une seule fois, avec la demande de pairage. D’ici là, il reste seulement sur cet appareil.', deviceNamePaired: 'Nom enregistré par le Desktop au pairage : « {{name}} ». Il ne peut pas être modifié ici.', deviceNamePairedUnknown: 'Nom envoyé au Desktop au pairage. Il ne peut pas être modifié ici.', pairCode: 'Code temporaire', pair: 'Demander le pairage', replaceAccess: 'Réappairer en conservant mes données',
     conflictHelp: 'Une autre version existe sur le Desktop. La vôtre est conservée. Laquelle garder ?', keepLocal: 'Garder la mienne', useDesktop: 'Prendre celle du Desktop', remoteTitle: 'Version Desktop : {{title}} (révision {{revision}})',
     increment: '+1', decrement: '−1', reset: 'Remettre à zéro', addItem: 'Ajouter', itemPlaceholder: 'Nouvel élément', removeItem: 'Retirer', checklistProgress: '{{done}}/{{total}} cochés', checklistEmpty: 'Liste vide pour l’instant.',
-    copySQL: 'Copier le SQL', copied: 'Copié', copyFailed: 'Copie refusée : sélectionnez le SQL.', queriesShared: '{{count}} requêtes · partagé par le Desktop',
+    copySQL: 'Copier le SQL', queriesMade: 'Générée le {{date}} depuis ix {{commit}}', queriesMadeAt: 'Générée le {{date}}', copied: 'Copié', copyFailed: 'Copie refusée : sélectionnez le SQL.', queriesShared: '{{count}} requêtes · partagé par le Desktop',
     exportCopy: 'Copier pour IxForge', exportCopied: 'Copié. Collez-le dans IxForge, champ « nouvel outil ».', exportCopyHere: 'Copiez ce texte, puis collez-le dans IxForge :', exportMade: 'Widget IxForge · fonctionne seul, sans réseau.',
     ixlet_uncertain: 'Résultat incertain : rien n’est renvoyé automatiquement, la valeur va être relue sur le Desktop.', ixlet_not_active: 'Cet outil n’est pas encore actif sur le Desktop.', ixlet_not_saved: 'Cet outil n’est pas encore enregistré sur le Desktop.', ixlet_not_connected: 'Connectez cet appareil au Desktop pour utiliser cet outil partagé.', ixlet_item_missing: 'Cet élément n’existe plus sur le Desktop.',
     voiceReady: '', voiceUnsupported: 'Dictée locale indisponible dans ce navigateur, aucune voix n’a été envoyée. Utilisez le micro de votre clavier : les guillemets sont facultatifs.', voiceDenied: 'Accès au microphone refusé ou indisponible.', voiceListening: 'Dictée locale en cours…', voicePackMissing: 'Le pack de reconnaissance locale de cette langue n’est pas installé dans ce navigateur. Rien n’a été téléchargé ni envoyé.', installVoice: 'Installer la reconnaissance locale', stopDictation: 'Arrêter la dictée', voicePackDownloading: 'Le navigateur télécharge le pack de reconnaissance locale…', voicePackFailed: 'Le navigateur n’a pas installé le pack local.', voiceNoSpeech: 'Aucune parole détectée. Réessayez ; aucune voix n’a été envoyée.', voiceNoMicrophone: 'Aucun microphone utilisable sur cet appareil.', voiceFailed: 'La dictée locale s’est arrêtée (erreur : {{code}}).',
@@ -49,7 +49,7 @@ const resources = {
     pairHelp: 'Scan the Desktop QR or enter its temporary code; the device is then approved on Desktop.', deviceName: 'Device name', deviceNameHelp: 'Sent to Desktop once, with the pairing request. Until then it stays on this device only.', deviceNamePaired: 'Name Desktop registered at pairing: “{{name}}”. It cannot be changed here.', deviceNamePairedUnknown: 'Name sent to Desktop at pairing. It cannot be changed here.', pairCode: 'Temporary code', pair: 'Request pairing', replaceAccess: 'Pair again and keep my data',
     conflictHelp: 'Another version exists on Desktop. Yours is kept. Which one to keep?', keepLocal: 'Keep mine', useDesktop: 'Take Desktop’s', remoteTitle: 'Desktop version: {{title}} (revision {{revision}})',
     increment: '+1', decrement: '−1', reset: 'Reset to zero', addItem: 'Add', itemPlaceholder: 'New item', removeItem: 'Remove', checklistProgress: '{{done}}/{{total}} checked', checklistEmpty: 'Empty list for now.',
-    copySQL: 'Copy the SQL', copied: 'Copied', copyFailed: 'Copy refused: select the SQL.', queriesShared: '{{count}} queries · kept by the Desktop',
+    copySQL: 'Copy the SQL', queriesMade: 'Generated on {{date}} from ix {{commit}}', queriesMadeAt: 'Generated on {{date}}', copied: 'Copied', copyFailed: 'Copy refused: select the SQL.', queriesShared: '{{count}} queries · kept by the Desktop',
     exportCopy: 'Copy for IxForge', exportCopied: 'Copied. Paste it into IxForge, “new tool” field.', exportCopyHere: 'Copy this text, then paste it into IxForge:', exportMade: 'IxForge widget · works on its own, offline.',
     ixlet_uncertain: 'Uncertain result: nothing is resent automatically; the value will be reread from Desktop.', ixlet_not_active: 'This tool is not active on Desktop yet.', ixlet_not_saved: 'This tool is not saved on Desktop yet.', ixlet_not_connected: 'Connect this device to Desktop to use this shared tool.', ixlet_item_missing: 'This item no longer exists on Desktop.',
     voiceReady: '', voiceUnsupported: 'On-device dictation is unavailable in this browser; no voice was sent. Use the keyboard microphone: quotes are optional.', voiceDenied: 'Microphone access denied or unavailable.', voiceListening: 'On-device dictation in progress…', voicePackMissing: 'This browser has no on-device recognition pack for this language. Nothing was downloaded or sent.', installVoice: 'Install on-device recognition', stopDictation: 'Stop dictation', voicePackDownloading: 'The browser is downloading the on-device recognition pack…', voicePackFailed: 'The browser did not install the on-device pack.', voiceNoSpeech: 'No speech detected. Try again; no voice was sent.', voiceNoMicrophone: 'No usable microphone on this device.', voiceFailed: 'On-device dictation stopped (error: {{code}}).',
@@ -85,7 +85,7 @@ async function act(action) {
   try { await action(); await render(); return true; } catch (error) { message(error); return false; } finally { pendingActions--; updates?.consider(); }
 }
 const titleOK = s => s.trim() !== '' && new TextEncoder().encode(s).length <= 240;
-const intentFor = (kind, title, data) => kind === 'queries' ? {workspaceTitle: title, queriesTitle: title, entries: data.entries}
+const intentFor = (kind, title, data) => kind === 'queries' ? {workspaceTitle: title, queriesTitle: title, entries: data.entries, made: {generated_at: data.generated_at, source_commit: data.source_commit}}
   : kind === 'counter' ? {workspaceTitle: title, counterTitle: title} : {workspaceTitle: title, checklistTitle: title};
 
 // The IXLET behind a tool: hosted by the Desktop once activated (the authority), run here until then.
@@ -99,7 +99,7 @@ function runtime(state, tool) {
     : engine.act(tool.projectID, definition.id, action, fields));
   return {key, x, local, usable: local || engine.status === 'connected', run, kept: !local && Boolean((state.localXlets || {})[key])};
 }
-const widget = (tool, rt, lang, compact = false) => html`<ix-widget data-xlet-local=${rt.local ? tool.definition?.id || "" : nothing} data-xlet-live=${rt.local ? nothing : tool.definition.id} kind=${tool.widget.kind} .entries=${tool.widget.entries || []} .x=${rt.x} definition=${tool.definition?.id || ''} ?usable=${rt.usable} .run=${rt.run} .t=${t} lang=${lang} ?compact=${compact}></ix-widget>`;
+const widget = (tool, rt, lang, compact = false) => html`<ix-widget data-xlet-local=${rt.local ? tool.definition?.id || "" : nothing} data-xlet-live=${rt.local ? nothing : tool.definition.id} kind=${tool.widget.kind} .entries=${tool.widget.entries || []} .made=${tool.widget} .x=${rt.x} definition=${tool.definition?.id || ''} ?usable=${rt.usable} .run=${rt.run} .t=${t} lang=${lang} ?compact=${compact}></ix-widget>`;
 const badge = (tool, rt) => tool.widget.kind === 'queries' ? String((tool.widget.entries || []).length) : tool.widget.kind === 'counter' ? String(rt.x.value) : (rt.x.items || []).length ? `${rt.x.items.filter(i => i.done).length}/${rt.x.items.length}` : '';
 function currentTool(state, list) {
   if (view.mode === 'widget') return list.find(x => x.key === view.key);
@@ -257,7 +257,7 @@ function exportTool() {
   return act(async () => {
     const state = await replica.read(), tool = currentTool(state, tools(state));
     if (!tool) return;
-    const data = widgetData(tool.widget.kind, tool.widget.title, runtime(state, tool).x, tool.widget.entries);
+    const data = widgetData(tool.widget.kind, tool.widget.title, runtime(state, tool).x, tool.widget.entries, tool.widget);
     const page = exportPage(data, {lang: state.language, copy: t('exportCopy'), copied: t('exportCopied'), copyHere: t('exportCopyHere'), made: t('exportMade'),
       reset: t('reset'), remove: t('removeItem'), placeholder: t('itemPlaceholder'), add: t('addItem')});
     const link = document.createElement('a');

@@ -1,4 +1,6 @@
 const copy = value => structuredClone(value);
+// A queries widget's generation, without the fields it does not have.
+const madeOf = made => Object.fromEntries(['generated_at', 'source_commit'].filter(k => made?.[k]).map(k => [k, made[k]]));
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export const initialState = () => ({token: '', storeID: '', cursor: 0, projects: {}, outbox: [], transcript: '', selected: null, tool: null, surface: [], language: 'fr', theme: 'system', deviceName: null, pairedName: '', xlets: {}});
 export const xletKey = (projectID, definitionID) => projectID + '/' + definitionID;
@@ -102,9 +104,19 @@ export class Replica {
     return this.change(state => enqueueInto(state, id));
   }
   // create makes a new project holding one tool, from a command (interpret) or a name and a kind. A seed (an imported
-  // widget's items or value) becomes the tool's local state until the Desktop runs it.
+  // widget's items or value) becomes the tool's local state until the Desktop runs it. A list of queries imported again
+  // under the name of one already here replaces that one's queries: it is the same list, generated anew.
   async create(intent, seed) {
     return this.change(state => {
+      const same = intent.queriesTitle && tools(state).find(x => x.widget.kind === 'queries' && x.widget.title === intent.queriesTitle && !x.project.conflict);
+      if (same) {
+        const widget = state.projects[same.projectID].document.workspaces.find(w => w.id === same.workspace.id).widgets.find(w => w.id === same.widget.id);
+        widget.entries = copy(intent.entries);
+        delete widget.generated_at; delete widget.source_commit; Object.assign(widget, madeOf(intent.made));
+        state.projects[same.projectID].dirty = true; enqueueInto(state, same.projectID);
+        state.selected = same.projectID; state.tool = same.key;
+        return;
+      }
       const project = createDraft(intent);
       const workspace = project.workspaces[0], widget = workspace.widgets[0], definition = workspace.ixlet_definitions[0];
       state.projects[project.id] = {document: copy(project), revision: 0, dirty: true};
@@ -345,7 +357,7 @@ export function createDraft(intent, existing) {
   // A list of queries runs nothing: its queries are in the widget, and it has no IXLET.
   if (intent.queriesTitle) {
     project.workspaces.push({id: crypto.randomUUID(), title: intent.workspaceTitle,
-      widgets: [{id: crypto.randomUUID(), title: intent.queriesTitle, kind: 'queries', initial_value: 0, entries: copy(intent.entries)}], ixlet_definitions: []});
+      widgets: [{id: crypto.randomUUID(), title: intent.queriesTitle, kind: 'queries', initial_value: 0, entries: copy(intent.entries), ...madeOf(intent.made)}], ixlet_definitions: []});
     return project;
   }
   const [kind, title] = intent.checklistTitle ? ['checklist', intent.checklistTitle] : ['counter', intent.counterTitle];

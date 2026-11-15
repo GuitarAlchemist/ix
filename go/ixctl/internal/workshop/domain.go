@@ -37,6 +37,9 @@ type Widget struct {
 	InitialValue int64  `json:"initial_value"`
 	// Entries are a queries widget's queries (queries.go); other widgets have none.
 	Entries []QueryEntry `json:"entries,omitempty"`
+	// A queries widget says when it was generated (UTC, RFC 3339) and from which commit of its repo, for freshness.
+	GeneratedAt  string `json:"generated_at,omitempty"`
+	SourceCommit string `json:"source_commit,omitempty"`
 }
 type IXLETDefinition struct {
 	ID     string `json:"id"`
