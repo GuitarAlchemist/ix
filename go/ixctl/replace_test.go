@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -24,6 +25,9 @@ func TestReplaceFileSyncsBeforeTheRename(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(path); string(b) != "old" {
 		t.Fatalf("after a failed sync the state file holds %q, want the old content", b)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("after a failed sync the temp is still there (%v)", err)
 	}
 
 	bms := &bookmarkStore{path: filepath.Join(t.TempDir(), "b.bookmarks.json")}
@@ -65,5 +69,30 @@ func TestTheStateFileIsReplacedOnceItsReaderLetsGo(t *testing.T) {
 	holdFor(t, needPath, 150*time.Millisecond)
 	if _, err := s.claim("n1", "resolver-x", 60_000); err != nil {
 		t.Fatalf("a claim while the need file was held 150 ms: %v", err)
+	}
+}
+
+// Only Windows refuses a rename because a reader holds the target, so only there is a refusal
+// worth a retry: elsewhere a permission error is the directory's or the file's own, and comes
+// back at once instead of after the whole retry budget, under the store's lock.
+func TestOnlyWindowsRetriesARenameRefusedForPermission(t *testing.T) {
+	denied := &os.LinkError{Op: "rename", Old: "a.tmp", New: "a", Err: os.ErrPermission}
+	sharing := &os.LinkError{Op: "rename", Old: "a.tmp", New: "a", Err: syscall.Errno(32)}
+	missing := &os.LinkError{Op: "rename", Old: "a.tmp", New: "a", Err: os.ErrNotExist}
+	for _, c := range []struct {
+		goos string
+		err  error
+		want bool
+	}{
+		{"windows", denied, true},
+		{"windows", sharing, true},
+		{"windows", missing, false},
+		{"linux", denied, false},
+		{"darwin", denied, false},
+		{"linux", missing, false},
+	} {
+		if got := heldOn(c.goos, c.err); got != c.want {
+			t.Errorf("heldOn(%s, %v) = %v, want %v", c.goos, c.err, got, c.want)
+		}
 	}
 }

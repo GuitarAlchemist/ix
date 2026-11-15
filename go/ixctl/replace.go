@@ -22,11 +22,13 @@ func (e *replaceError) Unwrap() error { return e.err }
 // fileSync makes a file's content durable (a test seam).
 var fileSync = (*os.File).Sync
 
-// replaceFile replaces path's content with b, durably and whole: a reader sees the old content
-// or the new, never a part. The new content is written to path.tmp and synced before the rename;
-// on Windows the rename is refused while another process holds the file it replaces (an indexer
-// or an antivirus reading what the last write left), so a few short retries, about a second in
-// all, ride that out. On a failure the temp file is removed.
+// replaceFile replaces path's content with b, whole: a reader sees the old content or the new,
+// never a part. The new content is written to path.tmp and synced before the rename (the file's
+// content, not the directory: what a power loss can still lose is in the README's need
+// section); on Windows the rename is refused while another process holds the file it replaces
+// (an indexer or an antivirus reading what the last write left), so a few short retries, about
+// a second in all, ride that out. On a failure the temp file is removed when it can be; one
+// left behind (a remove refused) is what the need store reads as unknown on its next load.
 //
 // @ai:invariant replaceFile renames only a synced temp, and retries a rename refused because the target is held [P:assumed conf:0.8] (pinned by TestReplaceFileSyncsBeforeTheRename, TestTheStateFileIsReplacedOnceItsReaderLetsGo)
 func replaceFile(path string, b []byte) error {
@@ -74,11 +76,15 @@ func renameOver(tmp, path string) error {
 }
 
 // heldByAnother says whether a rename failed because the target is open elsewhere:
-// ERROR_ACCESS_DENIED (os.IsPermission) or ERROR_SHARING_VIOLATION (32) on Windows.
-func heldByAnother(err error) bool {
-	var errno syscall.Errno
-	if runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 32 {
-		return true
+// ERROR_ACCESS_DENIED (os.IsPermission) or ERROR_SHARING_VIOLATION (32), on Windows only. A
+// Windows ACL that denies the rename reads the same as a held file and takes the whole retry
+// budget before it comes back.
+func heldByAnother(err error) bool { return heldOn(runtime.GOOS, err) }
+
+func heldOn(goos string, err error) bool {
+	if goos != "windows" {
+		return false
 	}
-	return os.IsPermission(err)
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == 32 || os.IsPermission(err)
 }
