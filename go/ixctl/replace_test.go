@@ -45,7 +45,7 @@ func holdFor(t *testing.T, path string, d time.Duration) {
 }
 
 // On Windows a file another process reads cannot be replaced until it lets go; the state file
-// rides that out as the bookmarks did, instead of failing at once.
+// and the need store ride that out as the bookmarks did, instead of failing at once.
 func TestTheStateFileIsReplacedOnceItsReaderLetsGo(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("a reader holds a file against a replace on Windows only")
@@ -58,5 +58,12 @@ func TestTheStateFileIsReplacedOnceItsReaderLetsGo(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(path); string(b) != "new" {
 		t.Fatalf("state file %q, want new", b)
+	}
+
+	s, clk, needPath := newNeedTest(t)
+	s.submit(submitOf(clk, "n1", time.Hour))
+	holdFor(t, needPath, 150*time.Millisecond)
+	if _, err := s.claim("n1", "resolver-x", 60_000); err != nil {
+		t.Fatalf("a claim while the need file was held 150 ms: %v", err)
 	}
 }
