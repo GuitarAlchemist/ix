@@ -9,8 +9,9 @@ import (
 )
 
 // ready_journal: the control plane listens on a port chosen at each boot (--addr 127.0.0.1:0),
-// so the inventory names the service's host log and the check reads the address from its last
-// host.ready line, accepted only when that line's PID is the process the service runs now.
+// so the inventory names the service's host log and the check reads the address from the current
+// host's host.ready line (the log, else its rotation, and no final stop after it; hostjournal_test.go),
+// accepted only when that line's PID is the process the service runs now.
 // Fake SCM, fake journal, no socket.
 
 const journalPath = `C:\ProgramData\ixctl\ixctl-trial.service.log`

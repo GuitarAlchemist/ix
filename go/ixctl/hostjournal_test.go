@@ -66,9 +66,11 @@ func TestAReadyLineFollowedByTheHostsEndIsNotTheCurrentHosts(t *testing.T) {
 	inv := mustInventory(t, controlInventory)
 	ready := journalReady("4242", "127.0.0.1:59762")
 	ended := `{"event":"host.stop","ms":12,"phase":"observed","source":"scm","t":5}`
+	unobserved := `{"event":"host.stop","ms":30000,"phase":"unobserved","source":"scm","t":5}`
 	for name, files := range map[string][2]string{
-		"across the rotation": {ended + "\n", ready + "\n"},
-		"in the current log":  {ready + "\n" + ended + "\n", ""},
+		"across the rotation":        {ended + "\n", ready + "\n"},
+		"in the current log":         {ready + "\n" + ended + "\n", ""},
+		"an unobserved end, rotated": {unobserved + "\n", ready + "\n"},
 	} {
 		j := &journalRun{pid: 4242}
 		p := j.probes()
@@ -80,19 +82,22 @@ func TestAReadyLineFollowedByTheHostsEndIsNotTheCurrentHosts(t *testing.T) {
 		}
 		p.listening = func(string) (bool, error) { return false, nil }
 		r := checkResume(inv, p)[0]
-		if r.Verdict != verdictUnknown || len(j.healthURL) != 0 || !strings.Contains(resumeChecks(r), "stopped") {
+		if r.Verdict != verdictUnknown || len(j.healthURL) != 0 || !strings.Contains(resumeChecks(r), "stopped") ||
+			!strings.Contains(resumeChecks(r), "the last host in "+journalPath) {
 			t.Fatalf("%s: verdict %s, health probed %v: %q", name, r.Verdict, j.healthURL, r.Checks)
 		}
 	}
-	inProgress := ready + "\n" + `{"event":"host.stop","phase":"requested","source":"scm","t":5}` + "\n"
-	read := func(path string, _ int64) ([]byte, error) {
-		if strings.HasSuffix(path, ".1") {
-			return nil, nil
+	for _, phase := range []string{"requested", "received"} {
+		inProgress := ready + "\n" + `{"event":"host.stop","phase":"` + phase + `","source":"scm","t":5}` + "\n"
+		read := func(path string, _ int64) ([]byte, error) {
+			if strings.HasSuffix(path, ".1") {
+				return nil, nil
+			}
+			return []byte(inProgress), nil
 		}
-		return []byte(inProgress), nil
-	}
-	if _, _, found, err := lastReady(read, journalPath, resumeJournalTail); !found || err != nil {
-		t.Fatalf("a stop still in progress ended the ready line (found %v, err %v)", found, err)
+		if _, _, found, err := lastReady(read, journalPath, resumeJournalTail); !found || err != nil {
+			t.Fatalf("a stop still in progress (%s) ended the ready line (found %v, err %v)", phase, found, err)
+		}
 	}
 }
 
@@ -104,5 +109,22 @@ func TestTheHostsReadyLineKeepsItsBytes(t *testing.T) {
 	want := regexp.MustCompile(`^\{"addr":"127\.0\.0\.1:59762","epoch":"e","event":"host\.ready","name":"n","pid":4242,"state_file":"s\.json","t":[0-9]+,"version":"v"\}\n$`)
 	if !want.Match(buf.Bytes()) {
 		t.Fatalf("host.ready line %q", buf.String())
+	}
+}
+
+// The epoch refusal names the file the ready line was read from: after a rotation, the .1.
+func TestTheEpochRefusalNamesTheRotatedFile(t *testing.T) {
+	inv := mustInventory(t, controlInventory)
+	j := &journalRun{pid: 4242, healthBody: `{"ok":true,"epoch":"other"}`}
+	p := j.probes()
+	p.readTail = func(path string, _ int64) ([]byte, error) {
+		if strings.HasSuffix(path, ".1") {
+			return []byte(journalReady("4242", "127.0.0.1:59762") + "\n"), nil
+		}
+		return []byte(`{"t":3,"event":"workshop.failed","error":"x"}` + "\n"), nil
+	}
+	r := checkResume(inv, p)[0]
+	if want := "the host.ready line of PID 4242 in " + journalPath + ".1 is epoch"; r.Verdict != verdictUnknown || !strings.Contains(resumeChecks(r), want) {
+		t.Fatalf("verdict %s, checks %q, want %q", r.Verdict, r.Checks, want)
 	}
 }
