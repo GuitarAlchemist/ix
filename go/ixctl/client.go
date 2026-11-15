@@ -45,10 +45,10 @@ type remoteError struct{ msg string }
 
 func (e *remoteError) Error() string { return e.msg }
 
-// Client speaks ixctl.v1 over one WebSocket: requests and subscriptions
-// multiplexed on it.
+// Client speaks ixctl.v1 over one frame transport (a WebSocket, or a session in memory):
+// requests and subscriptions multiplexed on it.
 type Client struct {
-	c      *websocket.Conn
+	conn   frameConn
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -100,17 +100,22 @@ func DialWS(ctx context.Context, addr, token string) (*Client, error) {
 		return nil, fmt.Errorf("server did not accept %s", subprotocol)
 	}
 	c.SetReadLimit(16 << 20)
+	return newClient(wsFrames{c}), nil
+}
+
+// newClient runs a Client over a frame transport.
+func newClient(conn frameConn) *Client {
 	cctx, cancel := context.WithCancel(context.Background())
-	cl := &Client{c: c, ctx: cctx, cancel: cancel, pending: map[int64]chan Frame{}, subs: map[int64]*sub{}}
+	cl := &Client{conn: conn, ctx: cctx, cancel: cancel, pending: map[int64]chan Frame{}, subs: map[int64]*sub{}}
 	go cl.readLoop()
-	return cl, nil
+	return cl
 }
 
 func (cl *Client) readLoop() {
 	var err error
 	for {
 		var b []byte
-		_, b, err = cl.c.Read(cl.ctx)
+		b, err = cl.conn.Read(cl.ctx)
 		if err != nil {
 			break
 		}
@@ -167,7 +172,7 @@ func (cl *Client) Err() error {
 
 func (cl *Client) Close() error {
 	cl.cancel()
-	return cl.c.Close(websocket.StatusNormalClosure, "")
+	return cl.conn.Close()
 }
 
 func (cl *Client) send(ctx context.Context, req Request) error {
@@ -175,7 +180,7 @@ func (cl *Client) send(ctx context.Context, req Request) error {
 	if err != nil {
 		return err
 	}
-	return cl.c.Write(ctx, websocket.MessageText, b)
+	return cl.conn.Write(ctx, b)
 }
 
 func (cl *Client) register(frames chan Frame) (int64, chan Frame, *sub) {
