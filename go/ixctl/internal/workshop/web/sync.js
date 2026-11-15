@@ -176,6 +176,9 @@ export class SyncEngine {
   devices() { return this.api('devices'); }
   invite() { return this.api('devices/invite', {method: 'POST', body: '{}'}); }
   decide(id, status) { return this.api('devices/' + encodeURIComponent(id) + '/' + status, {method: 'POST', body: '{}'}); }
+  // Desktop update (updates.go): the releases offered, and the request for the updater task.
+  desktopUpdates() { return this.api('updates'); }
+  requestUpdate(version, sha256) { return this.api('updates', {method: 'POST', body: JSON.stringify({version, sha256})}); }
   // The terminal (terminal.go) runs a command on the Desktop's PC. A command is not repeatable: an uncertain reply is
   // reported as such and never sent again.
   runTerminal(command) {

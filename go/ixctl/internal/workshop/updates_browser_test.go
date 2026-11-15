@@ -33,14 +33,18 @@ func TestTheOwnerUpdatesTheDesktopFromTheApp(t *testing.T) {
 	const block = `document.getElementById('desktop-update')`
 	pc.until("the installed version and the newer release", block+`.hidden===false && document.getElementById('desktop-installed').textContent==='Version installée : 0.1.0-ixforge.16' && document.querySelector('[data-release="0.1.0-ixforge.17"] [data-release-notes]')?.textContent==='Notes of 0.1.0-ixforge.17'`)
 	pc.until("no updater: said, and nothing to press", `document.getElementById('updater-state').textContent.startsWith('Assistant de mise à jour non installé') && document.querySelector('[data-release="0.1.0-ixforge.17"] [data-install]').disabled===true`)
-	pc.screenshot("mise-a-jour-sans-assistant.png")
+	shot := func(name string) {
+		pc.evalInto(`(()=>{document.getElementById('desktop-update').scrollIntoView({block:'end'});return true})()`, nil)
+		pc.screenshot(name)
+	}
+	shot("mise-a-jour-sans-assistant.png")
 
 	seenUpdater(t, u, time.Now())
 	pc.click("sync")
-	pc.until("the updater runs: the release can be installed", `document.getElementById('updater-state').textContent==='Assistant de mise à jour actif' && document.querySelector('[data-release="0.1.0-ixforge.17"] [data-install]').disabled===false`)
+	pc.until("the updater runs: the release can be installed", `document.getElementById('updater-state').textContent==='Assistant de mise à jour actif' && document.querySelector('[data-release="0.1.0-ixforge.17"] [data-install]').disabled===false && document.querySelector('[data-release="0.1.0-ixforge.17"] [data-install]').textContent==='Installer'`)
 	pc.evalInto(`(()=>{document.querySelector('[data-release="0.1.0-ixforge.17"] [data-install]').click();return true})()`, nil)
 	pc.until("the request waits for the updater", `document.getElementById('update-request')?.textContent.startsWith('Installation de 0.1.0-ixforge.17 demandée') && document.querySelector('[data-release="0.1.0-ixforge.17"] [data-install]').disabled===true`)
-	pc.screenshot("mise-a-jour-demandee.png")
+	shot("mise-a-jour-demandee.png")
 	var asked struct {
 		Version    string `json:"version"`
 		DeviceName string `json:"device_name"`
@@ -60,5 +64,5 @@ func TestTheOwnerUpdatesTheDesktopFromTheApp(t *testing.T) {
 	}
 	pc.click("sync")
 	pc.until("the updater's result", `document.getElementById('update-result').textContent.startsWith('Dernière mise à jour : 0.1.0-ixforge.17 installée') && document.getElementById('update-request')===null`)
-	pc.screenshot("mise-a-jour-installee.png")
+	shot("mise-a-jour-installee.png")
 }

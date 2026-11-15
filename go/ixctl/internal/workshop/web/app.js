@@ -11,7 +11,7 @@ const resources = {
     emptyTitle: 'Créez votre premier outil', emptyHelp: 'Tapez un nom dans le champ « nouvel outil », puis Liste ou Compteur. Vous pouvez aussi dicter, ou importer un widget.',
     toolTitle: 'Nom de l’outil', pin: 'Épingler sur la surface', export: 'Exporter (page autonome, artefact Claude)', detach: 'Détacher dans une fenêtre', reattach: 'Rattacher à IxForge', reattachHere: 'Ramener ici',
     detachedTitle: 'Cet outil est ouvert dans une autre fenêtre.', surfaceOpen: 'Ouvrir la surface', surfaceEmpty: 'Épinglez des outils depuis IxForge pour les voir ici, côte à côte.', unpin: 'Retirer de la surface',
-    devices: 'Appareils', close: 'Fermer', thisDevice: 'Cet appareil', otherDevices: 'Appareils reliés', invite: 'Inviter un appareil', inviteHelp: 'Scannez ce code avec l’autre appareil, ou ouvrez le lien. Valable deux minutes ; vous l’approuverez ensuite ici.', about: 'À propos',
+    devices: 'Appareils', close: 'Fermer', thisDevice: 'Cet appareil', otherDevices: 'Appareils reliés', desktopUpdate: 'Mise à jour du Desktop', desktopInstalled: 'Version installée : {{version}}', updaterRunning: 'Assistant de mise à jour actif', updaterAbsent: 'Assistant de mise à jour non installé : lancez une fois Install-IxForgeUpdater.ps1 sur le PC (administrateur).', updaterStale: 'Assistant de mise à jour arrêté (vu le {{date}}).', installRelease: 'Installer',noRelease: 'Aucune version plus récente sur ce PC.', updateRequested: 'Installation de {{version}} demandée le {{date}} : en attente de l’assistant.', updateDone: 'Dernière mise à jour : {{version}} installée le {{date}}.', updateNotDone: 'Dernière mise à jour : {{version}} non installée ({{state}}), le {{date}}.',invite: 'Inviter un appareil', inviteHelp: 'Scannez ce code avec l’autre appareil, ou ouvrez le lien. Valable deux minutes ; vous l’approuverez ensuite ici.', about: 'À propos',
     approve: 'Approuver', refuse: 'Refuser', revoke: 'Révoquer', thisDeviceShort: 'cet appareil', status_pending: 'en attente', status_approved: 'approuvé', status_refused: 'refusé', status_revoked: 'révoqué',
     language: 'Langue : français (changer)', theme: 'Apparence', system: 'système', light: 'claire', dark: 'sombre', install: 'Installer l’application', update: 'Appliquer la mise à jour',
     local: 'Sur cet appareil seulement', connecting: 'Synchronisation…', connected: 'Desktop connecté', offline: 'Hors ligne · vos modifications restent ici', device_pending: 'En attente d’approbation', device_refused: 'Accès refusé · données conservées', device_revoked: 'Accès révoqué · données conservées', store_changed: 'Base Desktop différente · synchronisation suspendue',
@@ -30,14 +30,14 @@ const resources = {
     terminal: 'Terminal du PC', terminalWho: 'Commandes exécutées sur le PC du Desktop par Windows PowerShell, sous le compte du service IxForge.', terminalCommand: 'Commande', terminalRun: 'Exécuter', terminalHelp: 'Une commande à la fois, arrêtée après 30 secondes, sortie limitée à 256 Kio. Chaque commande est inscrite au journal du Desktop ; sa sortie n’est conservée nulle part, ni ici ni sur le Desktop.', terminalExit: 'Code de sortie : {{code}}', terminalTimedOut: 'Arrêtée après 30 secondes', terminalTruncated: 'sortie tronquée', terminal_not_allowed: 'Cet appareil n’a pas le terminal : seul le propriétaire peut l’autoriser, depuis la page propriétaire.', terminal_uncertain: 'Résultat incertain : la commande a pu s’exécuter sur le PC. Rien n’est renvoyé automatiquement.',
     settings: 'Réglages', aiTitle: 'IA (facultative)', aiHelp: 'Avec votre propre clé API Claude, une phrase devient un outil. La clé reste sur cet appareil ; la demande part directement de ce navigateur vers Claude, et son coût est facturé sur votre clé. Sans clé, IxForge fonctionne entièrement.', aiKey: 'Clé API Claude', aiSave: 'Enregistrer la clé', aiForget: 'Oublier la clé', aiKeyKept: 'Clé enregistrée sur cet appareil (…{{end}}).', aiNoKey: 'Aucune clé : l’IA est désactivée.', aiCreate: 'Créer avec l’IA', aiCreateHelp: 'Créer avec l’IA : décrivez l’outil dans le champ, Claude le fabrique', aiWorking: 'Claude fabrique l’outil…',
     ai_key_invalid: 'Claude refuse cette clé. Vérifiez-la ou remplacez-la.', ai_refused: 'Claude n’a pas fabriqué cet outil. Reformulez la demande.', ai_busy: 'Claude est occupé ou limité pour cette clé. Réessayez dans un moment ; rien n’a été créé.', ai_failed: 'Claude n’a pas rendu un outil utilisable. Rien n’a été créé.', ai_unreachable: 'Claude est injoignable (réseau). Rien n’a été créé.', ai_key_format: 'Cette clé ne ressemble pas à une clé API Claude (sk-ant-…).', ai_key_missing: 'Ajoutez d’abord votre clé Claude.',
-    import_invalid: 'Ce n’est pas un widget IxForge lisible (format ixforge-widget/1).', name_invalid: 'Nom vide ou trop long (240 octets au plus).', revision_conflict: 'Résolvez le conflit avant d’envoyer cette version.', access_already_present: 'Un accès existe déjà sur cet appareil.', invite_invalid_or_expired: 'Code expiré, invalide ou déjà utilisé. Demandez un nouveau QR au Desktop.', not_admin: 'Cet appareil n’administre pas les autres.', local_storage_unavailable: 'Le stockage local est indisponible : rien n’a pu être conservé.', error: 'Action impossible pour le moment. Vos données déjà gardées sont conservées.'
+    import_invalid: 'Ce n’est pas un widget IxForge lisible (format ixforge-widget/1).', name_invalid: 'Nom vide ou trop long (240 octets au plus).', revision_conflict: 'Résolvez le conflit avant d’envoyer cette version.', access_already_present: 'Un accès existe déjà sur cet appareil.', invite_invalid_or_expired: 'Code expiré, invalide ou déjà utilisé. Demandez un nouveau QR au Desktop.', not_admin: 'Cet appareil n’administre pas les autres.', updater_absent: 'L’assistant de mise à jour ne tourne pas : rien n’a été demandé.', update_pending: 'Une installation est déjà demandée.',local_storage_unavailable: 'Le stockage local est indisponible : rien n’a pu être conservé.', error: 'Action impossible pour le moment. Vos données déjà gardées sont conservées.'
   }},
   en: {translation: {
     tools: 'My tools', newName: 'New tool name, or a sentence', newList: 'List', newCounter: 'Counter', dictate: 'Dictate', import: 'Import a widget (file or pasted JSON)',
     emptyTitle: 'Create your first tool', emptyHelp: 'Type a name in the “new tool” field, then List or Counter. You can also dictate, or import a widget.',
     toolTitle: 'Tool name', pin: 'Pin to the surface', export: 'Export (standalone page, Claude artifact)', detach: 'Detach into a window', reattach: 'Reattach to IxForge', reattachHere: 'Bring it back here',
     detachedTitle: 'This tool is open in another window.', surfaceOpen: 'Open the surface', surfaceEmpty: 'Pin tools from IxForge to see them here, side by side.', unpin: 'Remove from the surface',
-    devices: 'Devices', close: 'Close', thisDevice: 'This device', otherDevices: 'Linked devices', invite: 'Invite a device', inviteHelp: 'Scan this code with the other device, or open the link. Valid for two minutes; then approve it here.', about: 'About',
+    devices: 'Devices', close: 'Close', thisDevice: 'This device', otherDevices: 'Linked devices', desktopUpdate: 'Desktop update', desktopInstalled: 'Installed version: {{version}}', updaterRunning: 'Update assistant running', updaterAbsent: 'Update assistant not installed: run Install-IxForgeUpdater.ps1 once on the PC (administrator).', updaterStale: 'Update assistant stopped (seen on {{date}}).', installRelease: 'Install',noRelease: 'No newer version on this PC.', updateRequested: 'Install of {{version}} requested on {{date}}: waiting for the assistant.', updateDone: 'Last update: {{version}} installed on {{date}}.', updateNotDone: 'Last update: {{version}} not installed ({{state}}), on {{date}}.',invite: 'Invite a device', inviteHelp: 'Scan this code with the other device, or open the link. Valid for two minutes; then approve it here.', about: 'About',
     approve: 'Approve', refuse: 'Refuse', revoke: 'Revoke', thisDeviceShort: 'this device', status_pending: 'waiting', status_approved: 'approved', status_refused: 'refused', status_revoked: 'revoked',
     language: 'Language: English (change)', theme: 'Appearance', system: 'system', light: 'light', dark: 'dark', install: 'Install the app', update: 'Apply update',
     local: 'On this device only', connecting: 'Syncing…', connected: 'Desktop connected', offline: 'Offline · your changes stay here', device_pending: 'Waiting for approval', device_refused: 'Access refused · data kept', device_revoked: 'Access revoked · data kept', store_changed: 'Different Desktop database · sync paused',
@@ -56,13 +56,13 @@ const resources = {
     terminal: 'PC terminal', terminalWho: 'Commands run on the Desktop’s PC by Windows PowerShell, as the IxForge service’s account.', terminalCommand: 'Command', terminalRun: 'Run', terminalHelp: 'One command at a time, stopped after 30 seconds, output capped at 256 KiB. Each command is written to the Desktop’s journal; its output is kept nowhere, neither here nor on the Desktop.', terminalExit: 'Exit code: {{code}}', terminalTimedOut: 'Stopped after 30 seconds', terminalTruncated: 'output truncated', terminal_not_allowed: 'This device has no terminal: only the owner can allow it, from the owner page.', terminal_uncertain: 'Uncertain result: the command may have run on the PC. Nothing is resent automatically.',
     settings: 'Settings', aiTitle: 'AI (optional)', aiHelp: 'With your own Claude API key, a sentence becomes a tool. The key stays on this device; the request goes straight from this browser to Claude, and its cost is billed to your key. Without a key, IxForge works fully.', aiKey: 'Claude API key', aiSave: 'Save the key', aiForget: 'Forget the key', aiKeyKept: 'Key kept on this device (…{{end}}).', aiNoKey: 'No key: AI is off.', aiCreate: 'Create with AI', aiCreateHelp: 'Create with AI: describe the tool in the field, Claude makes it', aiWorking: 'Claude is making the tool…',
     ai_key_invalid: 'Claude refuses this key. Check or replace it.', ai_refused: 'Claude did not make this tool. Rephrase the request.', ai_busy: 'Claude is busy or rate-limited for this key. Try again in a moment; nothing was created.', ai_failed: 'Claude did not return a usable tool. Nothing was created.', ai_unreachable: 'Claude is unreachable (network). Nothing was created.', ai_key_format: 'This does not look like a Claude API key (sk-ant-…).', ai_key_missing: 'Add your Claude key first.',
-    import_invalid: 'This is not a readable IxForge widget (format ixforge-widget/1).', name_invalid: 'Empty or too long name (240 bytes at most).', revision_conflict: 'Resolve the conflict before sending this version.', access_already_present: 'This device already has access credentials.', invite_invalid_or_expired: 'Code expired, invalid or already used. Request a new Desktop QR.', not_admin: 'This device does not administer the others.', local_storage_unavailable: 'Local storage unavailable: nothing could be kept.', error: 'This action could not finish. Previously saved local data is retained.'
+    import_invalid: 'This is not a readable IxForge widget (format ixforge-widget/1).', name_invalid: 'Empty or too long name (240 bytes at most).', revision_conflict: 'Resolve the conflict before sending this version.', access_already_present: 'This device already has access credentials.', invite_invalid_or_expired: 'Code expired, invalid or already used. Request a new Desktop QR.', not_admin: 'This device does not administer the others.', updater_absent: 'The update assistant is not running: nothing was requested.', update_pending: 'An install is already requested.',local_storage_unavailable: 'Local storage unavailable: nothing could be kept.', error: 'This action could not finish. Previously saved local data is retained.'
   }}
 };
 const $ = id => document.getElementById(id);
 const t = (key, options) => globalThis.i18next.t(key, options);
 let replica, engine, voice = null, voiceStatus = 'voiceReady', voiceDetail = '', installPrompt = null, replaceAccess = false, updates = null, pendingActions = 0, pairCodeWaiting = false, updateState = '', branding;
-let view = {mode: 'app'}, adminDevices = [];
+let view = {mode: 'app'}, adminDevices = [], desktopUpdate = null;
 // The terminal's runs live in this page's memory only: never in the replica, never sent anywhere else.
 let terminalOpen = false, terminalRuns = [];
 const detached = {}; // tool key → last heartbeat of the window it is detached in
@@ -153,6 +153,24 @@ async function render() {
     ${!d.self && d.status === 'approved' ? html`<button class="ghost" data-decide="revoked" @click=${() => decide(d.id, 'revoked')}>${t('revoke')}</button>` : nothing}
   </li>`)}`, $('device-list'));
 
+  // Desktop update (updates.go): the releases built on this PC, installed by the updater task, never by the browser.
+  const up = desktopUpdate;
+  $('desktop-update').hidden = !engine.admin || standalone() || !up;
+  if (up) {
+    const when = at => new Date(at).toLocaleString(state.language, {dateStyle: 'medium', timeStyle: 'short'});
+    const running = up.updater?.running === true, waiting = Boolean(up.request);
+    $('desktop-installed').textContent = t('desktopInstalled', {version: up.installed});
+    $('updater-state').textContent = running ? t('updaterRunning') : up.updater ? t('updaterStale', {date: when(up.updater.seen_at)}) : t('updaterAbsent');
+    draw(html`${(up.releases || []).length ? up.releases.map(r => html`<li data-release=${r.version}>
+      <span class="name">${r.version}</span>${r.notes ? html`<span class="hint" data-release-notes>${r.notes}</span>` : nothing}
+      <button data-install ?disabled=${!running || waiting} @click=${() => installRelease(r)}>${t('installRelease')}</button></li>`)
+      : html`<li class="hint">${t('noRelease')}</li>`}`, $('release-list'));
+    const result = up.result;
+    draw(html`${waiting ? html`<p id="update-request" class="hint">${t('updateRequested', {version: up.request.version, date: when(up.request.requested_at)})}</p>` : nothing}
+      ${result ? html`<p id="update-result" class="hint">${result.state === 'completed' ? t('updateDone', {version: result.version, date: when(result.finished_at)})
+        : t('updateNotDone', {version: result.version, state: result.state, date: when(result.finished_at)})}</p>` : nothing}`, $('update-log'));
+  }
+
   // The terminal, for the device the owner allowed (terminal.go).
   const terminal = engine.terminal && !standalone() && view.mode === 'app';
   if (!terminal) terminalOpen = false;
@@ -203,9 +221,13 @@ async function render() {
 
 const select = key => act(() => replica.change(s => { s.tool = key; }));
 const decide = (id, status) => act(async () => { await engine.decide(id, status); await loadDevices(); });
+// The request names the hash this device was shown: the Desktop and the updater check it again.
+const installRelease = release => act(async () => { await engine.requestUpdate(release.version, release.sha256); await loadDevices(); });
 async function loadDevices() {
   if (!engine.admin || $('devices').hidden) return;
   try { adminDevices = (await engine.devices()).devices || []; } catch (error) { if (error.message === 'not_admin') adminDevices = []; }
+  // A Desktop without updates configured answers 404: the block stays hidden.
+  try { desktopUpdate = await engine.desktopUpdates(); } catch { desktopUpdate = null; }
   render().catch(message);
 }
 
