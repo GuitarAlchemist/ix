@@ -72,6 +72,28 @@ func TestMemFramesRefusesAFrameOverTheReadLimit(t *testing.T) {
 	}
 }
 
+// A write returns once the frame is queued, as a socket write returns once the frame is in its
+// buffer: a session whose output is full (its client not reading yet) must not hold the writer.
+// The session then takes the frames one at a time, in order, as ws.go's read loop does.
+func TestMemFramesWriteDoesNotWaitForTheSession(t *testing.T) {
+	p := memPlane(t, fakeSpec(t, "p", nil), "p")
+	p.Start()
+	s := newSession(t.Context(), p, 1)
+	s.out <- []byte(`{"filler":true}`) // the output is full: a subscribe's reply cannot be queued
+	m := newMemFrames(s)
+	t.Cleanup(func() { m.Close() })
+	done := make(chan error, 1)
+	go func() { done <- m.Write(t.Context(), []byte(`{"id":1,"op":"subscribe","ch":"ctl"}`)) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a write waited for the session to have room for its reply")
+	}
+}
+
 func TestFederationOverTheInMemoryTransport(t *testing.T) {
 	b := memPlane(t, fakeSpec(t, "b", nil), "b")
 	a := memPlane(t, fakeSpec(t, "a", []PeerSpec{{Name: "b", StateFile: filepath.Join(t.TempDir(), "never-read.json")}}), "a")
