@@ -3,6 +3,7 @@ import {startDictation, installLocalVoice} from './voice.js';
 import {Updates} from './updates.js';
 import {icon, parseWidget, widgetData, exportPage} from './widgets.js';
 import {askClaude} from './ai.js';
+import {TYPES, toolState, displayMode} from './catalog.js';
 import {html, render as draw, nothing, keyed, unsafeSVG} from './vendor/lit-all.min.js';
 
 const resources = {
@@ -12,6 +13,19 @@ const resources = {
     toolTitle: 'Nom de l’outil', pin: 'Épingler sur la surface', export: 'Exporter (page autonome, artefact Claude)', detach: 'Détacher dans une fenêtre', reattach: 'Rattacher à IxForge', reattachHere: 'Ramener ici',
     detachedTitle: 'Cet outil est ouvert dans une autre fenêtre.', surfaceOpen: 'Ouvrir la surface', surfaceEmpty: 'Épinglez des outils depuis IxForge pour les voir ici, côte à côte.', unpin: 'Retirer de la surface',
     devices: 'Appareils', close: 'Fermer', thisDevice: 'Cet appareil', otherDevices: 'Appareils reliés', invite: 'Inviter un appareil', inviteHelp: 'Scannez ce code avec l’autre appareil, ou ouvrez le lien. Valable deux minutes ; vous l’approuverez ensuite ici.', about: 'À propos',
+    navMain: 'Navigation principale', navWidgets: 'Widgets', navIxlets: 'IXlets',
+    appInfo: 'Application {{name}} {{version}} · Affichage : {{mode}}', mode_standalone: 'fenêtre d’application', mode_browser: 'onglet du navigateur', mode_unknown: 'inconnu',
+    installNote: 'Le navigateur ne dit pas si l’application est installée : seul le mode d’affichage est mesuré.',
+    typesTitle: 'Types de widgets disponibles', typeList: 'Liste', typeListHelp: 'Des éléments à cocher : courses, tâches.', typeCounter: 'Compteur', typeCounterHelp: 'Un nombre à augmenter ou diminuer.',
+    typeQueries: 'Requêtes', typeQueriesHelp: 'Les requêtes DuckDB du dépôt, à lire et copier. Rien ne s’exécute.', typeImported: 'Importé depuis le dépôt, pas créé à la main.',
+    create: 'Créer', nameFirst: 'Donnez d’abord un nom dans le champ « nom » ci-dessus.', preview: 'aperçu',
+    instancesTitle: 'Vos widgets', groupShared: 'Partagés avec le Desktop', groupDraft: 'Brouillons et envois en attente', groupNoRuntime: 'Non reliés à un runtime',
+    ixletsTitle: 'IXlets : ce qui tourne', ixletActive: 'Actifs sur le Desktop', ixletLocal: 'Seulement sur cet appareil', ixletNone: 'Sans IXlet (lecture seule ou non relié)',
+    noneYet: 'Aucun pour le moment.', open: 'Ouvrir',
+    state_draft: 'Brouillon sur cet appareil', state_sending: 'En cours d’envoi au Desktop', state_shared: 'Partagé par le Desktop', state_lastKnown: 'Dernière valeur connue', state_noRuntime: 'Non relié à un runtime',
+    stepOf: 'Étape {{n}} sur {{total}}', progressUnknown: 'Progression inconnue', blocked: 'Bloqué',
+    blocker_notPaired: 'cet appareil n’est pas appairé', blocker_desktopUnreachable: 'Desktop injoignable', blocker_awaitingApproval: 'en attente d’approbation sur le Desktop', blocker_accessRefused: 'accès refusé ou révoqué', blocker_noDefinition: 'aucune définition d’IXlet pour ce widget',
+    actionBusy: 'Action en cours…', pinShort: 'Épingler', exportShort: 'Exporter', detachShort: 'Détacher', reattachShort: 'Rattacher',
     approve: 'Approuver', refuse: 'Refuser', revoke: 'Révoquer', thisDeviceShort: 'cet appareil', status_pending: 'en attente', status_approved: 'approuvé', status_refused: 'refusé', status_revoked: 'révoqué',
     language: 'Langue : français (changer)', theme: 'Apparence', system: 'système', light: 'claire', dark: 'sombre', install: 'Installer l’application', update: 'Appliquer la mise à jour',
     local: 'Sur cet appareil seulement', connecting: 'Synchronisation…', connected: 'Desktop connecté', offline: 'Hors ligne · vos modifications restent ici', device_pending: 'En attente d’approbation', device_refused: 'Accès refusé · données conservées', device_revoked: 'Accès révoqué · données conservées', store_changed: 'Base Desktop différente · synchronisation suspendue',
@@ -38,6 +52,19 @@ const resources = {
     toolTitle: 'Tool name', pin: 'Pin to the surface', export: 'Export (standalone page, Claude artifact)', detach: 'Detach into a window', reattach: 'Reattach to IxForge', reattachHere: 'Bring it back here',
     detachedTitle: 'This tool is open in another window.', surfaceOpen: 'Open the surface', surfaceEmpty: 'Pin tools from IxForge to see them here, side by side.', unpin: 'Remove from the surface',
     devices: 'Devices', close: 'Close', thisDevice: 'This device', otherDevices: 'Linked devices', invite: 'Invite a device', inviteHelp: 'Scan this code with the other device, or open the link. Valid for two minutes; then approve it here.', about: 'About',
+    navMain: 'Main navigation', navWidgets: 'Widgets', navIxlets: 'IXlets',
+    appInfo: 'App {{name}} {{version}} · Display: {{mode}}', mode_standalone: 'app window', mode_browser: 'browser tab', mode_unknown: 'unknown',
+    installNote: 'The browser does not say whether the app is installed: only the display mode is measured.',
+    typesTitle: 'Available widget types', typeList: 'List', typeListHelp: 'Items to tick off: groceries, tasks.', typeCounter: 'Counter', typeCounterHelp: 'A number to raise or lower.',
+    typeQueries: 'Queries', typeQueriesHelp: 'The repo’s DuckDB queries, to read and copy. Nothing runs.', typeImported: 'Imported from the repo, not made by hand.',
+    create: 'Create', nameFirst: 'Type a name in the name field above first.', preview: 'preview',
+    instancesTitle: 'Your widgets', groupShared: 'Shared with the Desktop', groupDraft: 'Drafts and sends waiting', groupNoRuntime: 'Not connected to a runtime',
+    ixletsTitle: 'IXlets: what runs', ixletActive: 'Active on the Desktop', ixletLocal: 'Only on this device', ixletNone: 'No IXlet (read-only or not connected)',
+    noneYet: 'None yet.', open: 'Open',
+    state_draft: 'Draft on this device', state_sending: 'Being sent to the Desktop', state_shared: 'Shared by the Desktop', state_lastKnown: 'Last known value', state_noRuntime: 'Not connected to a runtime',
+    stepOf: 'Step {{n}} of {{total}}', progressUnknown: 'Progress unknown', blocked: 'Blocked',
+    blocker_notPaired: 'this device is not paired', blocker_desktopUnreachable: 'Desktop unreachable', blocker_awaitingApproval: 'waiting for approval on the Desktop', blocker_accessRefused: 'access refused or revoked', blocker_noDefinition: 'no IXLET definition for this widget',
+    actionBusy: 'Action in progress…', pinShort: 'Pin', exportShort: 'Export', detachShort: 'Detach', reattachShort: 'Reattach',
     approve: 'Approve', refuse: 'Refuse', revoke: 'Revoke', thisDeviceShort: 'this device', status_pending: 'waiting', status_approved: 'approved', status_refused: 'refused', status_revoked: 'revoked',
     language: 'Language: English (change)', theme: 'Appearance', system: 'system', light: 'light', dark: 'dark', install: 'Install the app', update: 'Apply update',
     local: 'On this device only', connecting: 'Syncing…', connected: 'Desktop connected', offline: 'Offline · your changes stay here', device_pending: 'Waiting for approval', device_refused: 'Access refused · data kept', device_revoked: 'Access revoked · data kept', store_changed: 'Different Desktop database · sync paused',
@@ -62,7 +89,7 @@ const resources = {
 const $ = id => document.getElementById(id);
 const t = (key, options) => globalThis.i18next.t(key, options);
 let replica, engine, voice = null, voiceStatus = 'voiceReady', voiceDetail = '', installPrompt = null, replaceAccess = false, updates = null, pendingActions = 0, pairCodeWaiting = false, updateState = '', branding;
-let view = {mode: 'app'}, adminDevices = [];
+let view = {mode: 'app'}, adminDevices = [], nav = null; // nav: null (the open tool), 'widgets' or 'ixlets'
 // The terminal's runs live in this page's memory only: never in the replica, never sent anywhere else.
 let terminalOpen = false, terminalRuns = [];
 const detached = {}; // tool key → last heartbeat of the window it is detached in
@@ -81,8 +108,8 @@ function showVoice(status, detail = '') {
 function message(error) { $('notice').textContent = t(globalThis.i18next.exists(error.message) ? error.message : 'error'); }
 // act runs one user action, shows its error if any, and says whether it was kept.
 async function act(action) {
-  pendingActions++; $('notice').textContent = '';
-  try { await action(); await render(); return true; } catch (error) { message(error); return false; } finally { pendingActions--; updates?.consider(); }
+  pendingActions++; $('notice').textContent = ''; $('action-busy').textContent = t('actionBusy');
+  try { await action(); await render(); return true; } catch (error) { message(error); return false; } finally { pendingActions--; if (!pendingActions) $('action-busy').textContent = ''; updates?.consider(); }
 }
 const titleOK = s => s.trim() !== '' && new TextEncoder().encode(s).length <= 240;
 const intentFor = (kind, title, data) => kind === 'queries' ? {workspaceTitle: title, queriesTitle: title, entries: data.entries, made: {generated_at: data.generated_at, source_commit: data.source_commit}}
@@ -110,6 +137,49 @@ const standalone = () => branding?.standalone === true;
 // The app's own folder: the Desktop's, or any folder of a static host.
 const home = () => location.pathname.replace(/[^/]*$/, '');
 
+// ---- Widgets and IXlets views -------------------------------------------------------------------------------------------
+// Fixed illustrations of each type, drawn from nothing the person owns.
+const PREVIEWS = {
+  checklist: () => html`<ul class="pv-list"><li><span class="pv-box"></span>Lait</li><li><span class="pv-box on"></span>Pain</li><li><span class="pv-box"></span>Œufs</li></ul>`,
+  counter: () => html`<div class="pv-counter"><span class="pv-btn">−</span><b>3</b><span class="pv-btn">+</span></div>`,
+  queries: () => html`<pre class="pv-sql">SELECT …
+FROM …</pre>`
+};
+function stateOf(state, x, status) {
+  const rt = runtime(state, x), project = state.projects[x.projectID];
+  const saved = Boolean(project) && project.revision > 0 && !project.dirty && !state.outbox.some(op => op.project.id === x.projectID);
+  return {rt, st: toolState({kind: x.widget.kind, hasDefinition: Boolean(x.definition), local: rt.local, saved, status})};
+}
+const stateLine = st => [t('state_' + st.state), st.step ? (st.progressKnown ? t('stepOf', {n: st.step, total: st.steps}) : t('progressUnknown')) : '', st.blocker ? t('blocked') + ' : ' + t('blocker_' + st.blocker) : ''].filter(Boolean).join(' · ');
+const kindChip = kind => { const ty = TYPES.find(y => y.kind === kind) || TYPES[0]; return html`<span class="kind-chip" data-kind=${kind}>${icon(ty.icon)}<span>${t(ty.labelKey)}</span></span>`; };
+function createFrom(kind) {
+  if (!$('new-name').value.trim()) { $('notice').textContent = t('nameFirst'); $('new-name').focus(); return; }
+  createFromField(kind);
+}
+function toolCard(state, x, status, current) {
+  const {rt, st} = stateOf(state, x, status);
+  return html`<button class="inst" data-inst=${x.key} data-state=${st.state} aria-current=${String(x.key === current?.key)} @click=${() => { nav = null; select(x.key); }}>
+    ${kindChip(x.widget.kind)}<strong class="inst-title">${x.widget.title}</strong><span class="badge">${badge(x, rt)}</span>
+    <span class="inst-state">${stateLine(st)}</span><span class="inst-open">${t('open')}</span></button>`;
+}
+function catalogView(state, list, status, current) {
+  const rows = list.map(x => ({x, ...stateOf(state, x, status)}));
+  const none = html`<p class="hint">${t('noneYet')}</p>`;
+  const group = (key, items) => html`<section class="group" data-group=${key}><h3>${t(key)} <span class="count">${items.length}</span></h3>${items.length ? items.map(r => toolCard(state, r.x, status, current)) : none}</section>`;
+  const held = r => ['shared', 'lastKnown'].includes(r.st.state);
+  if (nav === 'ixlets') {
+    const runs = rows.filter(r => r.x.widget.kind !== 'queries' && r.st.state !== 'noRuntime');
+    return html`<h2 class="catalog-title">${t('ixletsTitle')}</h2>${group('ixletActive', runs.filter(held))}${group('ixletLocal', runs.filter(r => !held(r)))}${group('ixletNone', rows.filter(r => r.x.widget.kind === 'queries' || r.st.state === 'noRuntime'))}`;
+  }
+  const typeCard = ty => html`<article class="type-card" data-type=${ty.kind}>
+      <header>${kindChip(ty.kind)}</header><p>${t(ty.helpKey)}</p><div class="pv" role="img" aria-label=${t('preview') + ' : ' + t(ty.labelKey)}>${PREVIEWS[ty.kind]()}</div>
+      ${ty.create ? html`<button data-create=${ty.kind} @click=${() => createFrom(ty.kind)}>${icon(ty.icon)}<span>${t('create')} · ${t(ty.labelKey)}</span></button>` : html`<p class="hint">${t('typeImported')}</p>`}</article>`;
+  return html`<h2 class="catalog-title">${t('navWidgets')}</h2>
+    <section class="types" data-types><h3>${t('typesTitle')} <span class="count">${TYPES.length}</span></h3><div class="type-grid">${TYPES.map(typeCard)}</div></section>
+    <h3 class="catalog-sub">${t('instancesTitle')} <span class="count">${rows.length}</span></h3>
+    ${group('groupShared', rows.filter(held))}${group('groupDraft', rows.filter(r => ['draft', 'sending'].includes(r.st.state)))}${group('groupNoRuntime', rows.filter(r => r.st.state === 'noRuntime'))}`;
+}
+
 async function render() {
   const state = await replica.read();
   if (globalThis.i18next.language !== state.language) await globalThis.i18next.changeLanguage(state.language);
@@ -125,6 +195,8 @@ async function render() {
   $('voice-status').textContent = t(voiceStatus, {code: voiceDetail});
   $('update-status').textContent = updateState ? t(updateState) : '';
   $('client-version').textContent = branding.name + ' · ' + branding.version;
+  // Version and display mode say nothing about the Desktop: the connection pill below does that.
+  $('app-info').textContent = t('appInfo', {name: branding.name, version: branding.version, mode: t('mode_' + displayMode())});
 
   // One pill says where the data is: here only, syncing, shared, or why not.
   const status = !state.token ? 'local' : engine.status === 'notConnected' ? 'offline' : engine.status;
@@ -174,9 +246,15 @@ async function render() {
       ${keyed(x.key, widget(x, runtime(state, x), state.language, true))}</article>`)}` : html`<div class="empty"><p class="big">${t('surfaceEmpty')}</p></div>`, $('surface'));
   }
 
+  // Widgets and IXlets: a persistent choice between the types, the widgets made, and what runs.
+  for (const b of document.querySelectorAll('[data-nav]')) b.setAttribute('aria-pressed', String(b.dataset.nav === nav));
+  const catalogOpen = nav !== null && view.mode === 'app' && !terminalOpen;
+  $('catalog').hidden = !catalogOpen;
+  if (catalogOpen) draw(catalogView(state, list, status, tool), $('catalog'));
+
   // The stage: the selected tool takes the rest of the screen.
-  $('empty').hidden = Boolean(tool) || view.mode === 'surface' || terminalOpen;
-  $('stage').hidden = !tool || view.mode === 'surface' || terminalOpen;
+  $('empty').hidden = Boolean(tool) || view.mode === 'surface' || terminalOpen || catalogOpen;
+  $('stage').hidden = !tool || view.mode === 'surface' || terminalOpen || catalogOpen;
   const project = tool && state.projects[tool.projectID];
   $('conflict').hidden = !project?.conflict || view.mode === 'surface' || terminalOpen;
   if (project?.conflict) {
@@ -185,6 +263,9 @@ async function render() {
   }
   if (!tool || view.mode === 'surface' || terminalOpen) return;
   const rt = runtime(state, tool);
+  const own = stateOf(state, tool, status).st;
+  draw(kindChip(tool.widget.kind), $('tool-kind'));
+  $('tool-step').textContent = stateLine(own);
   const title = $('tool-title');
   title.dataset.key = tool.key; title.dataset.projectId = tool.projectID;
   if (document.activeElement !== title) title.value = tool.widget.title;
@@ -326,6 +407,7 @@ async function boot() {
   $('new-name').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); createFromField('checklist'); } };
   $('new-list').onclick = () => createFromField('checklist');
   $('new-counter').onclick = () => createFromField('counter');
+  for (const b of document.querySelectorAll('[data-nav]')) b.onclick = () => { nav = nav === b.dataset.nav ? null : b.dataset.nav; render().catch(message); };
   $('import').onclick = () => $('import-file').click();
   $('import-file').onchange = () => act(async () => {
     const file = $('import-file').files[0]; $('import-file').value = '';
