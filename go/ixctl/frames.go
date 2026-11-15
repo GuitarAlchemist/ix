@@ -53,22 +53,32 @@ const memInQueue = 64
 // context does: Close, or the plane the session was opened on shutting down; what is still
 // queued either way is dropped, as a socket's buffers are. A frame over wsReadLimit is refused
 // and ends the connection, as the WebSocket refuses it; one over clientReadLimit is not read and
-// ends it too, as the client's WebSocket does.
+// ends it too, as the client's WebSocket does. A write returns nil only for a frame queued
+// before the end, as a WebSocket write that commits after its connection closed fails.
 //
-// @ai:invariant nothing reaches the session or the client once the session has ended, though a select may take a frame queued before [T:test conf:0.9 src:peers_mem_test.go:TestMemFramesHandsNothingAfterTheSessionEnds+TestMemFramesReadsNothingAfterTheSessionEnds]
-// @ai:invariant the session handles the frames one at a time, in the order written [T:test conf:0.85 src:peers_mem_test.go:TestMemFramesHandsFramesInOrder]
+// Pinned by TestMemFramesHandsNothingAfterTheSessionEnds, TestMemFramesReadsNothingAfterTheSessionEnds,
+// TestMemFramesWriteFailsOnceClosed and TestMemFramesHandsFramesInOrder:
+// @ai:invariant a frame serve or Read takes once the session has ended goes no further; one taken just before may still be handled or read, as ws.go may handle a frame it read just before [P:assumed conf:0.8]
+// @ai:invariant Write returns nil only if its frame was queued while the session ran [P:assumed conf:0.8]
+// @ai:invariant serve invokes Handle for one frame at a time, in the order the frames were written [P:assumed conf:0.8]
 type memFrames struct {
-	s  *session
-	in chan []byte
+	s      *session
+	in     chan []byte
+	served chan struct{} // closed when serve has returned: nothing more reaches the session
+
+	// beforeSend is a test seam, nil in production: Write calls it once its frame passed the
+	// checks, before it is queued.
+	beforeSend func()
 }
 
 func newMemFrames(s *session) *memFrames {
-	m := &memFrames{s: s, in: make(chan []byte, memInQueue)}
+	m := &memFrames{s: s, in: make(chan []byte, memInQueue), served: make(chan struct{})}
 	go m.serve()
 	return m
 }
 
 func (m *memFrames) serve() {
+	defer close(m.served)
 	for {
 		select {
 		case f := <-m.in:
@@ -109,8 +119,14 @@ func (m *memFrames) Write(ctx context.Context, frame []byte) error {
 		return fmt.Errorf("frame of %d bytes is over the %d-byte limit", len(frame), wsReadLimit)
 	}
 	f := append([]byte(nil), frame...) // the session may hold it after Write returns
+	if m.beforeSend != nil {
+		m.beforeSend()
+	}
 	select {
 	case m.in <- f:
+		if m.s.ctx.Err() != nil {
+			return errMemClosed // queued once the session ended (serve freed a slot as it left): never handled
+		}
 		return nil
 	case <-m.s.ctx.Done():
 		return errMemClosed

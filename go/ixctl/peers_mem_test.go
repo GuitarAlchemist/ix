@@ -113,15 +113,21 @@ func TestMemFramesReadsNothingAfterTheSessionEnds(t *testing.T) {
 	}
 }
 
-// requestCounter is a broker that counts the ops it is asked to run.
+// requestCounter is a broker that counts the ops it is asked to run and the subscriptions it is
+// asked for (a session asks for one while it handles the subscribe, before it answers).
 type requestCounter struct {
 	*Hub
-	requests atomic.Int64
+	requests, subscribes atomic.Int64
 }
 
 func (b *requestCounter) Request(context.Context, Request) (any, error) {
 	b.requests.Add(1)
 	return nil, nil
+}
+
+func (b *requestCounter) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
+	b.subscribes.Add(1)
+	return b.Hub.Subscribe(prefix, since, epoch)
 }
 
 // blockedMem is a connection whose session is held handling a frame: its output is full, and the
@@ -141,20 +147,47 @@ func blockedMem(t *testing.T, b Broker) *memFrames {
 // Nothing reaches the session once it has ended, as ws.go's read loop, whose reads the end
 // cancels, hands nothing more: frames still queued when the connection closes are dropped. The
 // select between the queue and the end picks at random when both are ready, so the test closes
-// many connections with frames waiting.
+// many connections with frames waiting; each queued frame is a subscribe, which the session would
+// ask the broker for while it handles it, and the count is read once serve has returned.
 func TestMemFramesHandsNothingAfterTheSessionEnds(t *testing.T) {
 	for i := range 50 {
 		b := &requestCounter{Hub: NewHub("p")}
 		m := blockedMem(t, b)
 		for id := 2; id < 6; id++ {
-			if err := m.Write(t.Context(), []byte(fmt.Sprintf(`{"id":%d,"op":"status"}`, id))); err != nil {
+			if err := m.Write(t.Context(), []byte(fmt.Sprintf(`{"id":%d,"op":"subscribe","ch":"ctl"}`, id))); err != nil {
 				t.Fatal(err)
 			}
 		}
 		m.Close()
-		time.Sleep(20 * time.Millisecond) // room for the serve loop to hand on what it would
-		if n := b.requests.Load(); n != 0 {
-			t.Fatalf("round %d: the session ran %d ops after it ended", i, n)
+		<-m.served
+		if n := b.subscribes.Load(); n != 0 {
+			t.Fatalf("round %d: the session handled %d subscribes after it ended", i, n)
+		}
+	}
+}
+
+// A write that commits once the connection is closed fails, as a WebSocket write does: a nil
+// return means the frame was queued while the session ran. The writer is held once its frame
+// passed the checks, the connection closes, and serve, leaving, may take a queued frame and so
+// free the slot the writer then takes; the test closes many connections so that it does.
+func TestMemFramesWriteFailsOnceClosed(t *testing.T) {
+	for i := range 100 {
+		m := blockedMem(t, &requestCounter{Hub: NewHub("p")})
+		for range memInQueue {
+			if err := m.Write(t.Context(), []byte(`{"id":2,"op":"status"}`)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		passed, release := make(chan struct{}), make(chan struct{})
+		m.beforeSend = func() { close(passed); <-release }
+		done := make(chan error, 1)
+		go func() { done <- m.Write(t.Context(), []byte(`{"id":3,"op":"status"}`)) }()
+		<-passed
+		m.Close()
+		<-m.served // serve has left, having taken a queued frame or not
+		close(release)
+		if err := <-done; err == nil {
+			t.Fatalf("round %d: a write queued once the connection was closed returned nil", i)
 		}
 	}
 }
@@ -175,7 +208,9 @@ func TestMemFramesRefusesAServerFrameOverTheClientsLimit(t *testing.T) {
 }
 
 // The session takes the frames one at a time, in the order they were written, as ws.go's read
-// loop does: answers it gives as it takes each come out in that order.
+// loop does: answers it gives as it takes each come out in that order. Each frame names an empty
+// peer, which Handle refuses itself before it returns (no op runs on a goroutine of its own), so
+// one-at-a-time handling answers them in order, always.
 func TestMemFramesHandsFramesInOrder(t *testing.T) {
 	s := newSession(t.Context(), &requestCounter{Hub: NewHub("p")}, 256)
 	m := newMemFrames(s)
