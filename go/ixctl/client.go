@@ -99,7 +99,7 @@ func DialWS(ctx context.Context, addr, token string) (*Client, error) {
 		c.CloseNow()
 		return nil, fmt.Errorf("server did not accept %s", subprotocol)
 	}
-	c.SetReadLimit(16 << 20)
+	c.SetReadLimit(clientReadLimit)
 	return newClient(wsFrames{c}), nil
 }
 

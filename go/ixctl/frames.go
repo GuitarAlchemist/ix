@@ -37,17 +37,26 @@ func (w wsFrames) Close() error { return w.c.Close(websocket.StatusNormalClosure
 // errMemClosed is what a memFrames connection reports once its session has ended.
 var errMemClosed = errors.New("in-memory session closed")
 
+// clientReadLimit is the largest frame a Client reads from its server.
+const clientReadLimit = 16 << 20
+
 // memInQueue bounds the client frames a memFrames connection holds before its session takes them,
 // as a socket's buffer does: past it, a write waits.
 const memInQueue = 64
 
 // memFrames serves a plane's ixctl.v1 session in memory, as ws.go serves it over a WebSocket.
-// Write queues the client's frame and returns, as a socket write returns once the frame is in
-// its buffer; one loop hands the queued frames to the session one at a time, in order, as ws.go's
-// read loop does, so a session waiting for room in its output holds that loop and not the
-// writers. Read takes what the session queues, in order. The connection ends when the session's
-// context does: Close, or the plane the session was opened on shutting down. A frame over
-// wsReadLimit is refused and ends the connection, as the WebSocket refuses it.
+// Write queues the client's frame and returns while the queue has room (memInQueue frames), as a
+// socket write returns once the frame is in its buffer; past it, the write waits. One loop hands
+// the queued frames to the session one at a time, in order, as ws.go's read loop does, so a
+// session waiting for room in its output holds that loop, and the writers only once the queue is
+// full. Read takes what the session queues, in order. The connection ends when the session's
+// context does: Close, or the plane the session was opened on shutting down; what is still
+// queued either way is dropped, as a socket's buffers are. A frame over wsReadLimit is refused
+// and ends the connection, as the WebSocket refuses it; one over clientReadLimit is not read and
+// ends it too, as the client's WebSocket does.
+//
+// @ai:invariant nothing reaches the session or the client once the session has ended, though a select may take a frame queued before [T:test conf:0.9 src:peers_mem_test.go:TestMemFramesHandsNothingAfterTheSessionEnds+TestMemFramesReadsNothingAfterTheSessionEnds]
+// @ai:invariant the session handles the frames one at a time, in the order written [T:test conf:0.85 src:peers_mem_test.go:TestMemFramesHandsFramesInOrder]
 type memFrames struct {
 	s  *session
 	in chan []byte
@@ -63,6 +72,9 @@ func (m *memFrames) serve() {
 	for {
 		select {
 		case f := <-m.in:
+			if m.s.ctx.Err() != nil {
+				return // the select may take a queued frame once the session has ended
+			}
 			m.s.Handle(f)
 		case <-m.s.ctx.Done():
 			return
@@ -75,6 +87,10 @@ func (m *memFrames) Read(ctx context.Context) ([]byte, error) {
 	case f := <-m.s.Out():
 		if m.s.ctx.Err() != nil {
 			return nil, errMemClosed // the select may take a queued frame once the session has ended
+		}
+		if len(f) > clientReadLimit {
+			m.s.Close()
+			return nil, fmt.Errorf("frame of %d bytes is over the client's %d-byte limit", len(f), clientReadLimit)
 		}
 		return f, nil
 	case <-m.s.ctx.Done():

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -107,6 +109,91 @@ func TestMemFramesReadsNothingAfterTheSessionEnds(t *testing.T) {
 		m.Close()
 		if f, err := m.Read(t.Context()); !errors.Is(err, errMemClosed) {
 			t.Fatalf("round %d: read %q, %v after the session ended, want errMemClosed", i, f, err)
+		}
+	}
+}
+
+// requestCounter is a broker that counts the ops it is asked to run.
+type requestCounter struct {
+	*Hub
+	requests atomic.Int64
+}
+
+func (b *requestCounter) Request(context.Context, Request) (any, error) {
+	b.requests.Add(1)
+	return nil, nil
+}
+
+// blockedMem is a connection whose session is held handling a frame: its output is full, and the
+// first frame written (a malformed one, answered at once) waits there for room. Frames written
+// after it wait in the connection's queue.
+func blockedMem(t *testing.T, b Broker) *memFrames {
+	t.Helper()
+	s := newSession(t.Context(), b, 1)
+	s.out <- []byte(`{"filler":true}`)
+	m := newMemFrames(s)
+	if err := m.Write(t.Context(), []byte(`{"id":1,"op":"status","peer":""}`)); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// Nothing reaches the session once it has ended, as ws.go's read loop, whose reads the end
+// cancels, hands nothing more: frames still queued when the connection closes are dropped. The
+// select between the queue and the end picks at random when both are ready, so the test closes
+// many connections with frames waiting.
+func TestMemFramesHandsNothingAfterTheSessionEnds(t *testing.T) {
+	for i := range 50 {
+		b := &requestCounter{Hub: NewHub("p")}
+		m := blockedMem(t, b)
+		for id := 2; id < 6; id++ {
+			if err := m.Write(t.Context(), []byte(fmt.Sprintf(`{"id":%d,"op":"status"}`, id))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m.Close()
+		time.Sleep(20 * time.Millisecond) // room for the serve loop to hand on what it would
+		if n := b.requests.Load(); n != 0 {
+			t.Fatalf("round %d: the session ran %d ops after it ended", i, n)
+		}
+	}
+}
+
+// The in-memory adapter keeps the client's read limit as well: a server frame over clientReadLimit
+// ends the connection instead of reaching the client, as the client's WebSocket refuses it.
+func TestMemFramesRefusesAServerFrameOverTheClientsLimit(t *testing.T) {
+	s := newSession(t.Context(), &requestCounter{Hub: NewHub("p")}, 1)
+	s.out <- make([]byte, clientReadLimit+1)
+	m := newMemFrames(s)
+	t.Cleanup(func() { m.Close() })
+	if f, err := m.Read(t.Context()); err == nil {
+		t.Fatalf("a frame of %d bytes was read, over the client's limit", len(f))
+	}
+	if _, err := m.Read(t.Context()); !errors.Is(err, errMemClosed) {
+		t.Fatalf("the connection outlived a frame over the client's limit: %v", err)
+	}
+}
+
+// The session takes the frames one at a time, in the order they were written, as ws.go's read
+// loop does: answers it gives as it takes each come out in that order.
+func TestMemFramesHandsFramesInOrder(t *testing.T) {
+	s := newSession(t.Context(), &requestCounter{Hub: NewHub("p")}, 256)
+	m := newMemFrames(s)
+	t.Cleanup(func() { m.Close() })
+	const n = 200
+	for id := 1; id <= n; id++ {
+		if err := m.Write(t.Context(), []byte(fmt.Sprintf(`{"id":%d,"op":"status","peer":""}`, id))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for want := int64(1); want <= n; want++ {
+		f, err := m.Read(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r replyFrame
+		if err := json.Unmarshal(f, &r); err != nil || r.Re != want || r.OK {
+			t.Fatalf("answer %s, want the refusal of request %d", f, want)
 		}
 	}
 }
