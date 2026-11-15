@@ -37,7 +37,8 @@ type treeEnd struct {
 // same); then the tree is closed.
 //
 // Whether the tree was seen gone is known after waitGone but returned only at the end: a caller
-// counting the trees not seen gone counts one up to monitorLimit later than before this module.
+// counting the trees not seen gone counts one later than before this module, by the drain and
+// the close (on Windows close may wait for the job once more and drain again: a few bounds).
 // The one reader of that count (runHost) reads it after the plane closed, once every reap
 // returned.
 //
