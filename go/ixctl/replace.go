@@ -20,12 +20,13 @@ type replaceError struct {
 func (e *replaceError) Error() string { return e.err.Error() }
 func (e *replaceError) Unwrap() error { return e.err }
 
-// fileSync makes a file's content durable, and fileRename replaces one file with another
-// (test seams).
-var (
-	fileSync   = (*os.File).Sync
-	fileRename = os.Rename
-)
+// fileOps is what a replace needs from the file system: sync makes a file's content durable,
+// rename replaces one file with another. replaceFile uses the OS's; a test builds its own value
+// with the step it wants to fail, so no test changes what another sees.
+type fileOps struct {
+	sync   func(*os.File) error
+	rename func(oldpath, newpath string) error
+}
 
 // replaceFile replaces path's content with b by a rename: where the OS's rename is atomic
 // (Unix), a reader sees the old content or the new, never a part; Windows does not promise it.
@@ -39,12 +40,17 @@ var (
 //
 // @ai:invariant replaceFile renames only a synced temp, and retries a rename refused because the target is held [P:assumed conf:0.8] (pinned by TestReplaceFileSyncsBeforeTheRename, TestTheStateFileIsReplacedOnceItsReaderLetsGo)
 func replaceFile(path string, b []byte) error {
+	return fileOps{sync: (*os.File).Sync, rename: os.Rename}.replace(path, b)
+}
+
+// replace is replaceFile with these file operations.
+func (o fileOps) replace(path string, b []byte) error {
 	tmp := path + ".tmp"
-	if err := writeSynced(tmp, b); err != nil {
+	if err := o.writeSynced(tmp, b); err != nil {
 		os.Remove(tmp)
 		return &replaceError{"temp", err}
 	}
-	if err := renameOver(tmp, path); err != nil {
+	if err := o.renameOver(tmp, path); err != nil {
 		// A rename may remove path, then fail (os.Rename promises no atomicity off Unix): the
 		// temp is then the only copy, and the evidence a reader such as the need store goes by.
 		if _, serr := os.Stat(path); serr == nil {
@@ -55,7 +61,7 @@ func replaceFile(path string, b []byte) error {
 	return nil
 }
 
-func writeSynced(path string, b []byte) error {
+func (o fileOps) writeSynced(path string, b []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -64,7 +70,7 @@ func writeSynced(path string, b []byte) error {
 		f.Close()
 		return err
 	}
-	if err := fileSync(f); err != nil {
+	if err := o.sync(f); err != nil {
 		f.Close()
 		return err
 	}
@@ -75,10 +81,10 @@ func writeSynced(path string, b []byte) error {
 // a sharing violation) for as long as another process holds the file it replaces; a few
 // short retries, about a second in all, ride that out. Any other error, and a file that stays
 // held, come back at once: the caller holds its store's lock meanwhile.
-func renameOver(tmp, path string) error {
+func (o fileOps) renameOver(tmp, path string) error {
 	const attempts = 20
 	for i := 1; ; i++ {
-		err := fileRename(tmp, path)
+		err := o.rename(tmp, path)
 		if err == nil || i == attempts || !heldByAnother(err) {
 			return err
 		}
