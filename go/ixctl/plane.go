@@ -125,84 +125,37 @@ func (p *Plane) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
 // Epoch is this boot's id, from the hub.
 func (p *Plane) Epoch() string { return p.hub.Epoch() }
 
-// Request is the one entry point every transport uses.
+// Request is the one entry point every transport uses: the op table (ops.go) runs it, or
+// forward hands it to the peer it names.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 	if req.Peer != "" && req.Op != "wait" {
 		return p.forward(ctx, req.Peer, req)
 	}
-	switch req.Op {
-	case "status":
-		return p.Status(), nil
-	case "ping":
-		return map[string]any{"pong": true, "name": p.name}, nil
-	case "plan":
-		if req.Desired == nil {
-			return nil, badRequest("plan needs a desired-state document")
-		}
-		return p.Plan(req.Desired)
-	case "apply":
-		if req.Desired == nil {
-			return nil, badRequest("apply needs a desired-state document")
-		}
-		r, _, err := p.Apply(req.Desired)
-		return r, err
-	case "wait":
-		return p.Wait(ctx, req)
-	case "stop":
-		return p.Stop(ctx, req.Service)
-	case "shutdown":
-		p.RequestShutdown()
-		return map[string]any{"shutdown": true}, nil
-	case "probe.kinds":
-		return kindsReply(p.probes.budgetNow()), nil
-	case "probe.create":
-		if req.Probe == nil {
-			return nil, badRequest("probe.create needs a node under `probe`")
-		}
-		return p.probes.create(req.Probe)
-	case "probe.list":
-		return p.probes.list(req.WithCursor), nil
-	case "probe.start":
-		return p.probes.start(req.Node)
-	case "probe.stop":
-		return p.probes.stop(req.Node, "requested")
-	case "probe.touch":
-		return p.probes.touch(req.Node)
-	case "probe.remove":
-		return p.probes.remove(req.Node, "removed")
-	case "bookmark.set":
-		return p.bookmarks.set(req)
-	case "bookmark.get":
-		return p.bookmarks.get(req.Bookmark)
-	case "bookmark.list":
-		return p.bookmarks.list(), nil
-	case "bookmark.remove":
-		return p.bookmarks.remove(req.Bookmark)
-	case "need.submit", "need.status", "need.claim", "need.resolve", "need.refuse", "need.reserve", "need.settle", "need.wait":
-		return p.needRequest(ctx, req)
-	case "":
+	if req.Op == "" {
 		return nil, badRequest("missing op")
 	}
-	return nil, badRequest("unknown op %q", req.Op)
+	op, ok := planeOps[req.Op]
+	if !ok {
+		return nil, badRequest("unknown op %q", req.Op)
+	}
+	return op.run(p, ctx, req)
 }
 
-// forward hands an op to a peer, which decides by its own rules. The peer
-// field is stripped so an op crosses at most one hop.
+// forward hands an op to a peer, which decides by its own rules. The request
+// goes whole, so an optional field added later (ADR 0014, 1.2) is not lost on
+// the way; the peer field is stripped so an op crosses at most one hop, and
+// the link numbers the frame itself.
+// @ai:invariant a relayed request reaches the peer whole but for Peer (cleared) and ID (the link's) [P:assumed conf:0.8] (pinned by TestForwardCarriesTheWholeRequest)
 func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, error) {
 	l := p.peers[peer]
 	if l == nil {
 		return nil, badRequest("unknown peer %q", peer)
 	}
-	switch req.Op {
-	case "status", "ping", "plan", "apply", "wait", "stop",
-		"probe.kinds", "probe.list", "probe.create", "probe.start", "probe.stop", "probe.touch", "probe.remove",
-		"bookmark.set", "bookmark.get", "bookmark.list", "bookmark.remove":
-	default:
+	if !planeOps[req.Op].relay {
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
-	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node,
-		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note, WithCursor: req.WithCursor,
-		Wait: req.Wait, Generation: req.Generation, Run: req.Run, TimeoutMS: req.TimeoutMS})
+	req.Peer = ""
+	return l.forward(ctx, req)
 }
 
 type ServiceStatus struct {
