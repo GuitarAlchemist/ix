@@ -170,7 +170,9 @@ func TestRunWaitNeverFollowsARestart(t *testing.T) {
 // `unknown (evicted)`: nothing of it was ever recorded.
 // A launch wait names one service by its whole channel: the run.begin of a service whose name
 // extends it (x-extra beside x), of the same generation, is not its launch. The other service's
-// run.begin is published until the wait has had time to subscribe, then x's own.
+// run.begin is published 30 times over 300 ms, then x's own. Nothing orders the wait's subscription
+// before those publications: a wait scheduled after all 30 would let the mutant (a prefix cursor)
+// pass this run, never fail the code.
 func TestALaunchWaitIgnoresAServiceWhoseNameExtendsItsOwn(t *testing.T) {
 	spec := &Spec{Name: "p", Services: []ServiceSpec{{Name: "x", Command: "unused"}, {Name: "x-extra", Command: "unused"}}}
 	p, err := NewPlane(spec, "p", "", "")
@@ -195,9 +197,16 @@ func TestALaunchWaitIgnoresAServiceWhoseNameExtendsItsOwn(t *testing.T) {
 		r, err := p.waitForLaunch(ctx, p.hub.Epoch(), g, "x")
 		done <- reply{r, err}
 	}()
+	// As service.launch does: the run.begin and the launch record's run in one step under the
+	// service's lock, so a wait that subscribes after x's own run.begin answers from the record
+	// instead of waiting for an envelope its cursor started past (Codex round f3r2).
 	begin := func(svc string, seq uint64) RunID {
+		s := p.svcs[svc]
 		run := RunID{Origin: "p", Epoch: p.hub.Epoch(), Seq: seq}
-		p.hub.PublishRun(p.svcs[svc].ch, event(runBeginKind, map[string]any{"generation": g}), run)
+		s.mu.Lock()
+		p.hub.PublishRun(s.ch, event(runBeginKind, map[string]any{"generation": g}), run)
+		s.rememberLaunchedLocked(g, run)
+		s.mu.Unlock()
 		return run
 	}
 	for i := uint64(1); i <= 30; i++ {
