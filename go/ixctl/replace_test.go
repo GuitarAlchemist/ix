@@ -10,9 +10,11 @@ import (
 	"time"
 )
 
-// Every writer of a file a reader trusts (the state file, the Workshop's state, the bookmarks)
-// syncs the new content before it replaces the old: a sync that fails fails the write, and the
-// file keeps its old content.
+// A replace syncs the new content before it replaces the old: a sync that fails fails the write,
+// and the file keeps its old content. Every writer of a file a reader trusts goes through
+// replaceFile, which hands the OS's sync (the state file and the Workshop's state through
+// writeFileAtomic, the bookmarks and the need store through the replace their constructor sets):
+// that wiring is by reading; the test reaches the bookmarks through the value it hands them.
 func TestReplaceFileSyncsBeforeTheRename(t *testing.T) {
 	t.Parallel()
 	refuse := fileOps{sync: func(*os.File) error { return errors.New("sync refused") }, rename: os.Rename}

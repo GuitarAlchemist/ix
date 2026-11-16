@@ -38,7 +38,7 @@ type fileOps struct {
 // path cannot be seen (gone, or a Stat refused): then the temp may be the only copy, and is
 // kept. A temp with no file beside it is what the need store reads as unknown on its next load.
 //
-// @ai:invariant replaceFile renames only a synced temp, and retries a rename refused because the target is held [P:assumed conf:0.8] (pinned by TestReplaceFileSyncsBeforeTheRename, TestTheStateFileIsReplacedOnceItsReaderLetsGo)
+// @ai:invariant replaceFile renames only a synced temp, and retries a rename refused because the target is held [P:assumed conf:0.8] (fileOps.replace pinned by TestReplaceFileSyncsBeforeTheRename; replaceFile's own retry by TestTheStateFileIsReplacedOnceItsReaderLetsGo; that replaceFile hands the OS's sync, by reading)
 func replaceFile(path string, b []byte) error {
 	return fileOps{sync: (*os.File).Sync, rename: os.Rename}.replace(path, b)
 }
