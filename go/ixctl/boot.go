@@ -42,10 +42,11 @@ func (e errWorkshopStart) Unwrap() error { return e.err }
 // file, then the Workshop, then the probe kinds' settings, all before the manager announces
 // readiness. A client that reads the state file (it holds the token) during the boot may still
 // find a probe kind unset: the settings follow the state file. On a failure what was started
-// is closed. The caller announces readiness its own way, then starts the plane (supervisors,
-// peers, autostart).
+// is closed. The caller then starts the plane (supervisors, peers, autostart) and announces
+// readiness, each its own way and in its own order: cmdUp announces first, runHost starts the
+// plane first.
 //
-// @ai:invariant every instance, in production (cmdUp, runHost) and in tests, starts through bootInstance: there is no other way to start one [T:compiler conf:0.9] (TestBootInstanceAppliesEveryOption pins the options, TestAHostWhoseWorkshopFailsSaysSo the host's use)
+// @ai:invariant cmdUp, runHost and the test helpers start an instance through bootInstance, the one function that does [P:assumed conf:0.8] (by reading; TestBootInstanceAppliesEveryOption pins the options, TestAHostWhoseWorkshopFailsSaysSo the host's use)
 func bootInstance(o instanceOptions) (*instance, error) {
 	spec, name, addr, stateDir, bookmarks, budget := o.spec, o.name, o.addr, o.stateDir, o.bookmarks, o.budget
 	if name == "" {
