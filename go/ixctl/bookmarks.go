@@ -42,6 +42,8 @@ type bookmarkFile struct {
 type bookmarkStore struct {
 	hub  *Hub
 	path string // "" keeps the bookmarks in memory only
+	// replace writes the file (replaceFile); a test hands one that fails at a stage.
+	replace func(path string, b []byte) error
 
 	mu    sync.Mutex
 	marks []bookmark // in creation order; setting an existing name moves its point, not its place
@@ -53,7 +55,7 @@ type bookmarkStore struct {
 // bookmarks, or whose records break the invariants `set` enforces, is refused rather than
 // emptied: the operator decides what to do with it.
 func newBookmarkStore(hub *Hub, path string) (*bookmarkStore, error) {
-	s := &bookmarkStore{hub: hub, path: path}
+	s := &bookmarkStore{hub: hub, path: path, replace: replaceFile}
 	if path == "" {
 		return s, nil
 	}
@@ -113,7 +115,7 @@ func (s *bookmarkStore) save(list []bookmark) error {
 	if err != nil {
 		return err
 	}
-	if err := replaceFile(s.path, append(b, '\n')); err != nil {
+	if err := s.replace(s.path, append(b, '\n')); err != nil {
 		return fmt.Errorf("bookmarks: %w", err)
 	}
 	return nil

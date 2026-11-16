@@ -312,7 +312,7 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk", nil); err == nil || !strings.Contains(err.Error(), "epoch") {
 		t.Fatalf("a record without an epoch: %v", err)
 	}
-	unsavable := &bookmarkStore{hub: second.plane.hub, path: filepath.Join(badDir, "no-such-dir", "x.bookmarks.json")}
+	unsavable := &bookmarkStore{hub: second.plane.hub, path: filepath.Join(badDir, "no-such-dir", "x.bookmarks.json"), replace: replaceFile}
 	if _, err := unsavable.set(Request{Bookmark: "lost"}); err == nil {
 		t.Fatal("a set the store could not save succeeded")
 	}
