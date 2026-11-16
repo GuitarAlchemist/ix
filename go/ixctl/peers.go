@@ -48,6 +48,11 @@ type peerLink struct {
 	spec PeerSpec
 	hub  *Hub
 
+	// connect opens one connection to the peer and says which instance answered (its name,
+	// address and token, as its state file gives them). dialWS in production; a test federates
+	// planes in memory with connectMem. Set before the plane starts.
+	connect func(ctx context.Context) (*Client, stateFile, error)
+
 	mu       sync.Mutex
 	client   *Client
 	up       bool
@@ -166,7 +171,23 @@ func newPeerLink(spec PeerSpec, hub *Hub) *peerLink {
 	l.allowBytes.Store(replayAllowBytes)
 	l.allowFor.Store(int64(replayFor))
 	l.replay.frames, l.replay.bytes, l.replay.at = replayAllowFrames, replayAllowBytes, time.Now()
+	l.connect = l.dialWS
 	return l
+}
+
+// dialWS reads the peer's state file and opens a WebSocket on the loopback address it gives.
+func (l *peerLink) dialWS(ctx context.Context) (*Client, stateFile, error) {
+	st, err := readStateFile(l.spec.StateFile)
+	if err != nil {
+		return nil, st, err
+	}
+	if err := checkLoopback(st.Addr); err != nil {
+		return nil, st, err
+	}
+	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	c, err := DialWS(dctx, st.Addr, st.Token)
+	return c, st, err
 }
 
 func (l *peerLink) status() PeerStatus {
@@ -244,16 +265,7 @@ func (l *peerLink) run(ctx context.Context) {
 
 // session is one connection to the peer, from dial to loss.
 func (l *peerLink) session(ctx context.Context) (bool, error) {
-	st, err := readStateFile(l.spec.StateFile)
-	if err != nil {
-		return false, err
-	}
-	if err := checkLoopback(st.Addr); err != nil {
-		return false, err
-	}
-	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	c, err := DialWS(dctx, st.Addr, st.Token)
-	cancel()
+	c, st, err := l.connect(ctx)
 	if err != nil {
 		return false, err
 	}
