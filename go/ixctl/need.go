@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -190,13 +191,13 @@ type needStore struct {
 	unknown string        // non-empty: the file's state is not known; ops reconcile first
 	wake    chan struct{} // closed and replaced on every adopted transition
 
-	// Tests: interrupt a write before the rename, at it, or after it (committed, result lost).
-	failTemp, failRename, failAfterRename error
+	// replace writes the file (replaceFile); a test hands an adapter that fails at a stage.
+	replace func(path string, b []byte) error
 }
 
 // newNeedStore opens the store at path; it never fails, an unreadable file makes it unknown.
 func newNeedStore(path string, now func() time.Time) *needStore {
-	s := &needStore{path: path, now: now, wake: make(chan struct{})}
+	s := &needStore{path: path, now: now, wake: make(chan struct{}), replace: replaceFile}
 	s.load()
 	return s
 }
@@ -364,18 +365,11 @@ func (s *needStore) commit(i int, next *need, fence uint64) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := s.writeTemp(tmp, append(b, '\n')); err != nil {
-		return &opError{status: 500, msg: "need not persisted, nothing changed: " + err.Error()}
-	}
-	err = s.failRename
-	if err == nil {
-		err = os.Rename(tmp, s.path)
-	}
-	if err == nil {
-		err = s.failAfterRename // committed on disk, the result lost before memory and reply
-	}
-	if err != nil {
+	if err := s.replace(s.path, append(b, '\n')); err != nil {
+		var re *replaceError
+		if errors.As(err, &re) && re.stage == "temp" {
+			return &opError{status: 500, msg: "need not persisted, nothing changed: " + err.Error()}
+		}
 		s.unknown = "write interrupted at or after rename: " + err.Error()
 		return &opError{status: 503, msg: "need state unknown after an interrupted write; the next op reconciles from disk"}
 	}
@@ -383,25 +377,6 @@ func (s *needStore) commit(i int, next *need, fence uint64) error {
 	close(s.wake)
 	s.wake = make(chan struct{})
 	return nil
-}
-
-func (s *needStore) writeTemp(tmp string, b []byte) error {
-	if s.failTemp != nil {
-		return s.failTemp
-	}
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 // expire moves a live need past its deadline to expired, persisted, before any op reads it.

@@ -421,7 +421,7 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 	t.Run("temp write fails: nothing changes", func(t *testing.T) {
 		s, clk, path := newNeedTest(t)
 		s.submit(submitOf(clk, "n1", time.Hour))
-		s.failTemp = errors.New("disk full")
+		s.replace = failAt("temp", errors.New("disk full"))
 		_, err := s.claim("n1", "resolver-x", 60_000)
 		wantStatus(t, err, 500, "not persisted")
 		r, _ := s.status("n1", "task-a", "inc-1", "")
@@ -435,10 +435,10 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 	t.Run("rename fails: unknown, then reconciled from disk, never replayed", func(t *testing.T) {
 		s, clk, _ := newNeedTest(t)
 		s.submit(submitOf(clk, "n1", time.Hour))
-		s.failRename = errors.New("access denied")
+		s.replace = failAt("rename", errors.New("access denied"))
 		_, err := s.claim("n1", "resolver-x", 60_000)
 		wantStatus(t, err, 503, "unknown")
-		s.failRename = nil
+		s.replace = replaceFile
 		r, err := s.status("n1", "task-a", "inc-1", "")
 		if err != nil || r.State != "open" || r.Rev != 1 {
 			t.Fatalf("after reconcile: %+v %v, want the disk's open rev 1 (the claim not replayed)", r, err)
@@ -551,7 +551,7 @@ func TestNeedFailedRenameAdoptsNothing(t *testing.T) {
 	s, clk, _ := newNeedTest(t)
 	s.submit(submitOf(clk, "n1", time.Hour))
 	wake := s.wake
-	s.failRename = errors.New("access denied")
+	s.replace = failAt("rename", errors.New("access denied"))
 	s.claim("n1", "resolver-x", 60_000)
 	if len(s.needs) != 1 || s.needs[0].State != "open" || s.fence != 0 {
 		t.Fatalf("memory after a failed rename: state %q fence %d, want open and 0", s.needs[0].State, s.fence)
@@ -716,7 +716,7 @@ func TestNeedResultLostAfterRenameIsNotAnsweredTwice(t *testing.T) {
 	s, clk, path := newNeedTest(t)
 	s.submit(submitOf(clk, "n1", time.Hour))
 	c, _ := s.claim("n1", "resolver-x", 60_000)
-	s.failAfterRename = errors.New("crash after commit")
+	s.replace = failAt("after", errors.New("crash after commit"))
 	_, err := s.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"port":1}`))
 	wantStatus(t, err, 503, "unknown")
 
@@ -727,7 +727,7 @@ func TestNeedResultLostAfterRenameIsNotAnsweredTwice(t *testing.T) {
 	}
 	_, err = re.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"port":2}`))
 	wantStatus(t, err, 409, "resolved")
-	s.failAfterRename = nil
+	s.replace = replaceFile
 	if r, err := s.status("n1", "task-a", "inc-1", ""); err != nil || r.State != "resolved" {
 		t.Fatalf("the same store after reconcile: %+v %v", r, err)
 	}
@@ -876,7 +876,7 @@ func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
 	s, clk, path := newNeedTest(t)
 	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
 
-	s.failRename = errors.New("crash at rename")
+	s.replace = failAt("rename", errors.New("crash at rename"))
 	_, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 60)
 	wantStatus(t, err, 503, "unknown")
 	s = newNeedStore(path, clk.now) // restart: the reservation was not written
@@ -887,7 +887,7 @@ func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
 		t.Fatalf("retry: %v", err)
 	}
 
-	s.failAfterRename = errors.New("crash after commit")
+	s.replace = failAt("after", errors.New("crash after commit"))
 	_, err = s.reserve("n1", "res-x", fence, "r2", "deterministic", 30)
 	wantStatus(t, err, 503, "unknown")
 	s = newNeedStore(path, clk.now) // committed, reply lost
@@ -899,7 +899,7 @@ func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
 		t.Fatalf("after the retry: %+v, want 90 committed (no double reservation)", v)
 	}
 
-	s.failAfterRename = errors.New("crash after commit")
+	s.replace = failAt("after", errors.New("crash after commit"))
 	_, err = s.settle("n1", "res-x", "r1", usageOf(10, 5, 0, 0))
 	wantStatus(t, err, 503, "unknown")
 	s = newNeedStore(path, clk.now)
@@ -1174,7 +1174,7 @@ func TestNeedJSONPersistenceAndRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 				if lost {
-					s.failAfterRename = errors.New("lost reply")
+					s.replace = failAt("after", errors.New("lost reply"))
 				}
 				_, err = s.submit(sub)
 				if lost {
@@ -1182,7 +1182,7 @@ func TestNeedJSONPersistenceAndRetry(t *testing.T) {
 				} else if err != nil {
 					t.Fatal(err)
 				}
-				s.failAfterRename = nil
+				s.replace = replaceFile
 				retry, err := s.submit(sub)
 				if err != nil || !retry.Duplicate {
 					t.Fatalf("retry: %+v %v", retry, err)
@@ -1294,5 +1294,18 @@ func TestNeedJSONEscapedSizeBound(t *testing.T) {
 	r, err := restarted.status(sub.ID, sub.Requester, sub.Incarnation, "")
 	if err != nil || r.State != "claimed" {
 		t.Fatalf("rejected answer changed store: %+v %v", r, err)
+	}
+}
+
+// failAt is a need store's replace that fails at a stage: "temp" (nothing written), "rename"
+// (the file not replaced), "after" (replaced on disk, the answer lost on the way back).
+func failAt(stage string, err error) func(string, []byte) error {
+	return func(path string, b []byte) error {
+		if stage == "after" {
+			if rerr := replaceFile(path, b); rerr != nil {
+				return rerr
+			}
+		}
+		return &replaceError{stage: stage, err: err}
 	}
 }
