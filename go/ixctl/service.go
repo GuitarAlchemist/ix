@@ -124,23 +124,20 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 		return code
 	}
 
-	in, err := startInstance(o.spec, o.name, o.addr, o.stateDir, "disk", nil)
-	if err != nil {
-		if errors.Is(err, errInstanceRunning) {
-			log.event("host.refused", map[string]any{"error": err.Error()})
-			return stopped(exitAlreadyRunning)
-		}
+	in, err := bootInstance(instanceOptions{spec: o.spec, name: o.name, addr: o.addr, stateDir: o.stateDir, bookmarks: "disk",
+		deltaJournal: o.deltaJournal, workshop: o.workshop})
+	var ws errWorkshopStart
+	switch {
+	case errors.Is(err, errInstanceRunning):
+		log.event("host.refused", map[string]any{"error": err.Error()})
+		return stopped(exitAlreadyRunning)
+	case errors.As(err, &ws):
+		log.event("workshop.failed", map[string]any{"error": err.Error()})
+		return stopped(exitStartFailed)
+	case err != nil:
 		log.event("host.failed", map[string]any{"error": err.Error()})
 		return stopped(exitStartFailed)
 	}
-	in.workshop, err = startWorkshop(o.workshop, o.stateDir, in.ready.Name)
-	if err != nil {
-		in.close()
-		log.event("workshop.failed", map[string]any{"error": err.Error()})
-		return stopped(exitStartFailed)
-	}
-	// Before the plane starts: no client knows the token yet, so no node can exist.
-	in.plane.SetDeltaJournal(o.deltaJournal)
 	in.plane.Start()
 	log.event("host.ready", map[string]any{"name": in.ready.Name, "addr": in.addr, "pid": in.ready.Pid,
 		"epoch": in.plane.Epoch(), "state_file": in.stateFile, "version": version})
