@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -313,6 +314,9 @@ func httpError(w http.ResponseWriter, status int, msg string) {
 // Last-Event-ID works like since, and may carry the epoch the same way
 // (`epoch:seq`; a bare seq is read with the `epoch` query parameter, if any).
 // A slow reader that falls off the ring gets a gap event and the stream ends.
+// `exact=1` makes ch a whole channel name, and `live=1` asks for one
+// `event: live` once the replay is over, as a WebSocket subscribe's exact and
+// live do (`true` works as `1`; any other value is read as absent).
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	prefix := q.Get("ch")
@@ -368,7 +372,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	// The cursor exists before the headers go out: a reader that has the headers is on
 	// the pipe, and nothing published from then on is missed (a live cursor starts at
 	// the head of the moment it is made).
-	cur := s.b.Subscribe(prefix, since, epoch)
+	sub := openSubscription(s.b, subRequest{prefix: prefix, exact: queryOn(q, "exact"), since: since, epoch: epoch, live: queryOn(q, "live"), markers: markers})
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	if markers {
@@ -383,8 +387,11 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	for {
 		wctx, wcancel := context.WithTimeout(ctx, 15*time.Second)
-		envs, gap, err := cur.Next(wctx, 256)
+		items, err := sub.Next(wctx, 256)
 		wcancel()
+		if errors.Is(err, errSubscriptionEnded) {
+			return
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -393,20 +400,19 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 			continue
 		}
-		if gap != nil {
-			b, _ := json.Marshal(gap)
-			fmt.Fprintf(w, "event: gap\ndata: %s\n\n", b)
-			fl.Flush()
-			if gap.Reason == "overflow" {
-				return
-			}
-			continue
-		}
 		var sb strings.Builder
-		for _, env := range envs {
-			if !markers && isRunMarker(env) {
+		for _, it := range items {
+			if it.gap != nil {
+				b, _ := json.Marshal(it.gap)
+				fmt.Fprintf(&sb, "event: gap\ndata: %s\n\n", b)
 				continue
 			}
+			if it.live {
+				// @ai:invariant the live mark carries no id, so EventSource's Last-Event-ID stays the last event's [P:assumed conf:0.8] (pinned by TestSSELiveFollowsTheReplay through sseItems)
+				sb.WriteString("event: live\ndata: {}\n\n")
+				continue
+			}
+			env := it.env
 			sb.WriteString("id: ")
 			sb.WriteString(env.Epoch)
 			sb.WriteByte(':')
@@ -422,6 +428,13 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		fl.Flush()
 	}
+}
+
+// queryOn reads an optional flag of a query: 1 or true sets it; any other value, or none, leaves
+// it unset rather than refusing a request that was valid before the flag existed (ADR 0014, 1.3).
+func queryOn(q url.Values, name string) bool {
+	v := q.Get(name)
+	return v == "1" || v == "true"
 }
 
 // checkLoopback refuses any address that is not a loopback IP and port.

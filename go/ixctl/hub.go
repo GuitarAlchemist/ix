@@ -313,9 +313,14 @@ type Cursor struct {
 // (epoch names a different one, or no epoch and since is past the head) is
 // answered with a gap naming this epoch, then everything the ring still holds.
 func (h *Hub) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
+	return h.subscribe(prefix, false, since, epoch)
+}
+
+// subscribe is Subscribe with exact: true makes prefix a whole channel name.
+func (h *Hub) subscribe(prefix string, exact bool, since *uint64, epoch string) *Cursor {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	c := &Cursor{h: h, prefix: prefix, next: h.head + 1, start: h.head}
+	c := &Cursor{h: h, prefix: prefix, exact: exact, next: h.head + 1, start: h.head}
 	switch {
 	case since == nil:
 	case epoch != "" && epoch != h.epoch:
