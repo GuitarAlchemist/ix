@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GuitarAlchemist/ix/go/ixctl/internal/workshop"
 )
 
 func TestWorkshopHostDisabledAndExplicitMount(t *testing.T) {

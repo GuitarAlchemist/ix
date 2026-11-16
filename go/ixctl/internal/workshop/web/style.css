@@ -98,3 +98,8 @@ body[data-mode=widget] #rail,body[data-mode=widget] .bar,body[data-mode=widget] 
   main{padding:10px 12px}#tool-title{font-size:18px}
 }
 .ico{display:contents}
+.queries [data-query-result] .result{overflow:auto;max-height:420px;margin-bottom:10px;border:1px solid var(--line);border-radius:10px}
+.queries table{border-collapse:collapse;font:13px ui-monospace,Consolas,monospace;width:max-content;min-width:100%}
+.queries th,.queries td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+.queries th{position:sticky;top:0;background:var(--panel);color:var(--muted)}
+.queries .null{color:var(--muted)}.queries [data-query-error]{color:var(--bad);margin:0 0 10px;white-space:pre-wrap;font:13px ui-monospace,Consolas,monospace}

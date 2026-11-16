@@ -41,11 +41,13 @@ func TestATabletRunsAQueryOnTheDesktop(t *testing.T) {
 	const table = first + `.querySelector('[data-query-result] table')`
 	tablet.until("the rows as a table", table+` && [...`+table+`.querySelectorAll('th')].map(c=>c.textContent).join(' ')==='repo kind n' && [...`+table+`.querySelectorAll('tbody tr')].map(r=>[...r.cells].map(c=>c.textContent).join(' ')).join(', ')==='ix solution 42, ga plan 7'`)
 	tablet.until("how many rows", first+`.querySelector('[data-query-status]').textContent.startsWith('2 lignes')`)
+	tablet.evalInto(`(()=>{`+first+`.querySelector('[data-query-run]').scrollIntoView({block:'start'});return true})()`, nil)
 	tablet.screenshot("requete-executee.png")
 
 	const pipeline = `[...document.querySelectorAll('#widget-host [data-query]')].find(d=>d.querySelector('summary').textContent.startsWith('Pipeline 1:'))`
 	tablet.evalInto(`(()=>{const d=`+pipeline+`;d.querySelector('summary').click();d.querySelector('[data-query-run]').click();return true})()`, nil)
 	tablet.until("DuckDB's own error", pipeline+`.querySelector('[data-query-error]')?.textContent==='Catalog Error: Scalar Function with name ix_ndcg does not exist!'`)
+	tablet.evalInto(`(()=>{`+pipeline+`.querySelector('[data-query-run]').scrollIntoView({block:'start'});return true})()`, nil)
 	tablet.screenshot("requete-refusee.png")
 }
 

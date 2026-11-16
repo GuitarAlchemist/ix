@@ -33,6 +33,7 @@ const PATHS = {
   spark: 'M12 3l2 6l6 2l-6 2l-2 6l-2-6l-6-2l6-2zM19 3v4M17 5h4',
   database: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3s-3.6 3-8 3s-8-1.3-8-3M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
+  play: 'M7 4l13 8l-13 8z',
 };
 export const icon = name => html`<svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${svg`<path d=${PATHS[name]}></path>`}</svg>`;
 
@@ -83,12 +84,39 @@ export class IxCounter extends Block {
   }
 }
 
+// The Desktop's own refusals, by code; any other error is DuckDB's message, shown as DuckDB wrote it.
+const QUERY_CODES = ['query_timed_out', 'query_result_too_large', 'query_output_unreadable', 'query_unknown', 'queryUncertain'];
+const SHOWN_ROWS = 200;
+
 export class IxQueries extends Block {
-  static properties = {...Block.properties, entries: {attribute: false}, made: {attribute: false}, synced: {attribute: false}, copied: {state: true}};
-  constructor() { super(); this.entries = []; this.made = {}; this.copied = null; }
+  // .runQuery(source, title) runs a query on the Desktop and resolves with {rows} or {error}; absent where the Desktop
+  // runs no queries (or this device is not connected), and then there is no run button.
+  static properties = {...Block.properties, entries: {attribute: false}, made: {attribute: false}, synced: {attribute: false}, runQuery: {attribute: false}, copied: {state: true}, results: {state: true}};
+  constructor() { super(); this.entries = []; this.made = {}; this.copied = null; this.runQuery = null; this.results = {}; }
   async copy(index, sql) {
     try { await navigator.clipboard.writeText(sql); this.copied = {index, ok: true}; }
     catch { this.copied = {index, ok: false}; }
+  }
+  // One run at a time per query; the result stays under the query until it is run again.
+  async execute(index, entry) {
+    if (this.results[index]?.running) return;
+    this.results = {...this.results, [index]: {running: true}};
+    let result;
+    try { result = await this.runQuery(entry.source, entry.title); }
+    catch (error) { result = {error: QUERY_CODES.includes(error.message) ? error.message : 'queryUncertain'}; }
+    this.results = {...this.results, [index]: result};
+  }
+  outcome(index) {
+    const t = this.t, r = this.results[index];
+    if (!r) return nothing;
+    if (r.running) return html`<p class="hint" data-query-status role="status">${t('queryRunning')}</p>`;
+    if (r.error) return html`<p class="error" data-query-error role="alert">${QUERY_CODES.includes(r.error) ? t(r.error) : r.error}</p>`;
+    const rows = Array.isArray(r.rows) ? r.rows : [];
+    const columns = rows.length ? Object.keys(rows[0]) : [];
+    const cell = v => v === null || v === undefined ? html`<span class="null">NULL</span>` : typeof v === 'object' ? JSON.stringify(v) : String(v);
+    return html`<p class="hint" data-query-status role="status">${t('queryRows', {count: rows.length, ms: r.ms ?? 0})}${rows.length > SHOWN_ROWS ? ' · ' + t('queryRowsShown', {count: SHOWN_ROWS}) : ''}</p>
+      ${rows.length ? html`<div class="result"><table><thead><tr>${columns.map(c => html`<th>${c}</th>`)}</tr></thead>
+        <tbody>${rows.slice(0, SHOWN_ROWS).map(row => html`<tr>${columns.map(c => html`<td>${cell(row[c])}</td>`)}</tr>`)}</tbody></table></div>` : nothing}`;
   }
   render() {
     const t = this.t, groups = [];
@@ -107,17 +135,19 @@ export class IxQueries extends Block {
       <section data-query-source=${g.source}><h3>${g.source}</h3>${g.queries.map(({entry, index}) => html`
         <details data-query=${index}><summary>${entry.title}</summary><pre>${entry.sql}</pre>
           <div class="row"><button class="ghost" data-query-copy=${index} @click=${() => this.copy(index, entry.sql)}>${icon('copy')}<span>${t('copySQL')}</span></button>
+          ${this.runQuery ? html`<button data-query-run=${index} ?disabled=${this.results[index]?.running} @click=${() => this.execute(index, entry)}>${icon('play')}<span>${t('runOnDesktop')}</span></button>` : nothing}
           <span data-query-copied role="status">${this.copied?.index === index ? t(this.copied.ok ? 'copied' : 'copyFailed') : ''}</span></div>
+          <div data-query-result>${this.outcome(index)}</div>
         </details>`)}
       </section>`)}</div>`;
   }
 }
 
 export class IxWidget extends Block {
-  static properties = {...Block.properties, kind: {}, entries: {attribute: false}, made: {attribute: false}, synced: {attribute: false}};
+  static properties = {...Block.properties, kind: {}, entries: {attribute: false}, made: {attribute: false}, synced: {attribute: false}, runQuery: {attribute: false}};
   render() {
     const props = {x: this.x, definition: this.definition, usable: this.usable, run: this.run, t: this.t, lang: this.lang, compact: this.compact};
-    if (this.kind === 'queries') return html`<ix-queries .entries=${this.entries} .made=${this.made || {}} .synced=${this.synced || ''} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-queries>`;
+    if (this.kind === 'queries') return html`<ix-queries .entries=${this.entries} .made=${this.made || {}} .synced=${this.synced || ''} .runQuery=${this.runQuery || null} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-queries>`;
     return this.kind === 'checklist'
       ? html`<ix-checklist .x=${props.x} definition=${props.definition} ?usable=${props.usable} .run=${props.run} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-checklist>`
       : html`<ix-counter .x=${props.x} definition=${props.definition} ?usable=${props.usable} .run=${props.run} .t=${props.t} lang=${props.lang} ?compact=${props.compact}></ix-counter>`;

@@ -243,7 +243,7 @@ export class Replica {
 
 export class SyncEngine {
   /** @param {Replica} replica @param {() => void} [onChange] */
-  constructor(replica, onChange = () => {}) { this.replica = replica; this.onChange = onChange; this.status = 'notConnected'; this.deniedStatus = ''; this.running = null; this.admin = false; this.terminal = false; this.desktopVersion = ''; }
+  constructor(replica, onChange = () => {}) { this.replica = replica; this.onChange = onChange; this.status = 'notConnected'; this.deniedStatus = ''; this.running = null; this.admin = false; this.terminal = false; this.desktopVersion = ''; this.queries = false; }
   // The device the owner linked (or granted) administers the others from the app (admin.go).
   devices() { return this.api('devices'); }
   invite() { return this.api('devices/invite', {method: 'POST', body: '{}'}); }
@@ -255,6 +255,13 @@ export class SyncEngine {
   requestUpdate(version, sha256) { return this.api('updates', {method: 'POST', body: JSON.stringify({version, sha256})}); }
   // The terminal (terminal.go) runs a command on the Desktop's PC. A command is not repeatable: an uncertain reply is
   // reported as such and never sent again.
+  /**
+   * Runs a listed DuckDB query on the Desktop (queryrun.go), named by its file and title: the Desktop reads its SQL from
+   * the repo. Resolves with {sql, rows} or {sql, error}, DuckDB's own message or one of the Desktop's codes.
+   * @param {string} source @param {string} title
+   * @returns {Promise<{source: string, title: string, sql: string, rows?: Record<string, unknown>[], error?: string, ms: number}>}
+   */
+  runQuery(source, title) { return this.api('queries/run', {method: 'POST', body: JSON.stringify({source, title}), timeout: 75000}); }
   /** @param {string} command */
   runTerminal(command) {
     return this.api('terminal', {method: 'POST', body: JSON.stringify({command}), timeout: 45000})
@@ -325,6 +332,7 @@ export class SyncEngine {
       if (me.store_id !== state.storeID) throw new Error('store_changed');
       this.status = 'connected'; this.deniedStatus = ''; this.admin = me.admin === true; this.terminal = me.terminal === true;
       this.desktopVersion = typeof me.version === 'string' ? me.version : '';
+      this.queries = me.queries === true;
       if (typeof me.device?.name === 'string' && me.device.name !== state.pairedName) await this.replica.change(s => { s.pairedName = me.device.name; });
       // Nothing to press: every changed project without a conflict is queued for the Desktop.
       state = await this.replica.change(s => { for (const [id, p] of Object.entries(s.projects)) if (p.dirty && !p.conflict) enqueueInto(s, id); });
