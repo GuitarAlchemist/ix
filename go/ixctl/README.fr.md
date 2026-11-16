@@ -293,7 +293,7 @@ au plus.
 | `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
 | `POST /v1/bookmark/set` | Corps `{"bookmark": NOM, "since"?: SEQ, "epoch"?: E, "note"?: TEXTE, "peer"?: NOM}`. |
 | `POST /v1/bookmark/remove` | Corps `{"bookmark": NOM, "peer"?: NOM}`. |
-| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. `since-ahead` vaut pour un `since` au-delà de la tête qui ne nomme pas d'`epoch` ; un `since` qui nomme l'epoch de ce démarrage est cru même au-delà de la tête : ni gap ni rejeu, le flux part en direct depuis la tête. |
+| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. `exact=1` fait de `ch` le nom entier d'un canal (`svc/x` ne couvre plus `svc/x-extra`), et `live=1` envoie un `event: live` (`data: {}`, sans `id:`) une fois le rejeu fini, avant le premier événement en direct, et tout de suite sur un préfixe qui n'a rien à rejouer, comme `exact` et `live` d'un `subscribe` WebSocket ; `true` vaut `1`, toute autre valeur est lue comme absente. Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. `since-ahead` vaut pour un `since` au-delà de la tête qui ne nomme pas d'`epoch` ; un `since` qui nomme l'epoch de ce démarrage est cru même au-delà de la tête : ni gap ni rejeu, le flux part en direct depuis la tête. |
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
@@ -857,6 +857,26 @@ est `unknown`, jamais supposé démarré.
 - `listen` : si un listener tient l'adresse, lu dans la table TCP du système (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). Un bind joker (`0.0.0.0`) sur le port le
   tient aussi. Rien ne se connecte au port.
+- `ready_journal` (avec `service` et `health`, à la place de `listen`) : le journal d'hôte du
+  service, pour un hôte démarré avec `--addr 127.0.0.1:0`, dont le port change à chaque
+  démarrage. Chaque contrôle lit les 64 derniers Kio du journal, sinon du journal tourné (`.1`)
+  quand le journal courant n'en a aucune, et prend l'adresse de sa dernière ligne `host.ready`,
+  sauf si un `host.stop` final d'un hôte la suit (cet hôte a fini ; celui qui tourne n'a pas
+  encore dit prêt), et seulement quand le PID de cette ligne est le processus que le service
+  exécute maintenant et que son adresse est un `IP:port` de boucle locale ; `health` est alors un
+  chemin (`/health`) sur cette adresse, et il doit répondre l'`epoch` de la ligne, tiré à chaque
+  démarrage : un PID peut revenir après un redémarrage, l'epoch non. Une ligne d'un autre PID (un
+  démarrage précédent, un hôte qui ne s'est pas dit prêt, le journal d'un autre hôte), une adresse
+  qui n'est pas un `IP:port` de boucle locale, une ligne sans epoch, un health d'un autre epoch ou
+  un journal illisible donne `unknown`, et rien n'est sondé après le refus. L'inventaire reste le
+  même d'un redémarrage à l'autre :
+
+  ```json
+  {"name": "control", "after": ["plane"], "service": "ixctl",
+   "ready_journal": "C:\\ProgramData\\ixctl\\ixctl-trial.service.log",
+   "health": "/health", "health_expect": "\"ok\":true",
+   "health_fields": {"name": "ixctl-trial", "version": "0.1.0-ixforge.7"}}
+  ```
 - `listen_image` (Windows) : le nom de fichier que doit avoir l'exécutable du processus qui
   écoute, par exemple `delta-remote-v0.6.0-21-g2ca5e6c.exe` (sans chemin, casse ignorée) : quelle
   version est revenue. Le PID vient de la table TCP ; le processus est ouvert avec les seuls droits

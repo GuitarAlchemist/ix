@@ -135,13 +135,12 @@ func cmdUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	in, err := startInstance(spec, o.name, o.addr, o.state, o.bookmarks, &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate})
+	in, err := bootInstance(instanceOptions{spec: spec, name: o.name, addr: o.addr, stateDir: o.state, bookmarks: o.bookmarks,
+		budget:       &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate},
+		deltaJournal: o.deltaJournal, claudeBin: o.claudeBin})
 	if err != nil {
 		return err
 	}
-	// Before the ready line: no client knows the token yet, so no node can exist.
-	in.plane.SetDeltaJournal(o.deltaJournal)
-	in.plane.SetClaudeBin(o.claudeBin)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -298,19 +297,11 @@ func instanceAlive(st stateFile) bool {
 	return json.NewDecoder(resp.Body).Decode(&h) == nil && h.OK && h.Name == st.Name
 }
 
-// writeFileAtomic writes through `path.tmp` and renames. The content is the
-// state file, token included, so a failed rename does not leave the copy.
+// writeFileAtomic writes through `path.tmp` and renames (replaceFile). The content is the
+// state file, token included: a failed rename leaves the copy (mode 0600) only when it cannot
+// see the state file any more, the copy then being the only one.
 func writeFileAtomic(path string, b []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return replaceFile(path, b)
 }
 
 func defaultStateDir() string {
