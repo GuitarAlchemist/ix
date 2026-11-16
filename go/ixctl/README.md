@@ -807,7 +807,9 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
   holds it too. Nothing connects to the port.
 - `ready_journal` (with `service` and `health`, in place of `listen`): the service's host log,
   for a host started with `--addr 127.0.0.1:0`, whose port changes at each boot. Each check
-  reads the last 64 KiB of the log and takes the address from its last `host.ready` line, only
+  reads the last 64 KiB of the log, else of the rotated log (`.1`) when the current one holds
+  none, and takes the address from its last `host.ready` line, unless a host's final
+  `host.stop` follows it (that host ended; the one running now has not said ready), and only
   when that line's PID is the process the service runs now and its address is a loopback
   `IP:port`; `health` is then a path (`/health`) on that address, and it must answer the line's
   `epoch`, drawn at each boot: a PID can come back after a reboot, the epoch does not. A line

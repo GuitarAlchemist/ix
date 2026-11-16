@@ -859,8 +859,10 @@ est `unknown`, jamais supposé démarré.
   tient aussi. Rien ne se connecte au port.
 - `ready_journal` (avec `service` et `health`, à la place de `listen`) : le journal d'hôte du
   service, pour un hôte démarré avec `--addr 127.0.0.1:0`, dont le port change à chaque
-  démarrage. Chaque contrôle lit les 64 derniers Kio du journal et prend l'adresse de sa dernière
-  ligne `host.ready`, seulement quand le PID de cette ligne est le processus que le service
+  démarrage. Chaque contrôle lit les 64 derniers Kio du journal, sinon du journal tourné (`.1`)
+  quand le journal courant n'en a aucune, et prend l'adresse de sa dernière ligne `host.ready`,
+  sauf si un `host.stop` final d'un hôte la suit (cet hôte a fini ; celui qui tourne n'a pas
+  encore dit prêt), et seulement quand le PID de cette ligne est le processus que le service
   exécute maintenant et que son adresse est un `IP:port` de boucle locale ; `health` est alors un
   chemin (`/health`) sur cette adresse, et il doit répondre l'`epoch` de la ligne, tiré à chaque
   démarrage : un PID peut revenir après un redémarrage, l'epoch non. Une ligne d'un autre PID (un
