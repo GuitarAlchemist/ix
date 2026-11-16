@@ -236,7 +236,7 @@ func TestAPeerFrameWithoutProvenanceEndsTheSession(t *testing.T) {
 		{Ch: "svc/x", Seq: 0, Epoch: "b0b0b0b0b0b0", Origin: "b", Ev: Event{Kind: "stats"}},
 		{Ch: "svc/x", Seq: 7, Epoch: "", Origin: "b", Ev: Event{Kind: "stats"}},
 	} {
-		err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: env}})
+		err := applyT(l, context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: env}})
 		drain()
 		if err == nil || !strings.Contains(err.Error(), "provenance") {
 			t.Fatalf("frame seq %d epoch %q: %v, want a provenance error", env.Seq, env.Epoch, err)
@@ -246,7 +246,7 @@ func TestAPeerFrameWithoutProvenanceEndsTheSession(t *testing.T) {
 		t.Fatalf("%d envelopes mirrored from malformed frames", l.hub.Head())
 	}
 	good := &Envelope{Ch: "svc/x", Seq: 7, Epoch: "b0b0b0b0b0b0", Origin: "b", Ev: Event{Kind: "stats"}}
-	err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: good}})
+	err := applyT(l, context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: good}})
 	drain()
 	if err != nil || l.hub.Head() != 1 {
 		t.Fatalf("a well-formed frame: %v, head %d", err, l.hub.Head())
@@ -266,7 +266,7 @@ func TestAPeerFrameWithMalformedRunEndsTheSession(t *testing.T) {
 			Ch: "svc/x", Seq: 7, Epoch: "source-boot", Origin: "b",
 			Run: &run, Ev: Event{Kind: "stats"},
 		}
-		err := l.mirror(1, "b", "svc/", env)
+		err := mirrorT(l, 1, "b", "svc/", env)
 		if err == nil || !strings.Contains(err.Error(), "malformed run") {
 			t.Fatalf("run %+v: %v, want malformed run error", run, err)
 		}
@@ -274,7 +274,7 @@ func TestAPeerFrameWithMalformedRunEndsTheSession(t *testing.T) {
 	if l.hub.Head() != 0 {
 		t.Fatalf("%d envelopes mirrored from malformed runs", l.hub.Head())
 	}
-	if err := l.mirror(1, "b", "svc/", &Envelope{
+	if err := mirrorT(l, 1, "b", "svc/", &Envelope{
 		Ch: "svc/x", Seq: 8, Epoch: "source-boot", Origin: "b", Ev: Event{Kind: "stats"},
 	}); err != nil || l.hub.Head() != 1 {
 		t.Fatalf("an older frame without run: %v, head %d", err, l.hub.Head())

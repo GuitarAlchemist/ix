@@ -226,19 +226,19 @@ func TestDegradedIsLiftedOnlyWhenLiveAndReconciled(t *testing.T) {
 	want("down", false, false, true, 0)
 	set(func() { l.up = true })
 	want("up, both catching up", false, false, true, 0)
-	set(func() { l.ctl["ctl"].live = true })
+	set(func() { sessOf(l).ctl["ctl"].live = true })
 	want("svc/ still catching up", false, false, true, 0)
-	set(func() { l.ctl["svc/"].live = true })
+	set(func() { sessOf(l).ctl["svc/"].live = true })
 	want("live, list not applied", true, false, true, 0)
-	set(func() { l.listed = true; l.pipes["cpu"].state = pipeOpening })
+	set(func() { sessOf(l).listed = true; sessOf(l).pipes["cpu"].state = pipeOpening })
 	want("live, a pipe opening", true, false, true, 0)
-	set(func() { l.pipes["cpu"].state = pipeMirrored })
+	set(func() { sessOf(l).pipes["cpu"].state = pipeMirrored })
 	want("live and reconciled", true, true, false, 0)
-	set(func() { l.pipes["cpu"].state = pipeNotExportable })
+	set(func() { sessOf(l).pipes["cpu"].state = pipeNotExportable })
 	want("a declined pipe is reconciled", true, true, false, 0)
-	set(func() { l.ctl["svc/"].live = false; l.jumps = 1 })
+	set(func() { sessOf(l).ctl["svc/"].live = false; l.jumps = 1 })
 	want("catching up again after a jump", false, true, true, 1)
-	set(func() { l.ctl["svc/"].live = true; l.up = false })
+	set(func() { sessOf(l).ctl["svc/"].live = true; l.up = false })
 	want("down again", false, false, true, 1)
 }
 
@@ -347,17 +347,17 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	}
 	l.allowFrames.Store(0) // no catch-up may begin from now on
 	l.mu.Lock()
-	c, sub := l.client, l.ctl["svc/"].sub
+	c, sub := sessOf(l).client, sessOf(l).ctl["svc/"].sub
 	l.mu.Unlock()
 	merged := make(chan peerFrame, 64)
 	fail := make(chan error, 1)
 	reopen := func(prefix string, sub int64) int64 {
 		t.Helper()
-		l.reopenControl(ctx, c, nil, merged, fail, peerFrame{prefix: prefix, sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
+		reopenControlT(l, ctx, c, nil, merged, fail, peerFrame{prefix: prefix, sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			l.mu.Lock()
-			now := l.ctl[prefix].sub
+			now := sessOf(l).ctl[prefix].sub
 			l.mu.Unlock()
 			if now != 0 && now != sub {
 				return now
@@ -403,7 +403,7 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	// around the publish only narrowed the window, this is the happens-before edge.
 	standDown := func(prefix string, sub int64) int64 {
 		l.mu.Lock()
-		l.ctl[prefix].sub = -1
+		sessOf(l).ctl[prefix].sub = -1
 		l.mu.Unlock()
 		c.forget(sub)
 		return -1
@@ -427,7 +427,7 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	state := func() (int64, bool, uint64) {
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		return l.ctl["ctl"].sub, l.listed, l.unlisted
+		return sessOf(l).ctl["ctl"].sub, sessOf(l).listed, l.unlisted
 	}
 	ctlSub, listed0, gen0 := state()
 	if !listed0 {

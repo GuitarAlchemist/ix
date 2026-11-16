@@ -120,12 +120,12 @@ func TestANewInstanceNamesNoBootUntilRead(t *testing.T) {
 	l.last["probe/cpu"] = srcPoint{39, "aaaaaaaaaaaa"}
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 
-	since, _, sess := l.beginSession("t2")
+	since, _, sess := beginSessionT(l, "t2")
 	if len(since) != 0 {
 		t.Fatalf("a new instance resumed from %v", since)
 	}
 	l.mu.Lock()
-	l.markLiveStartLocked("probe/cpu")
+	markLiveStartLockedT(l, "probe/cpu")
 	l.mu.Unlock()
 	g := gapOf(t, nextEnv(t, cur))
 	if g.Reason != "live-start" || g.SrcEpoch != "" || g.LastSrcSeq != 39 || g.LastSrcEpoch != "aaaaaaaaaaaa" {
@@ -133,16 +133,16 @@ func TestANewInstanceNamesNoBootUntilRead(t *testing.T) {
 	}
 
 	// An older session's late status cannot regress the boot or mark anything.
-	l.setServices(sess-1, json.RawMessage(`{"services":[],"epoch":"aaaaaaaaaaaa"}`))
-	l.noteBoot(sess, "bbbbbbbbbbbb")
+	setServicesT(l, sess-1, json.RawMessage(`{"services":[],"epoch":"aaaaaaaaaaaa"}`))
+	noteBootT(l, sess, "bbbbbbbbbbbb")
 	b := gapOf(t, nextEnv(t, cur))
 	if b.Reason != "epoch-changed" || b.SrcEpoch != "bbbbbbbbbbbb" || b.LastSrcEpoch != "aaaaaaaaaaaa" {
 		t.Fatalf("boundary: %+v", b)
 	}
-	l.setServices(sess-1, json.RawMessage(`{"services":[],"epoch":"aaaaaaaaaaaa"}`))
-	l.noteBoot(sess, "bbbbbbbbbbbb")
+	setServicesT(l, sess-1, json.RawMessage(`{"services":[],"epoch":"aaaaaaaaaaaa"}`))
+	noteBootT(l, sess, "bbbbbbbbbbbb")
 	l.mu.Lock()
-	l.markLiveStartLocked("probe/cpu")
+	markLiveStartLockedT(l, "probe/cpu")
 	boot := l.boot
 	l.mu.Unlock()
 	if boot != "bbbbbbbbbbbb" {
@@ -169,7 +169,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		{"svc/", Gap{Reason: "epoch-changed", From: 1, Oldest: 1, Epoch: "c1c1c1c1c1c1"}},
 	} {
 		gap := tc.gap
-		if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
+		if err := applyT(l, context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
 			t.Fatalf("%s %s: %v", tc.prefix, tc.gap.Reason, err)
 		}
 		e := nextEnv(t, cur)
@@ -179,7 +179,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		}
 	}
 	over := Gap{Reason: "overflow", From: 9}
-	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+	if err := applyT(l, context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
 		t.Fatalf("overflow of no subscription of ours: %v, want the session to end", err)
 	}
 }
@@ -208,7 +208,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	frame := func(seq uint64, epoch string) peerFrame {
 		return peerFrame{prefix: "svc/", f: Frame{Env: &Envelope{Ch: "svc/x", Seq: seq, Epoch: epoch, Origin: "b", Ev: Event{Kind: "stats"}}}}
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
+	if err := applyT(l, context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	g := gapOf(t, nextEnv(t, cur))
@@ -218,7 +218,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	if e := nextEnv(t, cur); e.Ch != "peer/b/svc/x" || e.SrcEpoch != "bbbbbbbbbbbb" {
 		t.Fatalf("after the boundary: %s", e.Raw())
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
+	if err := applyT(l, context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	if e := nextEnv(t, cur); e.Ev.Kind != "stats" {
