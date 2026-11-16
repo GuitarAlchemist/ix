@@ -20,8 +20,8 @@
 use std::collections::BTreeMap;
 
 use ix_origami::{
-    analyse_within, stack, swap_census_within, Checked, Context, Fold, Limits, Report, Rule,
-    Sequence, SequenceError, Unchecked,
+    assess, AssessError, Assessment, CensusRow, Checked, Fold, Limits, Options, Rule, Sequence,
+    SequenceError, Unchecked,
 };
 use ix_tool_macros::ix_tool;
 use serde_json::{json, Value};
@@ -144,14 +144,18 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
             (fold, Some(sequence))
         }
     };
-    let report = match analyse_within(&fold, &LIMITS) {
-        Ok(r) => Ok(r),
-        Err(Unchecked::Structure(problems)) => Err(problems),
-        Err(Unchecked::OverLimit(e)) => return Err(refused(&e)),
+    let assessed = match assess(&fold, &LIMITS, &Options { thickness, census }) {
+        Ok(a) => Ok(a),
+        Err(AssessError::Unchecked(Unchecked::Structure(problems))) => Err(problems),
+        Err(AssessError::Unchecked(Unchecked::OverLimit(e))) => return Err(refused(&e)),
+        Err(AssessError::Thickness(e)) => return Err(e.to_string()),
     };
-    let sequence = sequence.map(|s| sequence_answer(&s, &s.answer(fold.clone(), report.clone())));
-    let report: Report = match report {
-        Ok(r) => r,
+    let sequence = sequence.map(|s| {
+        let report = assessed.as_ref().map(|a| a.report.clone()).map_err(Clone::clone);
+        sequence_answer(&s, &s.answer(fold.clone(), report))
+    });
+    let assessed: Assessment = match assessed {
+        Ok(a) => a,
         Err(problems) => {
             let mut out = json!({ "ok": false, "structure": problems });
             if let Some(s) = sequence {
@@ -160,19 +164,17 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
             return Ok(out);
         }
     };
-    let mut out = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+    let mut out = serde_json::to_value(&assessed.report).map_err(|e| e.to_string())?;
     out["structure"] = json!([]);
     if let Some(s) = sequence {
         out["sequence"] = s;
     }
-    if census {
-        out["census"] = census_tally(&fold)?;
+    if let Some(rows) = &assessed.census {
+        out["census"] = census_tally(rows);
     }
-    if let Some(t) = thickness {
-        let ctx = Context::within(&fold, &LIMITS).map_err(|e| refused(&e))?;
-        let stack = stack(&ctx, t).map_err(|e| e.to_string())?;
-        let mut v = serde_json::to_value(&stack).map_err(|e| e.to_string())?;
-        v["rigid"]["ok"] = json!(report.ok && !stack.rigid.refused);
+    if let Some(stack) = &assessed.stack {
+        let mut v = serde_json::to_value(stack).map_err(|e| e.to_string())?;
+        v["rigid"]["ok"] = json!(assessed.rigid_ok() == Some(true));
         out["thickness"] = v;
     }
     Ok(out)
@@ -209,11 +211,9 @@ fn refused(e: &dyn std::fmt::Display) -> String {
     format!("refused, not checked: {e} (the limits of this tool)")
 }
 
-fn census_tally(fold: &Fold) -> Result<Value, String> {
-    let ctx = Context::within(fold, &LIMITS).map_err(|e| refused(&e))?;
-    let rows = swap_census_within(fold, &ctx, &LIMITS).map_err(|e| refused(&e))?;
+fn census_tally(rows: &[CensusRow]) -> Value {
     let mut by_rules: BTreeMap<String, usize> = BTreeMap::new();
-    for row in &rows {
+    for row in rows {
         let rules: Vec<String> = row.rejected_by.iter().map(|&r| rule_name(r)).collect();
         let kind = if row.adjacent {
             "adjacent"
@@ -232,12 +232,12 @@ fn census_tally(fold: &Fold) -> Result<Value, String> {
         .filter(|r| r.rejected_by.is_empty())
         .map(|r| r.pair)
         .collect();
-    Ok(json!({
+    json!({
         "pairs": rows.len(),
         "rejected": rows.len() - accepted.len(),
         "accepted": accepted,
         "by_rules": by_rules,
-    }))
+    })
 }
 
 fn rule_name(rule: Rule) -> String {
