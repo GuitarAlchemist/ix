@@ -8,17 +8,26 @@ import (
 	"time"
 )
 
-// replaceError says at which stage replaceFile failed: "temp" (writing or syncing the new
-// content beside the file: the file is as it was) or "rename" (the replace itself: the file is
-// as it was, unless the rename went through and only its answer was lost, or removed the file
-// and then failed, which only the temp then holds).
+// replaceError says at which stage replaceFile failed: stageTemp (writing or syncing the new
+// content beside the file: the file is as it was) or stageRename (the replace itself: the file
+// is as it was, unless the rename went through and only its answer was lost, or removed the
+// file and then failed, which only the temp then holds).
 type replaceError struct {
 	stage string
 	err   error
 }
 
+const (
+	stageTemp   = "temp"
+	stageRename = "rename"
+)
+
 func (e *replaceError) Error() string { return e.err.Error() }
 func (e *replaceError) Unwrap() error { return e.err }
+
+// tempOf is the file a replace of path writes first: a reader that finds it without path
+// beside it is looking at a replace that removed the file and then failed.
+func tempOf(path string) string { return path + ".tmp" }
 
 // fileOps is what a replace needs from the file system: sync makes a file's content durable,
 // rename replaces one file with another. replaceFile uses the OS's; a test builds its own value
@@ -45,10 +54,10 @@ func replaceFile(path string, b []byte) error {
 
 // replace is replaceFile with these file operations.
 func (o fileOps) replace(path string, b []byte) error {
-	tmp := path + ".tmp"
+	tmp := tempOf(path)
 	if err := o.writeSynced(tmp, b); err != nil {
 		os.Remove(tmp)
-		return &replaceError{"temp", err}
+		return &replaceError{stageTemp, err}
 	}
 	if err := o.renameOver(tmp, path); err != nil {
 		// A rename may remove path, then fail (os.Rename promises no atomicity off Unix): the
@@ -56,7 +65,7 @@ func (o fileOps) replace(path string, b []byte) error {
 		if _, serr := os.Stat(path); serr == nil {
 			os.Remove(tmp)
 		}
-		return &replaceError{"rename", err}
+		return &replaceError{stageRename, err}
 	}
 	return nil
 }
