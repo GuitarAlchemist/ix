@@ -267,7 +267,7 @@ func TestInstalledConfigurationPreservesPathsAndSurvivesInstanceState(t *testing
 		t.Fatal(err)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		inst, err := startInstance(got, "", "127.0.0.1:0", state, "memory", nil)
+		inst, err := bootInstance(instanceOptions{spec: got, addr: "127.0.0.1:0", stateDir: state, bookmarks: "memory"})
 		if err != nil {
 			t.Fatal(err)
 		}
