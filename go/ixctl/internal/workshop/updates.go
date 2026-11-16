@@ -66,6 +66,7 @@ type Option func(*handlerOptions)
 
 type handlerOptions struct {
 	updates *Updates
+	queries *QueryRunner
 	version string
 }
 

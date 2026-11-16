@@ -74,6 +74,9 @@ func Handler(s *Store, origin string, opts ...Option) (http.Handler, error) {
 			return
 		}
 		me := map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected", "admin": d.Admin, "terminal": d.Terminal}
+		if o.queries != nil {
+			me["queries"] = true
+		}
 		if o.version != "" {
 			me["version"] = o.version
 		}
@@ -174,6 +177,9 @@ func Handler(s *Store, origin string, opts ...Option) (http.Handler, error) {
 		}
 		respond(w, http.StatusOK, changes)
 	})
+	if o.queries != nil {
+		queryRoutes(mux, s, o.queries)
+	}
 	if o.updates != nil {
 		updateRoutes(mux, s, o.updates)
 	}
