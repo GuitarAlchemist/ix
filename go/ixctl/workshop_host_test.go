@@ -233,3 +233,43 @@ func prepareWorkshopFixture(t *testing.T, dir, name string) {
 		t.Fatal(err)
 	}
 }
+
+// TestTheDesktopRunsQueriesOnlyWhereTheOwnerNamedThem: the listed queries run on the Desktop only once the owner has
+// written %ProgramData%\IxForge\queries.json, naming the ix repo and the duckdb executable, both existing absolute paths.
+// Without the file, or with a path that is not there, the Desktop offers no queries.
+func TestTheDesktopRunsQueriesOnlyWhereTheOwnerNamedThem(t *testing.T) {
+	data := t.TempDir()
+	repo := t.TempDir()
+	exe := filepath.Join(t.TempDir(), "duckdb.exe")
+	if err := os.WriteFile(exe, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if r := workshopQueries(data); r != nil {
+		t.Fatalf("no file, no queries: %+v", r)
+	}
+	write := func(v any) {
+		raw, _ := json.Marshal(v)
+		if err := os.MkdirAll(filepath.Join(data, "IxForge"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(data, "IxForge", "queries.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bad := range []map[string]string{
+		{"repo": repo},
+		{"repo": "relative", "duckdb": exe},
+		{"repo": filepath.Join(repo, "missing"), "duckdb": exe},
+		{"repo": repo, "duckdb": filepath.Join(repo, "missing.exe")},
+	} {
+		write(bad)
+		if r := workshopQueries(data); r != nil {
+			t.Fatalf("%v must offer no queries: %+v", bad, r)
+		}
+	}
+	write(map[string]string{"repo": repo, "duckdb": exe})
+	r := workshopQueries(data)
+	if r == nil || r.Repo != repo || r.DuckDB != exe || strings.Join(r.Files, ",") != strings.Join(workshop.DefaultQueryFiles, ",") {
+		t.Fatalf("the named repo and duckdb run the default query files: %+v", r)
+	}
+}
