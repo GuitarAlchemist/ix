@@ -165,20 +165,20 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 	defer bound.Stop()
 	checkpoint := uint32(1)
 	set(hostStatus{State: hostStopPending, Checkpoint: checkpoint, WaitHint: o.stopTimeout})
-	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "requested", "source": source}))
-	log.event("host.stop", map[string]any{"phase": "requested", "source": source})
+	in.plane.Publish("ctl", event(hostStopEvent, map[string]any{"phase": stopRequested, "source": source}))
+	log.stop(stopRequested, source, nil)
 	in.plane.RequestShutdown()
 	in.workshop.stopAccepting()
-	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "received", "source": source}))
-	log.event("host.stop", map[string]any{"phase": "received", "source": source})
+	in.plane.Publish("ctl", event(hostStopEvent, map[string]any{"phase": stopReceived, "source": source}))
+	log.stop(stopReceived, source, nil)
 
 	closed := make(chan struct{})
 	go func() { closeIn(in); close(closed) }()
 	tick := time.NewTicker(hostTick)
 	defer tick.Stop()
 	unobserved := func(fields map[string]any) uint32 {
-		fields["phase"], fields["source"], fields["ms"] = "unobserved", source, time.Since(t0).Milliseconds()
-		log.event("host.stop", fields)
+		fields["ms"] = time.Since(t0).Milliseconds()
+		log.stop(stopUnobserved, source, fields)
 		return stopped(exitStopUnobserved)
 	}
 	for {
@@ -192,7 +192,7 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 			if time.Now().After(deadline) {
 				return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
 			}
-			log.event("host.stop", map[string]any{"phase": "observed", "source": source, "ms": time.Since(t0).Milliseconds()})
+			log.stop(stopObserved, source, map[string]any{"ms": time.Since(t0).Milliseconds()})
 			return stopped(exitOK)
 		case <-bound.C:
 			return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
