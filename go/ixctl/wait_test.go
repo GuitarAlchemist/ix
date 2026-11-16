@@ -268,7 +268,7 @@ func TestRunWaitFallsBackToRecentExitsAfterADeterministicGap(t *testing.T) {
 	}
 	head := in.plane.hub.Head()
 	cur := in.plane.hub.Subscribe("svc/gapped", &head, applied.Epoch)
-	cur.exact = true
+	cur.exactly()
 	do(t, c, Request{Op: "stop", Service: "gapped"})
 	for i := 0; i < ringSize+1; i++ {
 		in.plane.Publish("ctl", event("noise", map[string]any{"i": i}))

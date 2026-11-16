@@ -47,7 +47,9 @@ type subscriber interface {
 
 func openSubscription(b subscriber, r subRequest) *subscription {
 	cur := b.Subscribe(r.prefix, r.since, r.epoch)
-	cur.exact = r.exact // Broker.Subscribe takes no exact: the subscription is where it is set
+	if r.exact {
+		cur.exactly() // Subscribe takes a prefix only: the subscription is where it is made exact
+	}
 	return &subscription{cur: cur, head: cur.Head(), told: !r.live, markers: r.markers}
 }
 
@@ -63,7 +65,7 @@ func (s *subscription) Epoch() string { return s.cur.Epoch() }
 // this replaces also waited while the cursor held a stale gap; the cursor clears it before
 // returning anything, so it is always nil here.
 func (s *subscription) liveDue() bool {
-	if s.told || s.cur.next <= s.head {
+	if s.told || !s.cur.past(s.head) {
 		return false
 	}
 	s.told = true
