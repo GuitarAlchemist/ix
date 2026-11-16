@@ -23,6 +23,31 @@ type hostReady struct {
 
 const hostReadyEvent = "host.ready"
 
+// hostStopEvent is the line a host writes at each phase of its stop: requested and received as
+// the stop begins, then one final phase, observed (every tree seen gone within the bound) or
+// unobserved (not). A host writes nothing after its final phase: the reader of the ready line
+// (lastReady) takes a final stop as that host's end.
+const (
+	hostStopEvent  = "host.stop"
+	stopRequested  = "requested"
+	stopReceived   = "received"
+	stopObserved   = "observed"
+	stopUnobserved = "unobserved"
+)
+
+// finalStop says whether a stop phase is a host's last line.
+func finalStop(phase string) bool { return phase == stopObserved || phase == stopUnobserved }
+
+// stop writes a host.stop line: fields, with phase and source set in it (the map is the caller's
+// no more: stop writes into it).
+func (l *hostLog) stop(phase, source string, fields map[string]any) {
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["phase"], fields["source"] = phase, source
+	l.event(hostStopEvent, fields)
+}
+
 // ready writes r as the host's host.ready line, stamped with the time.
 func (l *hostLog) ready(r hostReady) {
 	r.Event, r.T = hostReadyEvent, time.Now().UnixMilli()
@@ -77,7 +102,7 @@ func lastReadyIn(tail []byte) (r hostReady, decided, ok bool) {
 		switch {
 		case l.Event == hostReadyEvent:
 			return l.hostReady, true, true
-		case l.Event == "host.stop" && (l.Phase == "observed" || l.Phase == "unobserved"):
+		case l.Event == hostStopEvent && finalStop(l.Phase):
 			return hostReady{}, true, false
 		}
 	}
