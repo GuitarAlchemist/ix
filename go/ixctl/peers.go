@@ -69,13 +69,14 @@ type peerLink struct {
 
 	// replay is what is left of the allowance (frames and bytes) and when it was last refilled;
 	// allowFrames and allowBytes its capacity: replayAllowFrames / replayAllowBytes, set lower by
-	// tests; allowFor the longest one catch-up may last, in nanoseconds: replayFor, set lower by
-	// tests.
+	// tests. now is the allowance's clock, read for its refill and for how long a catch-up has
+	// lasted (replayFor at most): time.Now, which a test steps instead of waiting.
 	replay struct {
 		frames, bytes float64
 		at            time.Time
 	}
-	allowFrames, allowBytes, allowFor atomic.Int64
+	allowFrames, allowBytes atomic.Int64
+	now                     func() time.Time
 
 	// pipeDelay and ctlDelay are test knobs: nanoseconds the mirroring loop spends on each pipe
 	// frame, or on each control frame, a durably slow parent (zero in production).
@@ -211,8 +212,8 @@ func newPeerLink(spec PeerSpec, hub *Hub) *peerLink {
 	l.latest = l.newState()
 	l.allowFrames.Store(replayAllowFrames)
 	l.allowBytes.Store(replayAllowBytes)
-	l.allowFor.Store(int64(replayFor))
-	l.replay.frames, l.replay.bytes, l.replay.at = replayAllowFrames, replayAllowBytes, time.Now()
+	l.now = time.Now
+	l.replay.frames, l.replay.bytes, l.replay.at = replayAllowFrames, replayAllowBytes, l.now()
 	l.connect = l.dialWS
 	return l
 }
@@ -726,7 +727,7 @@ func (s *linkSession) openControl(prefix string, since *uint64, epoch string, ge
 		cancel()
 		return nil
 	}
-	cs.sub, cs.live, cs.runMarkers, cs.since = sub.ID, since == nil, sub.Markers == runMarkers, time.Now()
+	cs.sub, cs.live, cs.runMarkers, cs.since = sub.ID, since == nil, sub.Markers == runMarkers, l.now()
 	if from, had := l.since[prefix]; jump && had && from == sub.Head && sub.Epoch == l.epoch {
 		jump = false // the live subscription starts where the mirror stopped: nothing skipped
 	}
@@ -939,7 +940,7 @@ func (s *linkSession) setLive(prefix string, sub int64) {
 // refillLocked tops the allowance up with the share of its capacity the time since the last
 // refill earns (a full capacity per replayRefill), to the capacity at most. Called with l.mu held.
 func (l *peerLink) refillLocked() {
-	now := time.Now()
+	now := l.now()
 	capF, capB := float64(l.allowFrames.Load()), float64(l.allowBytes.Load())
 	share := now.Sub(l.replay.at).Seconds() / replayRefill.Seconds()
 	l.replay.frames = math.Min(capF, l.replay.frames+capF*share)
@@ -968,7 +969,7 @@ func (s *linkSession) grantReplay(prefix string, sub int64, bytes int) bool {
 	if sub == 0 || cs == nil || cs.sub != sub || cs.live {
 		return true
 	}
-	if time.Since(cs.since) > time.Duration(l.allowFor.Load()) {
+	if l.now().Sub(cs.since) > replayFor {
 		return false
 	}
 	l.refillLocked()

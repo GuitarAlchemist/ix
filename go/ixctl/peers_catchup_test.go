@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -456,17 +457,19 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 }
 
 // Criterion 7 of ix#408, the bound in time (D4 ix#402 Q7: the one replay is "bounded in duration
-// and volume"): a catch-up that lasts past the link's time bound is given up although the
-// allowance in frames and bytes is far from spent. The parent spends 5 ms on every control frame
-// and may catch up for 100 ms (the test knob; 30 s in production): of the 300 frames the peer
-// kept, it replays the few that fit, then jumps, marked on the mirrored ctl from the last seq it
-// mirrored to the head its live subscription starts from, dated; it is live and reconciled again
-// at once, and what the peer publishes next crosses.
+// and volume"): a catch-up that lasts past the link's time bound (replayFor) is given up although
+// the allowance in frames and bytes is far from spent. The allowance's clock moves on by a
+// hundredth of the bound each time the link reads it (twice per control frame it charges): of the
+// 300 frames the peer kept, the link replays the few that fit, then jumps, marked on the mirrored
+// ctl from the last seq it mirrored to the head its live subscription starts from, dated; it is
+// live and reconciled again at once, and what the peer publishes next crosses.
 func TestACatchUpPastItsTimeBoundJumpsWithAllowanceLeft(t *testing.T) {
 	dirB := t.TempDir()
 	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
 	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json")}, NewHub("a"))
-	l.allowFor.Store(int64(100 * time.Millisecond))
+	var ticks atomic.Int64
+	start := time.Now()
+	l.now = func() time.Time { return start.Add(time.Duration(ticks.Add(1)) * (replayFor / 100)) }
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	go l.run(ctx1)
@@ -485,7 +488,6 @@ func TestACatchUpPastItsTimeBoundJumpsWithAllowanceLeft(t *testing.T) {
 		b.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
 	}
 	head := b.plane.hub.Head()
-	l.ctlDelay.Store(int64(5 * time.Millisecond))
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 	t0 := time.Now()
@@ -522,7 +524,6 @@ func TestACatchUpPastItsTimeBoundJumpsWithAllowanceLeft(t *testing.T) {
 	}
 	t.Logf("%d of %d frames replayed, then the jump %s after the reattach, %.0f frames of allowance left", replayed, burst, took, left)
 
-	l.ctlDelay.Store(0)
 	st := waitLinkStatus(t, l, func(st PeerStatus) bool { return st.Live && st.Reconciled && !st.Degraded })
 	if st.Jumps != 1 {
 		t.Fatalf("status after the jump: %+v, want one jump counted", st)
