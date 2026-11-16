@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// result is resultLocked under the ledger's lock: a test's read of one generation's outcome now.
+// Production's one reader is wait, which reads it with the change channel under one lock.
+func (l *genLedger) result(g uint64) (WaitReply, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.resultLocked(g)
+}
+
 // Generations end in any order; the settled frontier moves only past an unbroken run of ended
 // ones, and each one's result is its own.
 func TestTheLedgerSettlesOnlyAnUnbrokenRun(t *testing.T) {
