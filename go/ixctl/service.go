@@ -105,8 +105,10 @@ func (l *hostLog) event(kind string, fields map[string]any) {
 // reporting stopped.
 //
 // A stop has three moments: requested (the control reached the host), received (the plane
-// admits nothing more), observed (every tree is gone). The first two go on ctl, before any
-// service stops; the third goes to the log, since the journal is closed by then.
+// admits nothing more), then a final one: observed (every tree seen gone within the bound) or
+// unobserved (not). The first two go on ctl, before any service stops, and to the log; the
+// final one goes to the log only, since the journal is closed by then (hostLog.stop writes
+// each).
 func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)) uint32 {
 	log := &hostLog{w: o.log}
 	if o.stopTimeout <= 0 {

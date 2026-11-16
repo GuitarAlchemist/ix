@@ -38,7 +38,8 @@ const (
 // finalStop says whether a stop phase is a host's last line.
 func finalStop(phase string) bool { return phase == stopObserved || phase == stopUnobserved }
 
-// stop writes a host.stop line: its phase, the stop's source, and fields (which it may add to).
+// stop writes a host.stop line: fields, with phase and source set in it (the map is the caller's
+// no more: stop writes into it).
 func (l *hostLog) stop(phase, source string, fields map[string]any) {
 	if fields == nil {
 		fields = map[string]any{}

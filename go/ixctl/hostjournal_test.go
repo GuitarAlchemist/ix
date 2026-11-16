@@ -114,12 +114,13 @@ func TestTheHostsReadyLineKeepsItsBytes(t *testing.T) {
 
 // The stop lines, as the host's own writer emits them, are what the reader of its ready line
 // takes as its end: a final phase (observed, unobserved) ends it, a phase in progress does not.
-// Each line keeps the bytes the map wrote before hostLog.stop.
+// Each line keeps the bytes hostLog.event wrote before hostLog.stop. The phases are literals
+// here, not the constants, so a renamed phase goes red.
 func TestTheHostsStopLinesEndItsReadyLineOnlyWhenFinal(t *testing.T) {
 	for _, c := range []struct {
 		phase string
 		final bool
-	}{{stopRequested, false}, {stopReceived, false}, {stopObserved, true}, {stopUnobserved, true}} {
+	}{{"requested", false}, {"received", false}, {"observed", true}, {"unobserved", true}} {
 		var buf bytes.Buffer
 		l := &hostLog{w: &buf}
 		l.ready(hostReady{Name: "n", Addr: "127.0.0.1:59762", Pid: 4242, Epoch: "e"})
