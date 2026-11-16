@@ -14,7 +14,7 @@ const sessionQueue = 256
 
 // session is the ixctl.v1 protocol over any duplex frame transport: the
 // transport feeds it client frames with Handle and writes what comes out of
-// Out. WebSocket is one such transport; the in-memory adapter is another.
+// Out. WebSocket is one such transport; the in-memory adapter (frames_mem_test.go) is another.
 type session struct {
 	b      Broker
 	out    chan []byte
@@ -42,11 +42,6 @@ type subEntry struct {
 func newSession(parent context.Context, b Broker, queue int) *session {
 	ctx, cancel := context.WithCancel(parent)
 	return &session{b: b, out: make(chan []byte, queue), ctx: ctx, cancel: cancel, subs: map[int64]*subEntry{}}
-}
-
-// newMemSession is the in-memory adapter: the caller is the transport.
-func newMemSession(parent context.Context, b Broker) *session {
-	return newSession(parent, b, sessionQueue)
 }
 
 // Out carries every frame for the client, in the order it must be written.
