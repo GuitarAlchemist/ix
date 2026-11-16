@@ -341,8 +341,8 @@ async function boot() {
   };
   const linkThisPC = () => act(async () => {
     const state = await replica.read();
-    if (state.token) throw new Error('access_already_present');
-    await engine.pair($('pair-code').value.trim(), (state.deviceName || '').trim() || 'PC');
+    // The owner's link is the owner's approval: it replaces an access the Desktop revoked or refused, never one that works.
+    await engine.pair($('pair-code').value.trim(), (state.deviceName || '').trim() || 'PC', true);
     $('pair-code').value = '';
   });
   const linking = takePairing();
