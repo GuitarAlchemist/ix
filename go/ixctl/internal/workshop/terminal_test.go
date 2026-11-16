@@ -2,12 +2,19 @@ package workshop
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func sameDir(a, b string) bool {
+	x, errA := os.Stat(a)
+	y, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(x, y)
+}
 
 type terminalReply struct {
 	Output    string `json:"output"`
@@ -82,7 +89,9 @@ func TestTheTerminalRunsOnlyWhereTheOwnerAllowedIt(t *testing.T) {
 	if code, reply, body := run(pcToken, "Write-Output ('bon'+'jour é'); exit 3"); code != 200 || strings.TrimSpace(reply.Output) != "bonjour é" || reply.ExitCode != 3 || reply.TimedOut {
 		t.Fatalf("the PC runs a command and sees its output and exit code: %d %s", code, body)
 	}
-	if code, reply, body := run(pcToken, "(Get-Location).Path"); code != 200 || !strings.EqualFold(strings.TrimSpace(reply.Output), filepath.Join(dir, "terminal")) {
+	// Compare folders, not spellings: t.TempDir() may be an 8.3 short path (C:\Users\RUNNER~1 on GitHub's runners) that
+	// PowerShell reports in its long form.
+	if code, reply, body := run(pcToken, "(Get-Location).Path"); code != 200 || !sameDir(strings.TrimSpace(reply.Output), filepath.Join(dir, "terminal")) {
 		t.Fatalf("commands run in the terminal's own folder: %d %s", code, body)
 	}
 	s.terminalTimeout = 4 * time.Second
