@@ -130,10 +130,20 @@ func TestEveryOpOfTheTableIsRelayedOrRefusedByName(t *testing.T) {
 		"shutdown status stop wait" {
 		t.Errorf("op table: %s", got)
 	}
+	// The ops that hand a request on themselves, once their own checks pass: the wait alone.
+	var own []string
+	for name, op := range planeOps {
+		if op.ownsPeer {
+			own = append(own, name)
+		}
+	}
+	if got := strings.Join(own, " "); got != "wait" {
+		t.Errorf("ops that own their peer: %q, want wait", got)
+	}
 	// The link was never started, so a relayed op reaches forward's peer and finds it down.
 	for name, op := range planeOps {
-		if name == "wait" {
-			continue // a wait names its peer by its origin and is routed by Wait, not forward
+		if op.ownsPeer {
+			continue // its run checks the request first, then relays (Plane.Wait)
 		}
 		_, err := a.Request(t.Context(), Request{Op: name, Peer: "b"})
 		want := "op \"" + name + "\" cannot be forwarded"
@@ -143,5 +153,10 @@ func TestEveryOpOfTheTableIsRelayedOrRefusedByName(t *testing.T) {
 		if err == nil || err.Error() != want {
 			t.Errorf("%s: forward said %v, want %q", name, err, want)
 		}
+	}
+	// An op that owns its peer checks the request before it hands it on: a malformed wait naming
+	// the down peer is refused for its own fields here, never relayed.
+	if _, err := a.Request(t.Context(), Request{Op: "wait", Peer: "b"}); err == nil || !strings.Contains(err.Error(), "timeout_ms") {
+		t.Errorf("a malformed wait naming a peer: %v, want its own refusal (timeout_ms)", err)
 	}
 }

@@ -122,13 +122,13 @@ func (p *Plane) Epoch() string { return p.hub.Epoch() }
 // Request is the one entry point every transport uses: the op table (ops.go) runs it, or
 // forward hands it to the peer it names.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
-	if req.Peer != "" && req.Op != "wait" {
+	op, ok := planeOps[req.Op]
+	if req.Peer != "" && !op.ownsPeer {
 		return p.forward(ctx, req.Peer, req)
 	}
 	if req.Op == "" {
 		return nil, badRequest("missing op")
 	}
-	op, ok := planeOps[req.Op]
 	if !ok {
 		return nil, badRequest("unknown op %q", req.Op)
 	}
