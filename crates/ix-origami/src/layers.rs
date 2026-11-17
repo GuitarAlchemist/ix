@@ -113,7 +113,7 @@ pub fn relations(fold: &Fold, orient: &[i8]) -> (Relations, Vec<(usize, usize)>)
 }
 
 /// Whether `f` lies above `g` (towards +z, the viewer); `None` if not stated.
-pub fn above(rel: &Relations, orient: &[i8], f: usize, g: usize) -> Option<bool> {
+pub(crate) fn above(rel: &Relations, orient: &[i8], f: usize, g: usize) -> Option<bool> {
     rel.get(f, g).map(|s| s * orient[g] > 0)
 }
 
@@ -242,20 +242,20 @@ pub struct TortillaPair {
 /// without recomputing it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
-    pub cells: Vec<Cell>,
+    pub(crate) cells: Vec<Cell>,
     /// Face pairs `(f, g)`, `f < g`, that share a cell.
-    pub overlapping: BTreeSet<(usize, usize)>,
+    pub(crate) overlapping: BTreeSet<(usize, usize)>,
     /// Mountains and valleys between two faces, and unassigned edges whose two faces are turned
     /// over relative to each other: folded.
-    pub creases: Vec<Crease>,
+    pub(crate) creases: Vec<Crease>,
     /// Flat, join and unassigned edges whose two faces keep one orientation: not folded.
-    pub joints: Vec<Crease>,
-    pub tortillas: Vec<Tortilla>,
-    pub tacos: Vec<Taco>,
-    pub tortilla_pairs: Vec<TortillaPair>,
+    pub(crate) joints: Vec<Crease>,
+    pub(crate) tortillas: Vec<Tortilla>,
+    pub(crate) tacos: Vec<Taco>,
+    pub(crate) tortilla_pairs: Vec<TortillaPair>,
     /// Collinear crease pairs whose faces lie on opposite sides of the line: no rule applies.
-    pub opposite_tacos: usize,
-    pub assignment: Vec<Assignment>,
+    pub(crate) opposite_tacos: usize,
+    pub(crate) assignment: Vec<Assignment>,
 }
 
 /// The line through an edge's two folded ends.
@@ -830,12 +830,48 @@ fn usable(fold: &Fold, limits: &Limits) -> Result<(Fold, f64), Unchecked> {
 /// Orientation, relations and geometry of one fold, for swap experiments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Context {
-    pub orient: Vec<i8>,
-    pub rel: Relations,
-    pub geo: Geometry,
+    pub(crate) orient: Vec<i8>,
+    pub(crate) rel: Relations,
+    pub(crate) geo: Geometry,
 }
 
 impl Context {
+    /// The number of faces.
+    pub fn faces(&self) -> usize {
+        self.orient.len()
+    }
+
+    /// The most faces in one overlay cell.
+    pub fn ply(&self) -> usize {
+        self.geo
+            .cells
+            .iter()
+            .map(|c| c.faces.len())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Face pairs `(f, g)`, `f < g`, that share an overlay cell.
+    pub fn overlapping(&self) -> &BTreeSet<(usize, usize)> {
+        &self.geo.overlapping
+    }
+
+    /// The folded creases: mountains, valleys, and unassigned edges turned over.
+    pub fn creases(&self) -> &[Crease] {
+        &self.geo.creases
+    }
+
+    /// The flat joints: edges whose two faces keep one orientation.
+    pub fn joints(&self) -> &[Crease] {
+        &self.geo.joints
+    }
+
+    /// Whether face `f` lies above face `g` (towards the viewer); `None` if the fold does not
+    /// state it. The stated sign and the faces' orientations are paired here and nowhere else.
+    pub fn above(&self, f: usize, g: usize) -> Option<bool> {
+        above(&self.rel, &self.orient, f, g)
+    }
+
     /// [`Context::within`] with no limit.
     pub fn new(fold: &Fold) -> Result<Self, Unchecked> {
         Self::within(fold, &Limits::NONE)
