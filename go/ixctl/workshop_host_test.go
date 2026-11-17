@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -273,6 +274,38 @@ func TestTheDesktopRunsQueriesOnlyWhereTheOwnerNamedThem(t *testing.T) {
 	r := workshopQueries(data)
 	if r == nil || r.Repo != repo || r.DuckDB != exe || strings.Join(r.Files, ",") != strings.Join(workshop.DefaultQueryFiles, ",") {
 		t.Fatalf("the named repo and duckdb run the default query files: %+v", r)
+	}
+	if r.Lbug != "" {
+		t.Fatalf("no LadybugDB CLI named, none used: %+v", r)
+	}
+}
+
+// TestTheDesktopRunsGraphQueriesWithTheLbugTheOwnerNamed: queries.json may also name the LadybugDB CLI (lbug, an
+// existing absolute path); the graph queries then run on the builds of the repo's state\graph. A lbug that is not there
+// leaves the DuckDB queries as they are and the graph queries without an engine.
+func TestTheDesktopRunsGraphQueriesWithTheLbugTheOwnerNamed(t *testing.T) {
+	data, repo, bin := t.TempDir(), t.TempDir(), t.TempDir()
+	duck, lbug := filepath.Join(bin, "duckdb.exe"), filepath.Join(bin, "lbug.exe")
+	for _, exe := range []string{duck, lbug} {
+		if err := os.WriteFile(exe, []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(data, "IxForge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for named, want := range map[string]string{lbug: lbug, "lbug.exe": "", filepath.Join(bin, "missing.exe"): ""} {
+		raw, _ := json.Marshal(map[string]string{"repo": repo, "duckdb": duck, "lbug": named})
+		if err := os.WriteFile(filepath.Join(data, "IxForge", "queries.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := workshopQueries(data)
+		if r == nil || r.DuckDB != duck || r.Lbug != want || r.Graphs != filepath.Join(repo, "state", "graph") {
+			t.Fatalf("lbug %q: %+v, want lbug %q on %s", named, r, want, filepath.Join(repo, "state", "graph"))
+		}
+	}
+	if !slices.Contains(workshop.DefaultQueryFiles, "docs/streeling/graph.cypher") {
+		t.Fatalf("the graph queries are listed: %v", workshop.DefaultQueryFiles)
 	}
 }
 
