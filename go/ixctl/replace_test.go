@@ -10,17 +10,18 @@ import (
 	"time"
 )
 
-// Every writer of a file a reader trusts (the state file, the Workshop's state, the bookmarks)
-// syncs the new content before it replaces the old: a sync that fails fails the write, and the
-// file keeps its old content.
+// A replace syncs the new content before it replaces the old: a sync that fails fails the write,
+// and the file keeps its old content. Every writer of a file a reader trusts goes through
+// replaceFile, which hands the OS's sync (the state file and the Workshop's state through
+// writeFileAtomic, the bookmarks and the need store through the replace their constructor sets):
+// that wiring is by reading; the test reaches the bookmarks through the value it hands them.
 func TestReplaceFileSyncsBeforeTheRename(t *testing.T) {
-	old := fileSync
-	fileSync = func(*os.File) error { return errors.New("sync refused") }
-	t.Cleanup(func() { fileSync = old })
+	t.Parallel()
+	refuse := fileOps{sync: func(*os.File) error { return errors.New("sync refused") }, rename: os.Rename}
 
 	path := filepath.Join(t.TempDir(), "state.json")
 	os.WriteFile(path, []byte("old"), 0o600)
-	if err := writeFileAtomic(path, []byte("new")); err == nil {
+	if err := refuse.replace(path, []byte("new")); err == nil {
 		t.Fatal("the state file was replaced without a sync")
 	}
 	if b, _ := os.ReadFile(path); string(b) != "old" {
@@ -30,7 +31,7 @@ func TestReplaceFileSyncsBeforeTheRename(t *testing.T) {
 		t.Fatalf("after a failed sync the temp is still there (%v)", err)
 	}
 
-	bms := &bookmarkStore{path: filepath.Join(t.TempDir(), "b.bookmarks.json")}
+	bms := &bookmarkStore{path: filepath.Join(t.TempDir(), "b.bookmarks.json"), replace: refuse.replace}
 	if err := bms.save(nil); err == nil {
 		t.Fatal("the bookmarks were replaced without a sync")
 	}
@@ -103,25 +104,22 @@ func TestOnlyWindowsRetriesARenameRefusedForPermission(t *testing.T) {
 // unknown, never as empty: replaceFile keeps it. A rename refused with the old file in place
 // leaves no temp behind.
 func TestARenameThatLostTheOldFileKeepsItsTemp(t *testing.T) {
-	old := fileRename
-	t.Cleanup(func() { fileRename = old })
-
+	t.Parallel()
 	s, clk, path := newNeedTest(t)
 	s.submit(submitOf(clk, "n1", time.Hour))
-	fileRename = func(_, to string) error {
+	s.replace = fileOps{sync: (*os.File).Sync, rename: func(_, to string) error {
 		os.Remove(to)
 		return errors.New("rename failed after removing the target")
-	}
+	}}.replace
 	_, err := s.claim("n1", "resolver-x", 60_000)
 	wantStatus(t, err, 503, "unknown")
-	fileRename = old
 	_, err = newNeedStore(path, clk.now).submit(submitOf(clk, "n1", time.Hour))
 	wantStatus(t, err, 503, "missing")
 
 	state := filepath.Join(t.TempDir(), "state.json")
 	os.WriteFile(state, []byte("old"), 0o600)
-	fileRename = func(string, string) error { return errors.New("rename refused") }
-	if err := replaceFile(state, []byte("new")); err == nil {
+	refused := fileOps{sync: (*os.File).Sync, rename: func(string, string) error { return errors.New("rename refused") }}
+	if err := refused.replace(state, []byte("new")); err == nil {
 		t.Fatal("a refused rename replaced the file")
 	}
 	if _, err := os.Stat(state + ".tmp"); !os.IsNotExist(err) {

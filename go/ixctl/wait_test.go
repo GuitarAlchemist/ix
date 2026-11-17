@@ -168,6 +168,66 @@ func TestRunWaitNeverFollowsARestart(t *testing.T) {
 
 // A launch wait on a service the generation did not name is a refused question, not
 // `unknown (evicted)`: nothing of it was ever recorded.
+// A launch wait names one service by its whole channel: the run.begin of a service whose name
+// extends it (x-extra beside x), of the same generation, is not its launch. The other service's
+// run.begin is published 30 times over 300 ms, then x's own. Nothing orders the wait's subscription
+// before those publications: a wait scheduled after all 30 would let the mutant (a prefix cursor)
+// pass this run, never fail the code.
+func TestALaunchWaitIgnoresAServiceWhoseNameExtendsItsOwn(t *testing.T) {
+	spec := &Spec{Name: "p", Services: []ServiceSpec{{Name: "x", Command: "unused"}, {Name: "x-extra", Command: "unused"}}}
+	p, err := NewPlane(spec, "p", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Shutdown)
+	g := p.gens.admit(func(uint64) {})
+	x := p.svcs["x"]
+	x.mu.Lock()
+	x.launches = append(x.launches, launchRecord{Generation: g, Result: applyStartPending})
+	x.mu.Unlock()
+
+	type reply struct {
+		r   WaitReply
+		err error
+	}
+	done := make(chan reply, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		r, err := p.waitForLaunch(ctx, p.hub.Epoch(), g, "x")
+		done <- reply{r, err}
+	}()
+	// As service.launch does: the run.begin and the launch record's run in one step under the
+	// service's lock, so a wait that subscribes after x's own run.begin answers from the record
+	// instead of waiting for an envelope its cursor started past (Codex round f3r2).
+	begin := func(svc string, seq uint64) RunID {
+		s := p.svcs[svc]
+		run := RunID{Origin: "p", Epoch: p.hub.Epoch(), Seq: seq}
+		s.mu.Lock()
+		p.hub.PublishRun(s.ch, event(runBeginKind, map[string]any{"generation": g}), run)
+		s.rememberLaunchedLocked(g, run)
+		s.mu.Unlock()
+		return run
+	}
+	for i := uint64(1); i <= 30; i++ {
+		begin("x-extra", 1000+i)
+		select {
+		case got := <-done:
+			t.Fatalf("the wait for x answered on x-extra's run.begin: %+v, %v", got.r.Run, got.err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	own := begin("x", 2000)
+	select {
+	case got := <-done:
+		if got.err != nil || got.r.Outcome != waitLaunched || got.r.Run == nil || *got.r.Run != own {
+			t.Fatalf("the wait for x: %+v, run %+v, %v; want launched as %+v", got.r, got.r.Run, got.err, own)
+		}
+	case <-ctx.Done():
+		t.Fatal("the wait for x never answered its own run.begin")
+	}
+}
+
 func TestLaunchWaitOnAServiceTheGenerationDidNotNameIsRefused(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil,
 		fakeSvc{name: "a", restart: restartNever}, fakeSvc{name: "b", restart: restartNever}), "")
@@ -268,7 +328,7 @@ func TestRunWaitFallsBackToRecentExitsAfterADeterministicGap(t *testing.T) {
 	}
 	head := in.plane.hub.Head()
 	cur := in.plane.hub.Subscribe("svc/gapped", &head, applied.Epoch)
-	cur.exact = true
+	cur.exactly()
 	do(t, c, Request{Op: "stop", Service: "gapped"})
 	for i := 0; i < ringSize+1; i++ {
 		in.plane.Publish("ctl", event("noise", map[string]any{"i": i}))

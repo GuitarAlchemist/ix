@@ -112,6 +112,30 @@ func TestTheHostsReadyLineKeepsItsBytes(t *testing.T) {
 	}
 }
 
+// The stop lines, as the host's own writer emits them, are what the reader of its ready line
+// takes as its end: a final phase (observed, unobserved) ends it, a phase in progress does not.
+// Each line keeps the bytes hostLog.event wrote before hostLog.stop. The phases are literals
+// here, not the constants, so a renamed phase goes red.
+func TestTheHostsStopLinesEndItsReadyLineOnlyWhenFinal(t *testing.T) {
+	for _, c := range []struct {
+		phase string
+		final bool
+	}{{"requested", false}, {"received", false}, {"observed", true}, {"unobserved", true}} {
+		var buf bytes.Buffer
+		l := &hostLog{w: &buf}
+		l.ready(hostReady{Name: "n", Addr: "127.0.0.1:59762", Pid: 4242, Epoch: "e"})
+		mark := buf.Len()
+		l.stop(c.phase, "scm", map[string]any{"ms": int64(12)})
+		line := regexp.MustCompile(`^\{"event":"host\.stop","ms":12,"phase":"` + c.phase + `","source":"scm","t":[0-9]+\}\n$`)
+		if !line.Match(buf.Bytes()[mark:]) {
+			t.Fatalf("%s: stop line %q", c.phase, buf.Bytes()[mark:])
+		}
+		if _, decided, ok := lastReadyIn(buf.Bytes()); !decided || ok == c.final {
+			t.Fatalf("%s: decided %v, ready found %v, want found %v", c.phase, decided, ok, !c.final)
+		}
+	}
+}
+
 // The epoch refusal names the file the ready line was read from: after a rotation, the .1.
 func TestTheEpochRefusalNamesTheRotatedFile(t *testing.T) {
 	inv := mustInventory(t, controlInventory)

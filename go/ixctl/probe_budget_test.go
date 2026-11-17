@@ -205,7 +205,7 @@ func TestTheOperatorSetsThePlanesBudgetAndTheLimitsSayIt(t *testing.T) {
 	}
 
 	// The same budget through the instance's startup options, as `ixctl up` passes them.
-	in, err := startInstance(fakeSpec(t, "b", nil), "", "127.0.0.1:0", t.TempDir(), "disk", &probeBudget{maxRate: 300, treeRate: 600})
+	in, err := bootInstance(instanceOptions{spec: fakeSpec(t, "b", nil), addr: "127.0.0.1:0", stateDir: t.TempDir(), bookmarks: "disk", budget: &probeBudget{maxRate: 300, treeRate: 600}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestTheOperatorSetsThePlanesBudgetAndTheLimitsSayIt(t *testing.T) {
 	if kinds.Limits["max_rate_per_s"] != 300 || kinds.Limits["tree_rate_per_s"] != 600 {
 		t.Fatalf("instance limits %v, want 300 / 600", kinds.Limits)
 	}
-	if _, err := startInstance(fakeSpec(t, "c", nil), "", "127.0.0.1:0", t.TempDir(), "disk", &probeBudget{maxRate: 300, treeRate: 100}); err == nil || !strings.Contains(err.Error(), "tree_rate_per_s") {
+	if _, err := bootInstance(instanceOptions{spec: fakeSpec(t, "c", nil), addr: "127.0.0.1:0", stateDir: t.TempDir(), bookmarks: "disk", budget: &probeBudget{maxRate: 300, treeRate: 100}}); err == nil || !strings.Contains(err.Error(), "tree_rate_per_s") {
 		t.Fatalf("a bad budget must refuse the startup: %v", err)
 	}
 }
