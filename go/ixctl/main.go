@@ -4,14 +4,11 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -135,13 +132,12 @@ func cmdUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	in, err := startInstance(spec, o.name, o.addr, o.state, o.bookmarks, &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate})
+	in, err := bootInstance(instanceOptions{spec: spec, name: o.name, addr: o.addr, stateDir: o.state, bookmarks: o.bookmarks,
+		budget:       &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate},
+		deltaJournal: o.deltaJournal, claudeBin: o.claudeBin})
 	if err != nil {
 		return err
 	}
-	// Before the ready line: no client knows the token yet, so no node can exist.
-	in.plane.SetDeltaJournal(o.deltaJournal)
-	in.plane.SetClaudeBin(o.claudeBin)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -179,91 +175,6 @@ type readyLine struct {
 	MsToReady float64 `json:"ms_to_ready"`
 }
 
-// errInstanceRunning: another process holds the name, or answers at its state file.
-var errInstanceRunning = errors.New("already starting or running")
-
-// startInstance listens, serves and writes the state file. The caller starts
-// the plane (supervisors, peers, autostart) once it has announced readiness.
-func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *probeBudget) (*instance, error) {
-	if name == "" {
-		name = spec.Name
-	}
-	if !nameRE.MatchString(name) {
-		return nil, fmt.Errorf("instance name %q must match %s", name, nameRE)
-	}
-	if bookmarks != "disk" && bookmarks != "memory" {
-		return nil, fmt.Errorf("bookmark store %q: want disk or memory", bookmarks)
-	}
-	if budget != nil {
-		if err := budget.validate(); err != nil {
-			return nil, fmt.Errorf("probe budget: %w", err)
-		}
-	}
-	if err := checkLoopback(addr); err != nil {
-		return nil, err
-	}
-	if stateDir == "" {
-		stateDir = defaultStateDir()
-	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return nil, err
-	}
-	statePath := filepath.Join(stateDir, name+".json")
-	// One instance per name per state dir, held as an OS lock for the
-	// instance's life. The state-file check below is advisory: two startups
-	// could both pass it before either wrote the file, then append their boot
-	// headers and records to one journal, interleaved. The lock dies with the
-	// process, so a crash leaves nothing to clean up.
-	lock, held, err := lockFile(filepath.Join(stateDir, name+".lock"))
-	if err != nil {
-		return nil, err
-	}
-	if !held {
-		return nil, fmt.Errorf("%w: instance %q (its lock in %s is held)", errInstanceRunning, name, stateDir)
-	}
-	fail := func(err error) (*instance, error) {
-		lock.Close()
-		return nil, err
-	}
-	if st, err := readStateFile(statePath); err == nil && instanceAlive(st) {
-		return fail(fmt.Errorf("%w: instance %q at %s (pid %d)", errInstanceRunning, name, st.Addr, st.Pid))
-	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fail(err)
-	}
-	tok := make([]byte, 32)
-	if _, err := rand.Read(tok); err != nil {
-		ln.Close()
-		return fail(err)
-	}
-	in := &instance{addr: ln.Addr().String(), token: hex.EncodeToString(tok), stateFile: statePath, lock: lock}
-	bookmarksPath := ""
-	if bookmarks == "disk" {
-		bookmarksPath = filepath.Join(stateDir, name+".bookmarks.json")
-	}
-	in.plane, err = NewPlane(spec, name, filepath.Join(stateDir, name+".journal.jsonl"), bookmarksPath)
-	if err != nil {
-		ln.Close()
-		return fail(err)
-	}
-	if budget != nil {
-		in.plane.SetProbeBudget(budget.maxRate, budget.treeRate) // validated above
-	}
-	in.plane.SetNeedStore(filepath.Join(stateDir, name+".needs.json")) // under the instance lock: its only writer
-	in.web = newServer(in.plane, name, in.token, ln.Addr().(*net.TCPAddr))
-	in.srv = &http.Server{Handler: in.web, ReadHeaderTimeout: 5 * time.Second}
-	go in.srv.Serve(ln)
-	b, _ := json.Marshal(stateFile{Name: name, Addr: in.addr, Pid: os.Getpid(), Token: in.token})
-	if err := writeFileAtomic(statePath, b); err != nil {
-		in.srv.Close()
-		in.plane.Shutdown()
-		return fail(err)
-	}
-	in.ready = readyLine{Event: "ready", Name: name, Addr: in.addr, Pid: os.Getpid(), StateFile: statePath}
-	return in, nil
-}
-
 // close stops every service tree, then the transports, then removes the
 // state file and lets go of the name.
 func (in *instance) close() {
@@ -298,19 +209,11 @@ func instanceAlive(st stateFile) bool {
 	return json.NewDecoder(resp.Body).Decode(&h) == nil && h.OK && h.Name == st.Name
 }
 
-// writeFileAtomic writes through `path.tmp` and renames. The content is the
-// state file, token included, so a failed rename does not leave the copy.
+// writeFileAtomic writes through `path.tmp` and renames (replaceFile). The content is the
+// state file, token included: a failed rename leaves the copy (mode 0600) only when it cannot
+// see the state file any more, the copy then being the only one.
 func writeFileAtomic(path string, b []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return replaceFile(path, b)
 }
 
 func defaultStateDir() string {

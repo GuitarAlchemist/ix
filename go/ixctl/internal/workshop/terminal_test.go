@@ -2,12 +2,19 @@ package workshop
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func sameDir(a, b string) bool {
+	x, errA := os.Stat(a)
+	y, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(x, y)
+}
 
 type terminalReply struct {
 	Output    string `json:"output"`
@@ -30,7 +37,9 @@ func TestTheTerminalRunsOnlyWhereTheOwnerAllowedIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	s.terminalTimeout = 4 * time.Second
+	// Ordinary commands get the real limit: a cold Windows PowerShell start on a loaded CI runner took more than 4 s.
+	// The time-limit case below lowers it to 4 s for itself.
+	s.terminalTimeout = defaultTerminalLimit
 	const app = "https://workshop.invalid"
 	h, err := Handler(s, app)
 	if err != nil {
@@ -80,9 +89,12 @@ func TestTheTerminalRunsOnlyWhereTheOwnerAllowedIt(t *testing.T) {
 	if code, reply, body := run(pcToken, "Write-Output ('bon'+'jour é'); exit 3"); code != 200 || strings.TrimSpace(reply.Output) != "bonjour é" || reply.ExitCode != 3 || reply.TimedOut {
 		t.Fatalf("the PC runs a command and sees its output and exit code: %d %s", code, body)
 	}
-	if code, reply, body := run(pcToken, "(Get-Location).Path"); code != 200 || !strings.EqualFold(strings.TrimSpace(reply.Output), filepath.Join(dir, "terminal")) {
+	// Compare folders, not spellings: t.TempDir() may be an 8.3 short path (C:\Users\RUNNER~1 on GitHub's runners) that
+	// PowerShell reports in its long form.
+	if code, reply, body := run(pcToken, "(Get-Location).Path"); code != 200 || !sameDir(strings.TrimSpace(reply.Output), filepath.Join(dir, "terminal")) {
 		t.Fatalf("commands run in the terminal's own folder: %d %s", code, body)
 	}
+	s.terminalTimeout = 4 * time.Second
 	started := time.Now()
 	if code, reply, body := run(pcToken, "Start-Sleep -Seconds 60"); code != 200 || !reply.TimedOut || reply.ExitCode != -1 || time.Since(started) > 15*time.Second {
 		t.Fatalf("a command that runs too long is stopped: %d %s after %s", code, body, time.Since(started))

@@ -290,7 +290,7 @@ func TestRunMarkersFollowTheSubscriptionsThatStandNow(t *testing.T) {
 	var before uint64
 	cancel := startRunLink(t, l, true)
 	defer cancel()
-	locked(func() { before = l.sess })
+	locked(func() { before = sessID(l) })
 	reopenSvc := func(from int, acknowledged bool) PeerStatus {
 		t.Helper()
 		jumps := l.status().Jumps
@@ -305,17 +305,17 @@ func TestRunMarkersFollowTheSubscriptionsThatStandNow(t *testing.T) {
 	b.web.runMarkersUnsupported.Store(true) // the next subscribes b answers are an older plane's
 	reopenSvc(1, false)
 	locked(func() {
-		if !l.ctl["ctl"].runMarkers || l.ctl["svc/"].runMarkers {
+		if !sessOf(l).ctl["ctl"].runMarkers || sessOf(l).ctl["svc/"].runMarkers {
 			t.Fatalf("after reopening svc/ alone: ctl acknowledged %v, svc/ %v; want ctl kept, svc/ not",
-				l.ctl["ctl"].runMarkers, l.ctl["svc/"].runMarkers)
+				sessOf(l).ctl["ctl"].runMarkers, sessOf(l).ctl["svc/"].runMarkers)
 		}
 	})
 
 	b.web.runMarkersUnsupported.Store(false)
 	reopenSvc(8001, true)
 	locked(func() {
-		if l.sess != before {
-			t.Fatalf("the link reconnected: session %d, was %d", l.sess, before)
+		if sessID(l) != before {
+			t.Fatalf("the link reconnected: session %d, was %d", sessID(l), before)
 		}
 	})
 }

@@ -100,8 +100,16 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 		seen = append(seen, e.Seq)
 	}
 	do(t, c, Request{Op: "bookmark.set", Bookmark: "after"})
+	// The tree has published what the replays read: stop it, so the sequence holds still for
+	// the rest. This client's read loop waits for room in a subscription's buffer before it
+	// reads the next frame, so a subscription left unread while the tree published 200 frames
+	// a second filled within about a second and stalled every reply behind it: a bookmark.set
+	// below hit its 10 s deadline on slow CI runners, on both OSes. The replays' buffers hold
+	// far more than the tree publishes before the stop.
+	do(t, c, Request{Op: "probe.stop", Node: "hb"})
+	do(t, c, Request{Op: "probe.stop", Node: "agg"})
 	// The replay of the leaf's pipe from `before`: the same envelopes, seq for seq.
-	_, frames, err := c.SubscribeBookmark(context.Background(), "probe/hb", "before", 256)
+	_, frames, err := c.SubscribeBookmark(context.Background(), "probe/hb", "before", 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +121,7 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 	}
 	// The replay of everything from `before`: the lifecycle on ctl and both pipes in one
 	// stream, in sequence order, nothing before the bookmark — what the pipeline saw.
-	_, all, err := c.SubscribeBookmark(context.Background(), "", "before", 256)
+	_, all, err := c.SubscribeBookmark(context.Background(), "", "before", 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,14 +313,14 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	// being loaded or emptied; a store that cannot save keeps what a reader saw unchanged.
 	badDir := t.TempDir()
 	os.WriteFile(filepath.Join(badDir, "x.bookmarks.json"), []byte(`{"schema":"ixctl-bookmarks/0","bookmarks":[{"name":"dup","epoch":"e","seq":1,"t":1},{"name":"dup","epoch":"e","seq":2,"t":2}]}`), 0o600)
-	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk", nil); err == nil || !strings.Contains(err.Error(), "x.bookmarks.json") || !strings.Contains(err.Error(), "dup") {
+	if _, err := bootInstance(instanceOptions{spec: fakeSpec(t, "x", nil), addr: "127.0.0.1:0", stateDir: badDir, bookmarks: "disk"}); err == nil || !strings.Contains(err.Error(), "x.bookmarks.json") || !strings.Contains(err.Error(), "dup") {
 		t.Fatalf("a duplicate name in the file: %v", err)
 	}
 	os.WriteFile(filepath.Join(badDir, "x.bookmarks.json"), []byte(`{"schema":"ixctl-bookmarks/0","bookmarks":[{"name":"old","seq":1,"t":1}]}`), 0o600)
-	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk", nil); err == nil || !strings.Contains(err.Error(), "epoch") {
+	if _, err := bootInstance(instanceOptions{spec: fakeSpec(t, "x", nil), addr: "127.0.0.1:0", stateDir: badDir, bookmarks: "disk"}); err == nil || !strings.Contains(err.Error(), "epoch") {
 		t.Fatalf("a record without an epoch: %v", err)
 	}
-	unsavable := &bookmarkStore{hub: second.plane.hub, path: filepath.Join(badDir, "no-such-dir", "x.bookmarks.json")}
+	unsavable := &bookmarkStore{hub: second.plane.hub, path: filepath.Join(badDir, "no-such-dir", "x.bookmarks.json"), replace: replaceFile}
 	if _, err := unsavable.set(Request{Bookmark: "lost"}); err == nil {
 		t.Fatal("a set the store could not save succeeded")
 	}
@@ -322,12 +330,12 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 
 	// The store is the operator's choice at startup: `--bookmarks memory` keeps them for
 	// this boot only and writes no file; anything else than disk or memory is refused.
-	if _, err := startInstance(fakeSpec(t, "m", nil), "", "127.0.0.1:0", t.TempDir(), "cloud", nil); err == nil || !strings.Contains(err.Error(), "memory") {
+	if _, err := bootInstance(instanceOptions{spec: fakeSpec(t, "m", nil), addr: "127.0.0.1:0", stateDir: t.TempDir(), bookmarks: "cloud"}); err == nil || !strings.Contains(err.Error(), "memory") {
 		t.Fatalf("store cloud: %v", err)
 	}
 	memDir := t.TempDir()
 	for boot := 1; boot <= 2; boot++ {
-		mem, err := startInstance(fakeSpec(t, "m", nil), "", "127.0.0.1:0", memDir, "memory", nil)
+		mem, err := bootInstance(instanceOptions{spec: fakeSpec(t, "m", nil), addr: "127.0.0.1:0", stateDir: memDir, bookmarks: "memory"})
 		if err != nil {
 			t.Fatal(err)
 		}

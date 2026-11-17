@@ -332,6 +332,18 @@ func (h *Hub) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
 	return c
 }
 
+// exactly makes the cursor's prefix a whole channel name: probe/cpu then does not cover
+// probe/cpu-extra. It is the one way to make a cursor exact, before its first read: a
+// subscription (openSubscription) and a wait on one service's channel (Plane's wait) call it,
+// since Subscribe takes a prefix only.
+func (c *Cursor) exactly() { c.exact = true }
+
+// past says whether the cursor has read beyond seq: every envelope up to it was returned to its
+// reader or skipped.
+//
+// @ai:invariant a cursor has one owner at a time, which alone calls Next, Catch, exactly and past, exactly before the first read; the hub keeps no cursor [P:assumed conf:0.8] (a convention the type does not enforce; by reading: openSubscription hands its cursor to the stream's goroutine after exactly, waitForLaunch, waitForRun and Apply's await each own theirs)
+func (c *Cursor) past(seq uint64) bool { return c.next > seq }
+
 func (c *Cursor) matches(ch string) bool {
 	if c.exact {
 		return ch == c.prefix

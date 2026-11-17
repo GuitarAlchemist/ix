@@ -14,7 +14,7 @@ const sessionQueue = 256
 
 // session is the ixctl.v1 protocol over any duplex frame transport: the
 // transport feeds it client frames with Handle and writes what comes out of
-// Out. WebSocket is one such transport; the in-memory adapter is another.
+// Out. WebSocket is one such transport; the in-memory adapter (frames_mem_test.go) is another.
 type session struct {
 	b      Broker
 	out    chan []byte
@@ -42,11 +42,6 @@ type subEntry struct {
 func newSession(parent context.Context, b Broker, queue int) *session {
 	ctx, cancel := context.WithCancel(parent)
 	return &session{b: b, out: make(chan []byte, queue), ctx: ctx, cancel: cancel, subs: map[int64]*subEntry{}}
-}
-
-// newMemSession is the in-memory adapter: the caller is the transport.
-func newMemSession(parent context.Context, b Broker) *session {
-	return newSession(parent, b, sessionQueue)
 }
 
 // Out carries every frame for the client, in the order it must be written.
@@ -140,18 +135,17 @@ func (s *session) subscribe(req Request) {
 		s.reply(req.ID, nil, badRequest("subscription %d already exists", req.ID))
 		return
 	}
-	cur := s.b.Subscribe(req.Ch, req.Since, req.Epoch)
-	cur.exact = req.Exact
+	sub := openSubscription(s.b, subRequest{prefix: req.Ch, exact: req.Exact, since: req.Since, epoch: req.Epoch, live: req.Live, markers: markers})
 	ctx, cancel := context.WithCancel(s.ctx)
 	e := &subEntry{prefix: req.Ch, cancel: cancel}
 	s.subs[req.ID] = e
 	s.mu.Unlock()
-	reply := map[string]any{"sub": req.ID, "head": cur.Head(), "epoch": cur.Epoch()}
+	reply := map[string]any{"sub": req.ID, "head": sub.Head(), "epoch": sub.Epoch()}
 	if markers {
 		reply["markers"] = runMarkers
 	}
 	s.reply(req.ID, reply, nil)
-	go s.pump(ctx, e, req.ID, cur, req.Live, markers)
+	go s.pump(ctx, e, req.ID, sub)
 }
 
 func (s *session) unsubscribe(req Request) {
@@ -184,16 +178,11 @@ func (s *session) dropIf(id int64, mine *subEntry) {
 	s.mu.Unlock()
 }
 
-// pump moves one subscription from the ring to the connection queue. Replay
-// waits for room (the client asked for it, and it is bounded by the ring);
-// live events never wait: a full queue drops the subscription with a gap. A
-// subscriber that asked (tell) is sent one live frame once the cursor is past
-// the head it started from, before the first live event: after the gap the
-// subscription may open with, after the last replayed frame, and without
-// waiting for a record of the prefix when the ring holds none up to the head
-// (Catch; criterion 7 of ix#408: a reader that catches up knows when it is live
-// even on a quiet channel, Codex round 43).
-func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, tell, markers bool) {
+// pump frames one subscription onto the connection queue. What to say, and in what order, is
+// the subscription's; how to wait is the pump's: replay, the gaps and the live mark wait for
+// room (the client asked for them, and replay is bounded by the ring); a live event never waits:
+// a full queue drops the subscription with an overflow gap.
+func (s *session) pump(ctx context.Context, e *subEntry, id int64, sub *subscription) {
 	defer func() {
 		if s.pumpLeaving != nil {
 			s.pumpLeaving(id)
@@ -203,63 +192,36 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, 
 			s.pumpLeft(id)
 		}
 	}()
-	replayUntil := cur.Head()
-	told := !tell
-	live := func() bool { // the live frame, once, when the cursor is past the head it started from
-		if told || cur.stale != nil || cur.next <= replayUntil {
-			return true
-		}
-		told = true
-		return s.send(ctx, liveFrame(id))
-	}
 	for {
-		var envs []*Envelope
-		var gap *Gap
-		var err error
-		if told {
-			envs, gap, err = cur.Next(ctx, 256)
-		} else {
-			envs, gap, err = cur.Catch(ctx, 256) // returns empty once past the head: the replay is over
-		}
+		items, err := sub.Next(ctx, 256)
 		if err != nil {
 			return
 		}
-		if gap != nil {
-			s.send(ctx, gapFrame(id, gap))
-			if gap.Reason == "overflow" {
-				return
-			}
-			if !live() {
-				return
-			}
-			continue
-		}
-		for _, env := range envs {
-			if !markers && isRunMarker(env) {
-				continue
-			}
-			f := eventFrame(id, env)
-			if env.Seq <= replayUntil {
-				if !s.send(ctx, f) {
+		for _, it := range items {
+			switch {
+			case it.gap != nil:
+				if !s.send(ctx, gapFrame(id, it.gap)) {
 					return
 				}
-				continue
-			}
-			if !live() {
-				return
-			}
-			select {
-			case s.out <- f:
-			case <-ctx.Done():
-				return
+			case it.live:
+				if !s.send(ctx, liveFrame(id)) {
+					return
+				}
+			case it.replay:
+				if !s.send(ctx, eventFrame(id, it.env)) {
+					return
+				}
 			default:
-				s.dropIf(id, e)
-				s.send(s.ctx, gapFrame(id, &Gap{Reason: "overflow", From: env.Seq, Epoch: cur.Epoch()}))
-				return
+				select {
+				case s.out <- eventFrame(id, it.env):
+				case <-ctx.Done():
+					return
+				default:
+					s.dropIf(id, e)
+					s.send(s.ctx, gapFrame(id, &Gap{Reason: "overflow", From: it.env.Seq, Epoch: sub.Epoch()}))
+					return
+				}
 			}
-		}
-		if !live() { // a batch that ended at the head, or an empty catch past it
-			return
 		}
 	}
 }

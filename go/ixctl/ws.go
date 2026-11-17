@@ -11,6 +11,9 @@ import (
 // wsWriteLimit closes a connection whose client stops reading for this long.
 const wsWriteLimit = 10 * time.Second
 
+// wsReadLimit is the largest client frame a connection takes; the in-memory adapter keeps it too.
+const wsReadLimit = 1 << 20
+
 // ws upgrades to ixctl.v1. Host, Origin and token were checked by ServeHTTP,
 // so the library's own origin check is off; a client that does not ask for
 // ixctl.v1 is refused.
@@ -26,7 +29,7 @@ func (s *server) ws(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "subprotocol "+subprotocol+" required")
 		return
 	}
-	c.SetReadLimit(1 << 20)
+	c.SetReadLimit(wsReadLimit)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)

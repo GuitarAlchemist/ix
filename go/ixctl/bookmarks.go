@@ -3,13 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -45,6 +42,8 @@ type bookmarkFile struct {
 type bookmarkStore struct {
 	hub  *Hub
 	path string // "" keeps the bookmarks in memory only
+	// replace writes the file (replaceFile); a test hands one that fails at a stage.
+	replace func(path string, b []byte) error
 
 	mu    sync.Mutex
 	marks []bookmark // in creation order; setting an existing name moves its point, not its place
@@ -56,7 +55,7 @@ type bookmarkStore struct {
 // bookmarks, or whose records break the invariants `set` enforces, is refused rather than
 // emptied: the operator decides what to do with it.
 func newBookmarkStore(hub *Hub, path string) (*bookmarkStore, error) {
-	s := &bookmarkStore{hub: hub, path: path}
+	s := &bookmarkStore{hub: hub, path: path, replace: replaceFile}
 	if path == "" {
 		return s, nil
 	}
@@ -116,41 +115,10 @@ func (s *bookmarkStore) save(list []bookmark) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
-		return fmt.Errorf("bookmarks: %w", err)
-	}
-	if err := renameOver(tmp, s.path); err != nil {
-		os.Remove(tmp)
+	if err := s.replace(s.path, append(b, '\n')); err != nil {
 		return fmt.Errorf("bookmarks: %w", err)
 	}
 	return nil
-}
-
-// renameOver replaces path with tmp. On Windows the replace is refused (access denied, or
-// a sharing violation) for as long as another process holds the file it replaces (an
-// indexer or an antivirus reading what the previous save wrote); a few short retries, about
-// a second in all, ride that out. Any other error, and a file that stays held, come back at
-// once: the caller holds the store's lock meanwhile.
-func renameOver(tmp, path string) error {
-	const attempts = 20
-	for i := 1; ; i++ {
-		err := os.Rename(tmp, path)
-		if err == nil || i == attempts || !heldByAnother(err) {
-			return err
-		}
-		time.Sleep(time.Duration(5*i) * time.Millisecond)
-	}
-}
-
-// heldByAnother says whether a rename failed because the target is open elsewhere:
-// ERROR_ACCESS_DENIED (os.IsPermission) or ERROR_SHARING_VIOLATION (32) on Windows.
-func heldByAnother(err error) bool {
-	var errno syscall.Errno
-	if runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 32 {
-		return true
-	}
-	return os.IsPermission(err)
 }
 
 func (s *bookmarkStore) find(name string) int {

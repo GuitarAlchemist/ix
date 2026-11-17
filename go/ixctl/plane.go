@@ -30,14 +30,8 @@ type Plane struct {
 	wg        sync.WaitGroup
 	waiters   chan struct{}
 
-	applyMu  sync.Mutex // one apply at a time: generations are a total order
-	mu       sync.Mutex
-	gen      uint64
-	observed uint64          // the highest generation that converged
-	settled  uint64          // every generation <= settled has ended, converged or diverged
-	ended    map[uint64]bool // generations above settled that have ended
-	diverged *Diverged       // the diverged apply of highest generation, if any
-	failed   []Diverged      // every diverged apply since boot, by generation
+	applyMu sync.Mutex // one apply at a time: generations are a total order
+	gens    *genLedger // the generations: numbered at admission, ended by await, read by Status, Plan and the waits
 
 	quit     chan struct{} // closed when a shutdown is requested
 	quitOnce sync.Once
@@ -58,7 +52,7 @@ func NewPlane(spec *Spec, name, journalPath, bookmarksPath string) (*Plane, erro
 	stopping, stopWaits := context.WithCancel(ctx)
 	p := &Plane{
 		name: name, spec: spec, hub: NewHub(name),
-		svcs: map[string]*service{}, peers: map[string]*peerLink{}, ended: map[uint64]bool{},
+		svcs: map[string]*service{}, peers: map[string]*peerLink{}, gens: newGenLedger(),
 		started: time.Now(), ctx: ctx, cancel: cancel, stopping: stopping, stopWaits: stopWaits,
 		waiters: make(chan struct{}, maxWaiters), quit: make(chan struct{}),
 	}
@@ -125,84 +119,37 @@ func (p *Plane) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
 // Epoch is this boot's id, from the hub.
 func (p *Plane) Epoch() string { return p.hub.Epoch() }
 
-// Request is the one entry point every transport uses.
+// Request is the one entry point every transport uses: the op table (ops.go) runs it, or
+// forward hands it to the peer it names.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 	if req.Peer != "" && req.Op != "wait" {
 		return p.forward(ctx, req.Peer, req)
 	}
-	switch req.Op {
-	case "status":
-		return p.Status(), nil
-	case "ping":
-		return map[string]any{"pong": true, "name": p.name}, nil
-	case "plan":
-		if req.Desired == nil {
-			return nil, badRequest("plan needs a desired-state document")
-		}
-		return p.Plan(req.Desired)
-	case "apply":
-		if req.Desired == nil {
-			return nil, badRequest("apply needs a desired-state document")
-		}
-		r, _, err := p.Apply(req.Desired)
-		return r, err
-	case "wait":
-		return p.Wait(ctx, req)
-	case "stop":
-		return p.Stop(ctx, req.Service)
-	case "shutdown":
-		p.RequestShutdown()
-		return map[string]any{"shutdown": true}, nil
-	case "probe.kinds":
-		return kindsReply(p.probes.budgetNow()), nil
-	case "probe.create":
-		if req.Probe == nil {
-			return nil, badRequest("probe.create needs a node under `probe`")
-		}
-		return p.probes.create(req.Probe)
-	case "probe.list":
-		return p.probes.list(req.WithCursor), nil
-	case "probe.start":
-		return p.probes.start(req.Node)
-	case "probe.stop":
-		return p.probes.stop(req.Node, "requested")
-	case "probe.touch":
-		return p.probes.touch(req.Node)
-	case "probe.remove":
-		return p.probes.remove(req.Node, "removed")
-	case "bookmark.set":
-		return p.bookmarks.set(req)
-	case "bookmark.get":
-		return p.bookmarks.get(req.Bookmark)
-	case "bookmark.list":
-		return p.bookmarks.list(), nil
-	case "bookmark.remove":
-		return p.bookmarks.remove(req.Bookmark)
-	case "need.submit", "need.status", "need.claim", "need.resolve", "need.refuse", "need.reserve", "need.settle", "need.wait":
-		return p.needRequest(ctx, req)
-	case "":
+	if req.Op == "" {
 		return nil, badRequest("missing op")
 	}
-	return nil, badRequest("unknown op %q", req.Op)
+	op, ok := planeOps[req.Op]
+	if !ok {
+		return nil, badRequest("unknown op %q", req.Op)
+	}
+	return op.run(p, ctx, req)
 }
 
-// forward hands an op to a peer, which decides by its own rules. The peer
-// field is stripped so an op crosses at most one hop.
+// forward hands an op to a peer, which decides by its own rules. The request
+// goes whole, so an optional field added later (ADR 0014, 1.2) is not lost on
+// the way; the peer field is stripped so an op crosses at most one hop, and
+// the link numbers the frame itself.
+// @ai:invariant a relayed request reaches the peer whole but for Peer (cleared) and ID (the link's) [P:assumed conf:0.8] (pinned by TestForwardCarriesTheWholeRequest)
 func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, error) {
 	l := p.peers[peer]
 	if l == nil {
 		return nil, badRequest("unknown peer %q", peer)
 	}
-	switch req.Op {
-	case "status", "ping", "plan", "apply", "wait", "stop",
-		"probe.kinds", "probe.list", "probe.create", "probe.start", "probe.stop", "probe.touch", "probe.remove",
-		"bookmark.set", "bookmark.get", "bookmark.list", "bookmark.remove":
-	default:
+	if !planeOps[req.Op].relay {
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
-	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node,
-		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note, WithCursor: req.WithCursor,
-		Wait: req.Wait, Generation: req.Generation, Run: req.Run, TimeoutMS: req.TimeoutMS})
+	req.Peer = ""
+	return l.forward(ctx, req)
 }
 
 type ServiceStatus struct {
@@ -294,16 +241,10 @@ type StatusReply struct {
 const runContract = "run/1"
 
 func (p *Plane) Status() StatusReply {
-	p.mu.Lock()
-	r := StatusReply{Contract: runContract, Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen,
-		ObservedGeneration: p.observed, SettledGeneration: p.settled,
+	gs := p.gens.status()
+	r := StatusReply{Contract: runContract, Name: p.name, Epoch: p.hub.Epoch(), Generation: gs.gen,
+		ObservedGeneration: gs.observed, SettledGeneration: gs.settled, Diverged: gs.diverged, Failed: gs.failed,
 		Limits: PlaneLimits{WaitTimeoutMS: waitTimeoutMax.Milliseconds(), Waiters: maxWaiters}}
-	if p.diverged != nil {
-		d := *p.diverged
-		r.Diverged = &d
-	}
-	r.Failed = append([]Diverged{}, p.failed...)
-	p.mu.Unlock()
 	r.Services = make([]ServiceStatus, 0, len(p.order))
 	for _, n := range p.order {
 		r.Services = append(r.Services, p.svcs[n].status())
@@ -404,9 +345,7 @@ func (p *Plane) Plan(d *Desired) (PlanReply, error) {
 	if err := p.validate(d); err != nil {
 		return PlanReply{}, err
 	}
-	p.mu.Lock()
-	g := p.gen
-	p.mu.Unlock()
+	g := p.gens.current()
 	actions, noop := p.plan(d)
 	return PlanReply{Generation: g, Actions: actions, Noop: noop}, nil
 }
@@ -446,36 +385,35 @@ func (p *Plane) plan(d *Desired) ([]Action, []string) {
 	return actions, noop
 }
 
-// admit is the admission instant: under p.mu and every named service's lock (taken in name
-// order), it reads each service once, decides actions and results from that one snapshot, and
-// bumps the generation. Lock order p.mu -> s.mu; no path takes s.mu and then p.mu.
+// admit is the admission instant: under the ledger's lock and every named service's lock (taken
+// in name order), it reads each service once, decides actions and results from that one
+// snapshot, under the generation the ledger numbers. Lock order ledger -> s.mu; no path takes
+// s.mu and then the ledger's.
 func (p *Plane) admit(d *Desired) ([]Action, []string, map[string]ApplyServiceResult, uint64) {
 	names := d.names()
-	p.mu.Lock()
-	for _, n := range names {
-		p.svcs[n].mu.Lock()
-	}
 	actions, noop := []Action{}, []string{}
 	results := make(map[string]ApplyServiceResult, len(names))
-	for _, n := range names {
-		desired, state, currentRun := p.svcs[n].admissionObservationLocked()
-		action, planned, result := applyDecision(n, d.Services[n].State, desired, state, currentRun)
-		results[n] = result
-		if planned {
-			actions = append(actions, action)
-		} else {
-			noop = append(noop, n)
+	g := p.gens.admit(func(g uint64) {
+		for _, n := range names {
+			p.svcs[n].mu.Lock()
 		}
-	}
-	p.gen++
-	g := p.gen
-	for _, n := range names {
-		p.svcs[n].rememberApplyResultLocked(g, results[n])
-	}
-	for i := len(names) - 1; i >= 0; i-- {
-		p.svcs[names[i]].mu.Unlock()
-	}
-	p.mu.Unlock()
+		for _, n := range names {
+			desired, state, currentRun := p.svcs[n].admissionObservationLocked()
+			action, planned, result := applyDecision(n, d.Services[n].State, desired, state, currentRun)
+			results[n] = result
+			if planned {
+				actions = append(actions, action)
+			} else {
+				noop = append(noop, n)
+			}
+		}
+		for _, n := range names {
+			p.svcs[n].rememberApplyResultLocked(g, results[n])
+		}
+		for i := len(names) - 1; i >= 0; i-- {
+			p.svcs[names[i]].mu.Unlock()
+		}
+	})
 	return actions, noop, results, g
 }
 
@@ -710,26 +648,7 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			p.svcs[a.Service].forget(g)
 		}
 	}
-	p.mu.Lock()
-	if res.Converged {
-		if g > p.observed {
-			p.observed = g
-		}
-	} else {
-		d := Diverged{Generation: g, Service: res.Service, Reason: res.Reason}
-		p.failed = append(p.failed, d)
-		if p.diverged == nil || g > p.diverged.Generation {
-			p.diverged = &d
-		}
-	}
-	// Generations end in any order; settled only moves past an unbroken run of ended ones,
-	// so a later generation never counts an earlier, still pending one as done.
-	p.ended[g] = true
-	for p.ended[p.settled+1] {
-		delete(p.ended, p.settled+1)
-		p.settled++
-	}
-	p.mu.Unlock()
+	p.gens.end(res)
 	if res.Converged {
 		p.hub.Publish("ctl", event("converged", map[string]any{"generation": g}))
 	} else {
@@ -738,40 +657,11 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 	return res
 }
 
-func (p *Plane) generationResult(g uint64) (WaitReply, bool, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if g > p.gen {
-		return WaitReply{}, false, badRequest("unknown generation %d", g)
-	}
-	for _, d := range p.failed {
-		if d.Generation == g {
-			return WaitReply{Outcome: waitDiverged, Service: d.Service, Reason: d.Reason}, true, nil
-		}
-	}
-	if g <= p.settled || p.ended[g] {
-		return WaitReply{Outcome: waitConverged}, true, nil
-	}
-	return WaitReply{}, false, nil
-}
-
 func (p *Plane) waitForGeneration(ctx context.Context, epoch string, g uint64) (WaitReply, error) {
 	if epoch != p.hub.Epoch() {
 		return WaitReply{Outcome: waitUnknown, Reason: waitOtherEpoch}, nil
 	}
-	head := p.hub.Head()
-	cur := p.hub.Subscribe("ctl", &head, epoch)
-	if reply, done, err := p.generationResult(g); done || err != nil {
-		return reply, err
-	}
-	for {
-		if _, _, err := cur.Next(ctx, 256); err != nil {
-			return WaitReply{}, err
-		}
-		if reply, done, err := p.generationResult(g); done || err != nil {
-			return reply, err
-		}
-	}
+	return p.gens.wait(ctx, g)
 }
 
 func (p *Plane) launchResult(s *service, g uint64) (WaitReply, bool, error) {
@@ -803,15 +693,13 @@ func (p *Plane) waitForLaunch(ctx context.Context, epoch string, g uint64, name 
 	if epoch != p.hub.Epoch() {
 		return WaitReply{Outcome: waitUnknown, Reason: waitOtherEpoch}, nil
 	}
-	p.mu.Lock()
-	future := g > p.gen
-	p.mu.Unlock()
+	future := g > p.gens.current()
 	if future {
 		return WaitReply{}, badRequest("unknown generation %d", g)
 	}
 	head := p.hub.Head()
 	cur := p.hub.Subscribe(s.ch, &head, epoch)
-	cur.exact = true
+	cur.exactly()
 	if reply, done, err := p.launchResult(s, g); done || err != nil {
 		return reply, err
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -276,6 +277,11 @@ func TestUpdateKeepsNeighboursWithoutIdentifyingThem(t *testing.T) {
 	// The rollback's file replacement fails after the service was stopped. The service may only be restarted on the
 	// verified previous executable; anything else is left stopped and recorded for reconciliation, never as rolled back.
 	t.Run("replace/executable held by another process", func(t *testing.T) {
+		// Only Windows refuses to replace a file another process holds open without delete sharing; on Linux the
+		// replacement succeeds, so this failure cannot be staged there (the updater runs on Windows only).
+		if runtime.GOOS != "windows" {
+			t.Skip("an open handle blocks a file replacement on Windows only")
+		}
 		got := run(t, "rollback", base(), base(), "-OnStop", "hold")
 		if !strings.Contains(fmt.Sprint(got["error"]), "left stopped") || got["starts"] != float64(0) || got["service"] != "Stopped" ||
 			got["receipt_state"] != "reconciliation_required" || got["installed_is_previous"] != false {

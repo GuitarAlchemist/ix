@@ -275,7 +275,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
 | `POST /v1/bookmark/set` | Body `{"bookmark": NAME, "since"?: SEQ, "epoch"?: E, "note"?: TEXT, "peer"?: NAME}`. |
 | `POST /v1/bookmark/remove` | Body `{"bookmark": NAME, "peer"?: NAME}`. |
-| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. `since-ahead` is for a `since` past the head that names no `epoch`; a `since` naming this boot's epoch is trusted even past the head: no gap, no replay, the stream goes live from the head. |
+| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. `exact=1` makes `ch` a whole channel name (`svc/x` no longer covers `svc/x-extra`), and `live=1` sends one `event: live` (`data: {}`, no `id:`) once the replay is over, before the first live event and at once on a prefix with nothing to replay, as a WebSocket `subscribe`'s `exact` and `live` do; `true` works as `1`, any other value is read as absent. A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. `since-ahead` is for a `since` past the head that names no `epoch`; a `since` naming this boot's epoch is trusted even past the head: no gap, no replay, the stream goes live from the head. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
@@ -805,6 +805,25 @@ replays nothing, and a component it cannot observe is `unknown`, never assumed u
 - `listen`: whether a listener holds the address, read from the system's TCP table (Windows
   `GetExtendedTcpTable`, Linux `/proc/net/tcp`, IPv4). A wildcard bind (`0.0.0.0`) on the port
   holds it too. Nothing connects to the port.
+- `ready_journal` (with `service` and `health`, in place of `listen`): the service's host log,
+  for a host started with `--addr 127.0.0.1:0`, whose port changes at each boot. Each check
+  reads the last 64 KiB of the log, else of the rotated log (`.1`) when the current one holds
+  none, and takes the address from its last `host.ready` line, unless a host's final
+  `host.stop` follows it (that host ended; the one running now has not said ready), and only
+  when that line's PID is the process the service runs now and its address is a loopback
+  `IP:port`; `health` is then a path (`/health`) on that address, and it must answer the line's
+  `epoch`, drawn at each boot: a PID can come back after a reboot, the epoch does not. A line
+  from another PID (an earlier boot, a host that has not said ready, another host's log), an
+  address that is not a loopback `IP:port`, a line without an epoch, a health with another epoch
+  or an unreadable log is `unknown`, and nothing is probed after the refusal. The inventory stays
+  the same across reboots:
+
+  ```json
+  {"name": "control", "after": ["plane"], "service": "ixctl",
+   "ready_journal": "C:\\ProgramData\\ixctl\\ixctl-trial.service.log",
+   "health": "/health", "health_expect": "\"ok\":true",
+   "health_fields": {"name": "ixctl-trial", "version": "0.1.0-ixforge.7"}}
+  ```
 - `listen_image` (Windows): the file name the listening process's executable must have, such as
   `delta-remote-v0.6.0-21-g2ca5e6c.exe` (no path, case ignored): which build came back. The PID
   comes from the TCP table; the process is opened with query rights only, which keeps its PID

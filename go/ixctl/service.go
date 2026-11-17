@@ -105,8 +105,10 @@ func (l *hostLog) event(kind string, fields map[string]any) {
 // reporting stopped.
 //
 // A stop has three moments: requested (the control reached the host), received (the plane
-// admits nothing more), observed (every tree is gone). The first two go on ctl, before any
-// service stops; the third goes to the log, since the journal is closed by then.
+// admits nothing more), then a final one: observed (every tree seen gone within the bound) or
+// unobserved (not). The first two go on ctl, before any service stops, and to the log; the
+// final one goes to the log only, since the journal is closed by then (hostLog.stop writes
+// each).
 func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)) uint32 {
 	log := &hostLog{w: o.log}
 	if o.stopTimeout <= 0 {
@@ -124,26 +126,23 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 		return code
 	}
 
-	in, err := startInstance(o.spec, o.name, o.addr, o.stateDir, "disk", nil)
-	if err != nil {
-		if errors.Is(err, errInstanceRunning) {
-			log.event("host.refused", map[string]any{"error": err.Error()})
-			return stopped(exitAlreadyRunning)
-		}
+	in, err := bootInstance(instanceOptions{spec: o.spec, name: o.name, addr: o.addr, stateDir: o.stateDir, bookmarks: "disk",
+		deltaJournal: o.deltaJournal, workshop: o.workshop})
+	var ws errWorkshopStart
+	switch {
+	case errors.Is(err, errInstanceRunning):
+		log.event("host.refused", map[string]any{"error": err.Error()})
+		return stopped(exitAlreadyRunning)
+	case errors.As(err, &ws):
+		log.event("workshop.failed", map[string]any{"error": err.Error()})
+		return stopped(exitStartFailed)
+	case err != nil:
 		log.event("host.failed", map[string]any{"error": err.Error()})
 		return stopped(exitStartFailed)
 	}
-	in.workshop, err = startWorkshop(o.workshop, o.stateDir, in.ready.Name)
-	if err != nil {
-		in.close()
-		log.event("workshop.failed", map[string]any{"error": err.Error()})
-		return stopped(exitStartFailed)
-	}
-	// Before the plane starts: no client knows the token yet, so no node can exist.
-	in.plane.SetDeltaJournal(o.deltaJournal)
 	in.plane.Start()
-	log.event("host.ready", map[string]any{"name": in.ready.Name, "addr": in.addr, "pid": in.ready.Pid,
-		"epoch": in.plane.Epoch(), "state_file": in.stateFile, "version": version})
+	log.ready(hostReady{Name: in.ready.Name, Addr: in.addr, Pid: uint32(in.ready.Pid),
+		Epoch: in.plane.Epoch(), StateFile: in.stateFile, Version: version})
 	set(hostStatus{State: hostRunning, Accepts: true})
 
 	source := ""
@@ -168,20 +167,20 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 	defer bound.Stop()
 	checkpoint := uint32(1)
 	set(hostStatus{State: hostStopPending, Checkpoint: checkpoint, WaitHint: o.stopTimeout})
-	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "requested", "source": source}))
-	log.event("host.stop", map[string]any{"phase": "requested", "source": source})
+	in.plane.Publish("ctl", event(hostStopEvent, map[string]any{"phase": stopRequested, "source": source}))
+	log.stop(stopRequested, source, nil)
 	in.plane.RequestShutdown()
 	in.workshop.stopAccepting()
-	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "received", "source": source}))
-	log.event("host.stop", map[string]any{"phase": "received", "source": source})
+	in.plane.Publish("ctl", event(hostStopEvent, map[string]any{"phase": stopReceived, "source": source}))
+	log.stop(stopReceived, source, nil)
 
 	closed := make(chan struct{})
 	go func() { closeIn(in); close(closed) }()
 	tick := time.NewTicker(hostTick)
 	defer tick.Stop()
 	unobserved := func(fields map[string]any) uint32 {
-		fields["phase"], fields["source"], fields["ms"] = "unobserved", source, time.Since(t0).Milliseconds()
-		log.event("host.stop", fields)
+		fields["ms"] = time.Since(t0).Milliseconds()
+		log.stop(stopUnobserved, source, fields)
 		return stopped(exitStopUnobserved)
 	}
 	for {
@@ -195,7 +194,7 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 			if time.Now().After(deadline) {
 				return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
 			}
-			log.event("host.stop", map[string]any{"phase": "observed", "source": source, "ms": time.Since(t0).Milliseconds()})
+			log.stop(stopObserved, source, map[string]any{"ms": time.Since(t0).Milliseconds()})
 			return stopped(exitOK)
 		case <-bound.C:
 			return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})

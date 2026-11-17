@@ -108,7 +108,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	c := dial(t, b)
 	l := newPeerLink(PeerSpec{Name: "b", Probes: []string{"cpu"}}, NewHub("a"))
 	l.boot = b.plane.Epoch()
-	l.pipes["cpu"].state, l.pipes["cpu"].sub = pipeMirrored, 7
+	sessOf(l).pipes["cpu"].state, sessOf(l).pipes["cpu"].sub = pipeMirrored, 7
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 	refresh := make(chan struct{}, 1)
 	q := newPipeQueue()
@@ -117,7 +117,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	ctx := context.Background()
 
 	over := Gap{Reason: "overflow", From: 9, Epoch: b.plane.Epoch()}
-	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
+	if err := applyT(l, ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
 		t.Fatalf("a pipe's overflow ended the session: %v", err)
 	}
 	e := nextEnv(t, cur)
@@ -130,13 +130,13 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		t.Fatalf("after the overflow: %s, want the reopened pipe's live start", e2.Raw())
 	}
 	l.mu.Lock()
-	p := *l.pipes["cpu"]
+	p := *sessOf(l).pipes["cpu"]
 	l.mu.Unlock()
 	if p.state != pipeMirrored || p.sub == 7 || p.sub == 0 {
 		t.Fatalf("pipe after the overflow: %+v, want mirrored under a new subscription", p)
 	}
 	stale := &Envelope{Ch: "probe/cpu", Seq: 8, Epoch: b.plane.Epoch(), Origin: "b", Ev: Event{Kind: "sample"}}
-	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
+	if err := applyT(l, ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
 		t.Fatal(err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
@@ -144,14 +144,14 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	if envs, _, _ := cur.Next(wctx, 1); len(envs) != 0 {
 		t.Fatalf("a frame of the dropped subscription was mirrored: %s", envs[0].Raw())
 	}
-	l.ctl["svc/"].sub = 5
-	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}, sub: 5}); err != nil {
+	sessOf(l).ctl["svc/"].sub = 5
+	if err := applyT(l, ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}, sub: 5}); err != nil {
 		t.Fatalf("svc/ overflow ended the session: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		l.mu.Lock()
-		cs := *l.ctl["svc/"]
+		cs := *sessOf(l).ctl["svc/"]
 		l.mu.Unlock()
 		if cs.sub != 0 && cs.sub != 5 && cs.live {
 			break
@@ -161,7 +161,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+	if err := applyT(l, ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
 		t.Fatalf("an overflow of no subscription of ours: %v, want the session to end", err)
 	}
 	select {
