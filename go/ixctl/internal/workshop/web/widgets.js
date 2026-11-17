@@ -103,14 +103,15 @@ export class IxQueries extends Block {
     this.results = {...this.results, [index]: {running: true}};
     let result;
     try { result = await this.runQuery(entry.source, entry.title); }
-    catch (error) { result = {error: QUERY_CODES.includes(error.message) ? error.message : 'queryUncertain'}; }
+    // A lost answer says why: the Desktop's HTTP status, no answer in time, or a dropped connection.
+    catch (error) { result = QUERY_CODES.includes(error.message) ? {error: error.message} : {error: 'queryUncertain', cause: error.status ? 'HTTP ' + error.status : error.name === 'AbortError' ? 'queryCauseTimeout' : 'queryCauseNetwork'}; }
     this.results = {...this.results, [index]: result};
   }
   outcome(index) {
     const t = this.t, r = this.results[index];
     if (!r) return nothing;
     if (r.running) return html`<p class="hint" data-query-status role="status">${t('queryRunning')}</p>`;
-    if (r.error) return html`<p class="error" data-query-error role="alert">${QUERY_CODES.includes(r.error) ? t(r.error) : r.error}</p>`;
+    if (r.error) return html`<p class="error" data-query-error role="alert">${QUERY_CODES.includes(r.error) ? t(r.error, {cause: r.cause?.startsWith('query') ? t(r.cause) : r.cause}) : r.error}</p>`;
     const rows = Array.isArray(r.rows) ? r.rows : [];
     const columns = rows.length ? Object.keys(rows[0]) : [];
     const cell = v => v === null || v === undefined ? html`<span class="null">NULL</span>` : typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -134,7 +135,7 @@ export class IxQueries extends Block {
     return html`<div class="queries">${made}${synced}${groups.map(g => html`
       <section data-query-source=${g.source}><h3>${g.source}</h3>${g.queries.map(({entry, index}) => html`
         <details data-query=${index}><summary>${entry.title}</summary><pre>${entry.sql}</pre>
-          <div class="row"><button class="ghost" data-query-copy=${index} @click=${() => this.copy(index, entry.sql)}>${icon('copy')}<span>${t('copySQL')}</span></button>
+          <div class="row"><button class="ghost" data-query-copy=${index} @click=${() => this.copy(index, entry.sql)}>${icon('copy')}<span>${t(entry.source.endsWith('.cypher') ? 'copyQuery' : 'copySQL')}</span></button>
           ${this.runQuery ? html`<button data-query-run=${index} ?disabled=${this.results[index]?.running} @click=${() => this.execute(index, entry)}>${icon('play')}<span>${t('runOnDesktop')}</span></button>` : nothing}
           <span data-query-copied role="status">${this.copied?.index === index ? t(this.copied.ok ? 'copied' : 'copyFailed') : ''}</span></div>
           <div data-query-result>${this.outcome(index)}</div>
