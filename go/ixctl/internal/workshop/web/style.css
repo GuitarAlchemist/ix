@@ -96,3 +96,37 @@ body[data-mode=widget] #rail,body[data-mode=widget] .bar,body[data-mode=widget] 
   main{padding:10px 12px}#tool-title{font-size:18px}
 }
 .ico{display:contents}
+/* Widgets and IXlets: a visible boundary for every tool, labels that stay visible, and a persistent mobile navigation. */
+.app-info{margin:0;padding:4px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);background:var(--panel)}
+.busy{font-size:12px;color:var(--accent)}
+.kind-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:600;background:var(--raise);white-space:nowrap}
+.kind-chip .i{width:14px;height:14px}
+.widget-host{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--panel)}
+.step-line{margin:6px 0;font-size:13px;color:var(--muted)}
+.tool-actions button .lbl{font-size:12px;margin-left:4px}
+.tool-actions button.icon{width:auto;padding:0 8px}
+.mobile-nav{display:flex;gap:6px;padding:6px 10px;border-top:1px solid var(--line);background:var(--panel)}
+.mobile-nav button{flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:15px}
+.mobile-nav button[aria-pressed=true]{background:var(--accent);color:var(--ink);border-color:var(--accent)}
+.catalog{display:grid;gap:12px}.catalog-title{font-size:20px;margin:0}.catalog-sub{margin:8px 0 0}
+.catalog h3{margin:0 0 6px;font-size:15px}.count{font-weight:400;color:var(--muted);font-size:13px}
+.type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.type-card{border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--panel);display:grid;gap:8px;align-content:start}
+.type-card p{margin:0;font-size:13px}.pv{border:1px dashed var(--line);border-radius:8px;padding:8px;background:var(--bg);font-size:13px;pointer-events:none}
+.pv-list{list-style:none;margin:0;padding:0;display:grid;gap:4px}.pv-box{display:inline-block;width:12px;height:12px;border:1.5px solid var(--muted);border-radius:3px;margin-right:6px;vertical-align:-2px}.pv-box.on{background:var(--accent);border-color:var(--accent)}
+.pv-counter{display:flex;align-items:center;justify-content:center;gap:14px;font-size:22px}.pv-btn{border:1px solid var(--line);border-radius:6px;padding:0 10px}
+.pv-sql{margin:0;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap}
+.group{display:grid;gap:6px}
+.inst{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:center;text-align:left;width:100%;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--panel);min-height:56px}
+.inst[aria-current=true]{border-color:var(--accent)}.inst .inst-state{grid-column:1/-1;font-size:12px;color:var(--muted)}.inst .inst-open{display:none}
+.inst[data-state=noRuntime]{border-style:dashed}.inst[data-state=draft]{border-left:4px solid var(--warn,#c80)}.inst[data-state=shared]{border-left:4px solid var(--accent)}
+@media(max-width:760px){
+  .mobile-nav{position:fixed;left:0;right:0;bottom:0;z-index:20;padding-bottom:calc(6px + env(safe-area-inset-bottom))}
+  main{padding-bottom:84px}
+  .create{grid-template-columns:1fr}.create-actions{flex-wrap:wrap}
+  .create-actions button:not(.icon){flex:1 1 auto;width:auto;padding:0 10px}
+  .create-actions button:not(.icon) span[data-i18n]{display:inline!important}
+  .tool-actions{flex-wrap:wrap}.stage-head{flex-wrap:wrap;gap:6px}
+}
+.surface-back{grid-column:1/-1;justify-self:start}#pin[aria-pressed=true] .lbl{font-weight:700}
+.folded{margin:0;padding:12px 14px;color:var(--muted,inherit);font-weight:600}.traits{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;padding:0;list-style:none}.trait{font-size:.78rem;padding:2px 8px;border:1px solid var(--line,#8886);border-radius:999px}

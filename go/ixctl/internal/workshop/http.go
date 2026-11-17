@@ -176,7 +176,7 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 			return
 		}
 		switch r.URL.Path {
-		case "/workshop/", "/workshop/index.html", "/workshop/sw.js", "/workshop/manifest.webmanifest", "/workshop/app.js", "/workshop/sync.js", "/workshop/voice.js", "/workshop/updates.js", "/workshop/branding.json", "/workshop/style.css", "/workshop/icon-192.png", "/workshop/icon-512.png", "/workshop/vendor/i18next.min.js", "/workshop/widgets.js", "/workshop/ai.js", "/workshop/vendor/lit-all.min.js":
+		case "/workshop/", "/workshop/index.html", "/workshop/sw.js", "/workshop/manifest.webmanifest", "/workshop/app.js", "/workshop/sync.js", "/workshop/voice.js", "/workshop/catalog.js", "/workshop/updates.js", "/workshop/branding.json", "/workshop/style.css", "/workshop/icon-192.png", "/workshop/icon-512.png", "/workshop/vendor/i18next.min.js", "/workshop/widgets.js", "/workshop/ai.js", "/workshop/vendor/lit-all.min.js":
 			files.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
