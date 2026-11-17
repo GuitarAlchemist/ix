@@ -12,6 +12,12 @@ pub const LEN_TOL: f64 = 1e-9;
 pub const AREA_TOL: f64 = 1e-10;
 /// How far inside a face a crease must run to cross it.
 pub const INSIDE_TOL: f64 = 1e-7;
+/// How far a point may sit off a line and still lie on it.
+pub const ON_LINE_TOL: f64 = 1e-9;
+/// The least length two collinear segments, or a crease inside a face, must share to overlap.
+pub const OVERLAP_TOL: f64 = 1e-6;
+/// The sum of angles at a vertex that Kawasaki and Maekawa treat as zero.
+pub const ANGLE_TOL: f64 = 1e-9;
 
 /// Signed area: positive for a counterclockwise polygon. Taken about the first vertex, so a
 /// polygon far from the origin keeps its precision.

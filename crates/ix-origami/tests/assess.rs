@@ -8,6 +8,11 @@ use serde_json::json;
 /// The right half of a 2 x 1 sheet folds over the left along a valley at x = 1; `order` is the
 /// stated sign of the one face pair: +1 agrees with the valley, -1 contradicts it.
 fn half_fold(order: i64) -> Fold {
+    half_fold_scaled(order, 1.0)
+}
+
+/// [`half_fold`] with every coordinate multiplied by `scale`.
+fn half_fold_scaled(order: i64, scale: f64) -> Fold {
     let vertices = [
         [0.0, 0.0],
         [1.0, 0.0],
@@ -15,7 +20,8 @@ fn half_fold(order: i64) -> Fold {
         [2.0, 1.0],
         [1.0, 1.0],
         [0.0, 1.0],
-    ];
+    ]
+    .map(|[x, y]| [x * scale, y * scale]);
     let folded = [
         [0.0, 0.0],
         [1.0, 0.0],
@@ -23,7 +29,8 @@ fn half_fold(order: i64) -> Fold {
         [0.0, 1.0],
         [1.0, 1.0],
         [0.0, 1.0],
-    ];
+    ]
+    .map(|[x, y]| [x * scale, y * scale]);
     let mut edges: Vec<([usize; 2], &str)> = (0..6).map(|k| ([k, (k + 1) % 6], "B")).collect();
     edges.push(([1, 4], "V"));
     Fold::from_value(&json!({
@@ -110,4 +117,22 @@ fn a_fold_whose_structure_stops_the_checks_is_unchecked_not_assessed() {
         matches!(e, AssessError::Unchecked(Unchecked::Structure(_))),
         "{e:?}"
     );
+}
+
+#[test]
+fn the_verdict_is_the_same_at_any_scale() {
+    // The tolerances are absolute, so the checks rescale first: a sheet 2^-30 or 2^30 times
+    // larger is judged as the sheet is.
+    for order in [1, -1] {
+        let at_one = assess(&half_fold(order), &Limits::NONE, &Options::default()).unwrap();
+        for k in [-30, -10, 10, 30] {
+            let scaled = half_fold_scaled(order, 2f64.powi(k));
+            let a = assess(&scaled, &Limits::NONE, &Options::default()).unwrap();
+            assert_eq!(
+                (a.report.ok, &a.report.rejected_by),
+                (at_one.report.ok, &at_one.report.rejected_by),
+                "order {order}, scale 2^{k}"
+            );
+        }
+    }
 }

@@ -23,7 +23,8 @@ use thiserror::Error;
 
 use crate::fold::{Assignment, Fold, Point};
 use crate::geometry::{
-    area, dist, inside_length, is_convex, overlay, Cell, AREA_TOL, INSIDE_TOL, LEN_TOL,
+    area, dist, inside_length, is_convex, overlay, Cell, ANGLE_TOL, AREA_TOL, INSIDE_TOL, LEN_TOL,
+    ON_LINE_TOL, OVERLAP_TOL,
 };
 use crate::limits::{within, Limits, OverLimit};
 use crate::local::{local_theorems, LocalTheorems};
@@ -281,16 +282,16 @@ impl Line {
         (c[0] - self.p[0]) * self.d[0] + (c[1] - self.p[1]) * self.d[1]
     }
 
-    /// Whether segment `r s` lies on the line and overlaps this edge by more than 1e-6.
+    /// Whether segment `r s` lies on the line and overlaps this edge by more than [`OVERLAP_TOL`].
     fn overlaps(&self, r: Point, s: Point) -> bool {
-        if self.side(r).abs() > 1e-9 || self.side(s).abs() > 1e-9 {
+        if self.side(r).abs() > ON_LINE_TOL || self.side(s).abs() > ON_LINE_TOL {
             return false;
         }
         let (a0, a1) = (
             self.along(r).min(self.along(s)),
             self.along(r).max(self.along(s)),
         );
-        self.len.min(a1) - a0.max(0.0) > 1e-6
+        self.len.min(a1) - a0.max(0.0) > OVERLAP_TOL
     }
 }
 
@@ -338,7 +339,7 @@ pub fn prepare(fold: &Fold, orient: &[i8], limits: &Limits) -> Result<Geometry, 
     for c in creases.iter().chain(&joints) {
         let (p, r) = ends(c);
         for (t, q) in polys.iter().enumerate() {
-            if !c.faces.contains(&t) && inside_length(p, r, q, INSIDE_TOL) > 1e-6 {
+            if !c.faces.contains(&t) && inside_length(p, r, q, INSIDE_TOL) > OVERLAP_TOL {
                 within(ITEMS, tortillas.len() + 1, limits.tacos)?;
                 tortillas.push(Tortilla {
                     crease: *c,
@@ -914,7 +915,7 @@ pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked>
     // own factor is a power of two.
     isometry.scale *= t;
     let crease_orientation = crease_orientation(fold, &orient);
-    let local_theorems = local_theorems(fold, 1e-9);
+    let local_theorems = local_theorems(fold, ANGLE_TOL);
     let rejected_by = layers.rejected_by();
     let ok = conflicts.is_empty()
         && isometry.ok
