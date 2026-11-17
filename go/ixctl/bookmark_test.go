@@ -100,8 +100,16 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 		seen = append(seen, e.Seq)
 	}
 	do(t, c, Request{Op: "bookmark.set", Bookmark: "after"})
+	// The tree has published what the replays read: stop it, so the sequence holds still for
+	// the rest. This client's read loop waits for room in a subscription's buffer before it
+	// reads the next frame, so a subscription left unread while the tree published 200 frames
+	// a second filled within about a second and stalled every reply behind it: a bookmark.set
+	// below hit its 10 s deadline on slow CI runners, on both OSes. The replays' buffers hold
+	// far more than the tree publishes before the stop.
+	do(t, c, Request{Op: "probe.stop", Node: "hb"})
+	do(t, c, Request{Op: "probe.stop", Node: "agg"})
 	// The replay of the leaf's pipe from `before`: the same envelopes, seq for seq.
-	_, frames, err := c.SubscribeBookmark(context.Background(), "probe/hb", "before", 256)
+	_, frames, err := c.SubscribeBookmark(context.Background(), "probe/hb", "before", 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +121,7 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 	}
 	// The replay of everything from `before`: the lifecycle on ctl and both pipes in one
 	// stream, in sequence order, nothing before the bookmark — what the pipeline saw.
-	_, all, err := c.SubscribeBookmark(context.Background(), "", "before", 256)
+	_, all, err := c.SubscribeBookmark(context.Background(), "", "before", 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
