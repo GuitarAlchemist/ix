@@ -558,12 +558,19 @@ func Prune(into string, keep int) error {
 	return nil
 }
 
-// lbugError is the first line lbug printed as an error: it reports errors on its output and still exits 0.
-func lbugError(out []byte) error {
+// ErrorLine is the first line lbug printed as an error, or "": lbug reports errors on its output and still exits 0.
+func ErrorLine(out []byte) string {
 	for _, line := range strings.Split(strings.ReplaceAll(string(out), "\r", ""), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "Error") {
-			return errors.New(strings.TrimSpace(line))
+			return strings.TrimSpace(line)
 		}
+	}
+	return ""
+}
+
+func lbugError(out []byte) error {
+	if line := ErrorLine(out); line != "" {
+		return errors.New(line)
 	}
 	return nil
 }

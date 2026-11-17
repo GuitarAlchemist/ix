@@ -85,7 +85,7 @@ export class IxCounter extends Block {
 }
 
 // The Desktop's own refusals, by code; any other error is DuckDB's message, shown as DuckDB wrote it.
-const QUERY_CODES = ['query_timed_out', 'query_result_too_large', 'query_output_unreadable', 'query_unknown', 'queryUncertain'];
+const QUERY_CODES = ['query_timed_out', 'query_result_too_large', 'query_output_unreadable', 'query_unknown', 'queryUncertain', 'graph_missing', 'graph_engine_missing'];
 const SHOWN_ROWS = 200;
 
 export class IxQueries extends Block {

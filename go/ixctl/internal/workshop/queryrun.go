@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GuitarAlchemist/ix/go/ixctl/internal/repograph"
 )
 
 // The Desktop runs the listed DuckDB queries (owner's choice, 2026-11-16): any approved device names one query of the
@@ -18,6 +20,9 @@ import (
 // duckdb CLI in the repo's folder (the queries read repo files such as state/streeling/catalog.jsonl), and answers its
 // rows. A device never sends SQL: what runs is what the repo's files say. One query at a time, stopped after a time
 // limit; a result too large to send is refused whole, never cut.
+//
+// The queries of a .cypher file (the Streeling graph, owner's choice, 2026-11-16) run the same way with the LadybugDB
+// CLI, read-only, on the newest finished build of the repo's graph (state/graph, written by cmd/ixforge-graph).
 
 const (
 	maxQueryOutput      = 1 << 20
@@ -27,14 +32,19 @@ const (
 
 var errQueryUnknown = errors.New("query_unknown")
 
-// QueryRunner runs the queries of Files, relative to Repo, with the duckdb executable DuckDB.
+// QueryRunner runs the queries of Files, relative to Repo, with the duckdb executable DuckDB, and those of .cypher files
+// with the LadybugDB executable Lbug on the newest finished graph build of Graphs.
 type QueryRunner struct {
 	Repo    string
 	Files   []string
 	DuckDB  string
+	Lbug    string
+	Graphs  string
 	Timeout time.Duration
 	// Run runs sql in dir and returns DuckDB's standard output and error (tests replace it); nil runs DuckDB.
 	Run func(ctx context.Context, dir, sql string) (stdout, stderr []byte, err error)
+	// RunGraph runs a Cypher query on db, read-only, and returns LadybugDB's output (tests replace it); nil runs Lbug.
+	RunGraph func(ctx context.Context, db, query string) ([]byte, error)
 
 	mu sync.Mutex
 }
@@ -90,6 +100,21 @@ func (r *QueryRunner) run(ctx context.Context, dir, sql string) ([]byte, []byte,
 	return out.buf.Bytes(), errOut.buf.Bytes(), err
 }
 
+// runGraph runs a Cypher query with the lbug CLI on db: read-only, JSON output, the query on standard input. lbug
+// prints its errors on its output.
+func (r *QueryRunner) runGraph(ctx context.Context, db, query string) ([]byte, error) {
+	if r.RunGraph != nil {
+		return r.RunGraph(ctx, db, query)
+	}
+	cmd := exec.CommandContext(ctx, r.Lbug, db, "-r", "-b", "-s", "-m", "json")
+	cmd.Stdin = strings.NewReader(query)
+	out := &cappedBuffer{max: maxQueryOutput + 1}
+	cmd.Stdout, cmd.Stderr = out, out
+	cmd.WaitDelay = 2 * time.Second
+	err := cmd.Run()
+	return out.buf.Bytes(), err
+}
+
 // lastArray is the last JSON value of DuckDB's output (a statement that returns no rows writes nothing; one that sets
 // a variable before the query writes nothing either), or an empty array.
 func lastArray(out []byte) (json.RawMessage, bool) {
@@ -120,9 +145,32 @@ func (r *QueryRunner) Query(ctx context.Context, source, title string) (QueryRes
 	}
 	runCtx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	result := QueryResult{Source: entry.Source, Title: entry.Title, SQL: entry.SQL}
 	started := time.Now()
-	out, errOut, runErr := r.run(runCtx, r.Repo, entry.SQL)
-	result := QueryResult{Source: entry.Source, Title: entry.Title, SQL: entry.SQL, MS: time.Since(started).Milliseconds()}
+	var out, errOut []byte
+	var runErr error
+	if strings.HasSuffix(entry.Source, ".cypher") {
+		if r.Lbug == "" {
+			result.Error = "graph_engine_missing"
+			return result, nil
+		}
+		db, err := repograph.Latest(r.Graphs)
+		if errors.Is(err, repograph.ErrNoGraph) {
+			result.Error = "graph_missing"
+			return result, nil
+		} else if err != nil {
+			return QueryResult{}, err
+		}
+		out, runErr = r.runGraph(runCtx, db, entry.SQL)
+		if line := repograph.ErrorLine(out); line != "" && runErr == nil {
+			errOut, runErr = []byte(line), errors.New("lbug reported an error")
+		} else if runErr != nil && len(out) <= maxQueryError {
+			errOut = out // what lbug said before it failed
+		}
+	} else {
+		out, errOut, runErr = r.run(runCtx, r.Repo, entry.SQL)
+	}
+	result.MS = time.Since(started).Milliseconds()
 	switch {
 	case runCtx.Err() != nil:
 		result.Error = "query_timed_out"

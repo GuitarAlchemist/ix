@@ -145,7 +145,8 @@ func autoUpdate(u *workshop.Updates, stop <-chan struct{}) {
 // workshopQueries lets every approved device run the listed DuckDB queries on the Desktop, once the owner has named the
 // ix repo and the duckdb executable in <data>\IxForge\queries.json ({"repo": "...", "duckdb": "..."}, both absolute and
 // present). The service's account must be able to read them. Without the file, or with a path that is not there, the
-// Desktop offers no queries.
+// Desktop offers no queries. The file may also name the LadybugDB CLI ("lbug", absolute and present): the graph queries
+// then run on the builds of the repo's state\graph; without it they answer that the Desktop has no graph engine.
 func workshopQueries(data string) *workshop.QueryRunner {
 	raw, err := os.ReadFile(filepath.Join(data, "IxForge", "queries.json"))
 	if err != nil {
@@ -154,6 +155,7 @@ func workshopQueries(data string) *workshop.QueryRunner {
 	var c struct {
 		Repo   string `json:"repo"`
 		DuckDB string `json:"duckdb"`
+		Lbug   string `json:"lbug"`
 	}
 	if json.Unmarshal(raw, &c) != nil || !filepath.IsAbs(c.Repo) || !filepath.IsAbs(c.DuckDB) {
 		return nil
@@ -164,7 +166,11 @@ func workshopQueries(data string) *workshop.QueryRunner {
 	if fi, err := os.Stat(c.DuckDB); err != nil || fi.IsDir() {
 		return nil
 	}
-	return &workshop.QueryRunner{Repo: c.Repo, DuckDB: c.DuckDB, Files: workshop.DefaultQueryFiles}
+	r := &workshop.QueryRunner{Repo: c.Repo, DuckDB: c.DuckDB, Files: workshop.DefaultQueryFiles, Graphs: filepath.Join(c.Repo, "state", "graph")}
+	if fi, err := os.Stat(c.Lbug); err == nil && !fi.IsDir() && filepath.IsAbs(c.Lbug) {
+		r.Lbug = c.Lbug
+	}
+	return r
 }
 
 func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopHost, error) {
