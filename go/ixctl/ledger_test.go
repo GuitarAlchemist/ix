@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -41,6 +42,51 @@ func TestTheLedgerSettlesOnlyAnUnbrokenRun(t *testing.T) {
 	}
 	if _, _, err := l.result(4); err == nil {
 		t.Fatal("a generation not yet admitted was not refused")
+	}
+}
+
+// A generation's converged or diverged event on ctl is published once the ledger recorded its
+// end, so a client that reads the event and then asks (a generation wait, Status) is answered at
+// once. A wait can answer before the event is published; ADR 0014 orders neither. The hub's tap
+// runs under its lock as each envelope is stamped: the ledger is read at the publication itself.
+func TestAGenerationsEndIsRecordedBeforeItsEventIsPublished(t *testing.T) {
+	spec := &Spec{Name: "p", Services: []ServiceSpec{{Name: "x", Command: "unused"}}}
+	p, err := NewPlane(spec, "p", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Shutdown)
+	type seen struct {
+		kind string
+		done bool
+	}
+	got := make(chan seen, 4)
+	p.hub.tap = func(env *Envelope) {
+		if env.Ch != "ctl" || (env.Ev.Kind != "converged" && env.Ev.Kind != "diverged") {
+			return
+		}
+		var d struct {
+			Generation uint64 `json:"generation"`
+		}
+		json.Unmarshal(env.Ev.Data, &d)
+		_, done, _ := p.gens.result(d.Generation)
+		got <- seen{env.Ev.Kind, done}
+	}
+	// x is stopped and asked stopped: a noop, so the generation converges with no supervisor.
+	_, end, err := p.Apply(&Desired{Services: map[string]DesiredService{"x": {State: desiredStopped}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := <-end; !res.Converged {
+		t.Fatalf("a noop apply: %+v", res)
+	}
+	select {
+	case s := <-got:
+		if s.kind != "converged" || !s.done {
+			t.Fatalf("at the publication of %s the ledger had recorded the end: %v", s.kind, s.done)
+		}
+	default:
+		t.Fatal("no converged event on ctl")
 	}
 }
 

@@ -648,6 +648,8 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			p.svcs[a.Service].forget(g)
 		}
 	}
+	// The ledger first, then ctl: a client that reads the event and then asks is answered at once
+	// (pinned by TestAGenerationsEndIsRecordedBeforeItsEventIsPublished).
 	p.gens.end(res)
 	if res.Converged {
 		p.hub.Publish("ctl", event("converged", map[string]any{"generation": g}))
