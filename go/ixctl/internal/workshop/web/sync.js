@@ -319,7 +319,10 @@ SyncEngine.prototype.activateSaved = async function () {
       if (!validXlet(result) || result.project_id !== projectID || result.definition_id !== definition.id) return;
       await this.replica.change(s => {
         keepNewer(s, result);
-        if (local && (result.seeded || sameContent(local, result))) delete s.localXlets[key];
+        // Drop the local copy only if it is still what was sent: a press made while the request was on its way stays
+        // on this device (the app says so) rather than vanishing.
+        const now = (s.localXlets || {})[key];
+        if (local && now && equal(now, local) && (result.seeded || sameContent(local, result))) delete s.localXlets[key];
       });
     }
   }
