@@ -331,7 +331,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// reads merged first.
 	s, since, epoch := l.beginSession(ctx, c, st)
 	for _, prefix := range []string{"ctl", "svc/"} {
-		if err := s.openControl(prefix, since[prefix], epoch, s.nextControlGen(prefix), false, true); err != nil {
+		if err := s.openControl(prefix, since[prefix], epoch, s.nextControlGen(prefix), controlStart); err != nil {
 			return false, err
 		}
 	}
@@ -693,11 +693,22 @@ func (s *linkSession) nextControlGen(prefix string) uint64 {
 	return cs.gen
 }
 
+// controlOpen is why openControl opens a control subscription: at session start, whose own list
+// follows; to reopen one the peer dropped, resumed from the last seq mirrored; or live, giving
+// up a catch-up (jumpControl).
+type controlOpen int
+
+const (
+	controlStart controlOpen = iota
+	controlReopen
+	controlJump
+)
+
 // openControl subscribes to one of the peer's control prefixes (ctl or svc/) and forwards its
 // frames into merged, in order, on a goroutine of its own, until the peer drops the subscription
 // (overflow: its gap is the last frame forwarded) or the link does. A resume (since given) is a
-// catch-up, granted only while the allowance has a frame and a byte left; otherwise, as when
-// jump asks for it, the subscription starts live and the jump is marked on the peer's mirrored
+// catch-up, granted only while the allowance has a frame and a byte left; otherwise, as for
+// controlJump, the subscription starts live and the jump is marked on the peer's mirrored
 // ctl (`jumped`, `prefix`, `from` the last seq mirrored on the prefix, `to` the head the live
 // subscription starts from, `src_epoch` the boot read), under l.mu, in the step that makes the
 // subscription the prefix's, unless nothing lies between the two (the head is the last seq
@@ -705,10 +716,11 @@ func (s *linkSession) nextControlGen(prefix string) uint64 {
 // jump of ctl loses the lifecycle events of its span, so the state is no longer reconciled and the
 // session loop is asked to read the list again (relist, signalled once the live subscription
 // stands, so the list's cursor is at or past the head it starts from and nothing falls between
-// the two: resnapshot; none at session start, listFollows, whose own list follows). A subscription
-// that completes after the prefix moved on (gen) stands down.
-func (s *linkSession) openControl(prefix string, since *uint64, epoch string, gen uint64, jump, listFollows bool) error {
+// the two: resnapshot; none for controlStart, whose own list follows). A subscription that
+// completes after the prefix moved on (gen) stands down.
+func (s *linkSession) openControl(prefix string, since *uint64, epoch string, gen uint64, why controlOpen) error {
 	l, ctx, c := s.l, s.ctx, s.c
+	jump := why == controlJump
 	if since != nil && !l.canReplay() {
 		since, jump = nil, true
 	}
@@ -738,7 +750,7 @@ func (s *linkSession) openControl(prefix string, since *uint64, epoch string, ge
 			// A lifecycle event in the jumped span is lost, so the pipes may no longer stand for
 			// the peer's tree: not reconciled until a new snapshot is applied (jumpControl said so
 			// already when the jump is its; a reopen past the allowance says it here).
-			s.listed, resnap = false, !listFollows && s.relist != nil
+			s.listed, resnap = false, why != controlStart
 			l.unlisted++
 		}
 		data := map[string]any{"peer": l.spec.Name, "prefix": prefix, "reason": "jumped", "to": sub.Head}
@@ -806,7 +818,7 @@ func (s *linkSession) reopenControl(pf peerFrame) {
 	l.mu.Unlock()
 	s.c.forget(pf.sub)
 	go func() {
-		if err := s.openControl(pf.prefix, since, epoch, gen, false, false); err != nil {
+		if err := s.openControl(pf.prefix, since, epoch, gen, controlReopen); err != nil {
 			s.failWith(err)
 		}
 	}()
@@ -838,7 +850,7 @@ func (s *linkSession) jumpControl(prefix string, sub int64) {
 		uctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 		s.c.Unsubscribe(uctx, sub) // best effort: its Done ends the forwarder, gen drops what it queued
 		cancel()
-		if err := s.openControl(prefix, nil, "", gen, true, false); err != nil {
+		if err := s.openControl(prefix, nil, "", gen, controlJump); err != nil {
 			s.failWith(err)
 		}
 	}()

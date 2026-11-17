@@ -421,7 +421,7 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 	t.Run("temp write fails: nothing changes", func(t *testing.T) {
 		s, clk, path := newNeedTest(t)
 		s.submit(submitOf(clk, "n1", time.Hour))
-		s.replace = failAt("temp", errors.New("disk full"))
+		s.replace = failAt(stageTemp, errors.New("disk full"))
 		_, err := s.claim("n1", "resolver-x", 60_000)
 		wantStatus(t, err, 500, "not persisted")
 		r, _ := s.status("n1", "task-a", "inc-1", "")
@@ -435,7 +435,7 @@ func TestNeedPersistenceInterruption(t *testing.T) {
 	t.Run("rename fails: unknown, then reconciled from disk, never replayed", func(t *testing.T) {
 		s, clk, _ := newNeedTest(t)
 		s.submit(submitOf(clk, "n1", time.Hour))
-		s.replace = failAt("rename", errors.New("access denied"))
+		s.replace = failAt(stageRename, errors.New("access denied"))
 		_, err := s.claim("n1", "resolver-x", 60_000)
 		wantStatus(t, err, 503, "unknown")
 		s.replace = replaceFile
@@ -551,7 +551,7 @@ func TestNeedFailedRenameAdoptsNothing(t *testing.T) {
 	s, clk, _ := newNeedTest(t)
 	s.submit(submitOf(clk, "n1", time.Hour))
 	wake := s.wake
-	s.replace = failAt("rename", errors.New("access denied"))
+	s.replace = failAt(stageRename, errors.New("access denied"))
 	s.claim("n1", "resolver-x", 60_000)
 	if len(s.needs) != 1 || s.needs[0].State != "open" || s.fence != 0 {
 		t.Fatalf("memory after a failed rename: state %q fence %d, want open and 0", s.needs[0].State, s.fence)
@@ -716,7 +716,7 @@ func TestNeedResultLostAfterRenameIsNotAnsweredTwice(t *testing.T) {
 	s, clk, path := newNeedTest(t)
 	s.submit(submitOf(clk, "n1", time.Hour))
 	c, _ := s.claim("n1", "resolver-x", 60_000)
-	s.replace = failAt("after", errors.New("crash after commit"))
+	s.replace = lostAnswer(errors.New("crash after commit"))
 	_, err := s.resolve("n1", "resolver-x", c.Claim.Fence, json.RawMessage(`{"port":1}`))
 	wantStatus(t, err, 503, "unknown")
 
@@ -876,7 +876,7 @@ func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
 	s, clk, path := newNeedTest(t)
 	fence := budgetedClaim(t, s, clk, "n1", 100, "", "res-x")
 
-	s.replace = failAt("rename", errors.New("crash at rename"))
+	s.replace = failAt(stageRename, errors.New("crash at rename"))
 	_, err := s.reserve("n1", "res-x", fence, "r1", "deterministic", 60)
 	wantStatus(t, err, 503, "unknown")
 	s = newNeedStore(path, clk.now) // restart: the reservation was not written
@@ -887,7 +887,7 @@ func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
 		t.Fatalf("retry: %v", err)
 	}
 
-	s.replace = failAt("after", errors.New("crash after commit"))
+	s.replace = lostAnswer(errors.New("crash after commit"))
 	_, err = s.reserve("n1", "res-x", fence, "r2", "deterministic", 30)
 	wantStatus(t, err, 503, "unknown")
 	s = newNeedStore(path, clk.now) // committed, reply lost
@@ -899,7 +899,7 @@ func TestNeedBudgetCrashAroundReserveAndSettle(t *testing.T) {
 		t.Fatalf("after the retry: %+v, want 90 committed (no double reservation)", v)
 	}
 
-	s.replace = failAt("after", errors.New("crash after commit"))
+	s.replace = lostAnswer(errors.New("crash after commit"))
 	_, err = s.settle("n1", "res-x", "r1", usageOf(10, 5, 0, 0))
 	wantStatus(t, err, 503, "unknown")
 	s = newNeedStore(path, clk.now)
@@ -1174,7 +1174,7 @@ func TestNeedJSONPersistenceAndRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 				if lost {
-					s.replace = failAt("after", errors.New("lost reply"))
+					s.replace = lostAnswer(errors.New("lost reply"))
 				}
 				_, err = s.submit(sub)
 				if lost {
@@ -1297,15 +1297,20 @@ func TestNeedJSONEscapedSizeBound(t *testing.T) {
 	}
 }
 
-// failAt is a need store's replace that fails at a stage: "temp" (nothing written), "rename"
-// (the file not replaced), "after" (replaced on disk, the answer lost on the way back).
+// failAt is a need store's replace that fails at a stage: stageTemp (nothing written) or
+// stageRename (the file not replaced).
 func failAt(stage string, err error) func(string, []byte) error {
+	return func(string, []byte) error { return &replaceError{stage: stage, err: err} }
+}
+
+// lostAnswer is a need store's replace whose rename went through but whose answer was lost on
+// the way back: the file is replaced on disk and the store is told the rename failed, as
+// replaceFile can say (replaceError).
+func lostAnswer(err error) func(string, []byte) error {
 	return func(path string, b []byte) error {
-		if stage == "after" {
-			if rerr := replaceFile(path, b); rerr != nil {
-				return rerr
-			}
+		if rerr := replaceFile(path, b); rerr != nil {
+			return rerr
 		}
-		return &replaceError{stage: stage, err: err}
+		return &replaceError{stage: stageRename, err: err}
 	}
 }

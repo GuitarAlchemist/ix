@@ -207,8 +207,8 @@ func (s *needStore) load() {
 	if os.IsNotExist(err) {
 		// No file and no temporary: an empty store. A temporary alone may be a write whose rename
 		// removed the old file first (os.Rename promises no atomicity off Unix): unknown, not empty.
-		if _, terr := os.Stat(s.path + ".tmp"); terr == nil {
-			s.unknown = s.path + " is missing while " + s.path + ".tmp remains"
+		if _, terr := os.Stat(tempOf(s.path)); terr == nil {
+			s.unknown = s.path + " is missing while " + tempOf(s.path) + " remains"
 			return
 		}
 		s.needs, s.fence, s.unknown = nil, 0, ""
@@ -367,7 +367,7 @@ func (s *needStore) commit(i int, next *need, fence uint64) error {
 	}
 	if err := s.replace(s.path, append(b, '\n')); err != nil {
 		var re *replaceError
-		if errors.As(err, &re) && re.stage == "temp" {
+		if errors.As(err, &re) && re.stage == stageTemp {
 			return &opError{status: 500, msg: "need not persisted, nothing changed: " + err.Error()}
 		}
 		s.unknown = "write interrupted at or after rename: " + err.Error()

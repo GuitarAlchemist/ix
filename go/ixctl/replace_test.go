@@ -12,8 +12,8 @@ import (
 
 // A replace syncs the new content before it replaces the old: a sync that fails fails the write,
 // and the file keeps its old content. Every writer of a file a reader trusts goes through
-// replaceFile, which hands the OS's sync (the state file and the Workshop's state through
-// writeFileAtomic, the bookmarks and the need store through the replace their constructor sets):
+// replaceFile, which hands the OS's sync (the state file and the Workshop's state directly, the
+// bookmarks and the need store through the replace their constructor sets):
 // that wiring is by reading; the test reaches the bookmarks through the value it hands them.
 func TestReplaceFileSyncsBeforeTheRename(t *testing.T) {
 	t.Parallel()
@@ -58,7 +58,7 @@ func TestTheStateFileIsReplacedOnceItsReaderLetsGo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	os.WriteFile(path, []byte("old"), 0o600)
 	holdFor(t, path, 150*time.Millisecond)
-	if err := writeFileAtomic(path, []byte("new")); err != nil {
+	if err := replaceFile(path, []byte("new")); err != nil {
 		t.Fatalf("the state file, held 150 ms: %v", err)
 	}
 	if b, _ := os.ReadFile(path); string(b) != "new" {

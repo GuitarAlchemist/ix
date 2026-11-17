@@ -122,13 +122,13 @@ func (p *Plane) Epoch() string { return p.hub.Epoch() }
 // Request is the one entry point every transport uses: the op table (ops.go) runs it, or
 // forward hands it to the peer it names.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
-	if req.Peer != "" && req.Op != "wait" {
+	op, ok := planeOps[req.Op]
+	if req.Peer != "" && !op.ownsPeer {
 		return p.forward(ctx, req.Peer, req)
 	}
 	if req.Op == "" {
 		return nil, badRequest("missing op")
 	}
-	op, ok := planeOps[req.Op]
 	if !ok {
 		return nil, badRequest("unknown op %q", req.Op)
 	}
@@ -648,6 +648,8 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			p.svcs[a.Service].forget(g)
 		}
 	}
+	// The ledger first, then ctl: a client that reads the event and then asks is answered at once.
+	// @ai:invariant a generation's end is recorded in the ledger before its converged or diverged event is published [P:assumed conf:0.8] (pinned by TestAGenerationsEndIsRecordedBeforeItsEventIsPublished, both outcomes)
 	p.gens.end(res)
 	if res.Converged {
 		p.hub.Publish("ctl", event("converged", map[string]any{"generation": g}))

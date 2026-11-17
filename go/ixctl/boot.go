@@ -119,7 +119,9 @@ func bootInstance(o instanceOptions) (*instance, error) {
 	in.srv = &http.Server{Handler: in.web, ReadHeaderTimeout: 5 * time.Second}
 	go in.srv.Serve(ln)
 	b, _ := json.Marshal(stateFile{Name: name, Addr: in.addr, Pid: os.Getpid(), Token: in.token})
-	if err := writeFileAtomic(statePath, b); err != nil {
+	// The token is in it: a failed rename leaves the temp (mode 0600) only when the state file
+	// cannot be seen any more, the temp then being the only copy (replaceFile).
+	if err := replaceFile(statePath, b); err != nil {
 		in.srv.Close()
 		in.plane.Shutdown()
 		return fail(err)
