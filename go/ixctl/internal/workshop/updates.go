@@ -241,6 +241,63 @@ func (u *Updates) Request(by Device, version, hash string) error {
 	return os.Rename(tmp, path)
 }
 
+// autoDevice is who asks when the Desktop installs a published release by itself.
+var autoDevice = Device{ID: "auto", Name: "Desktop (automatique)"}
+
+// AutoRequest asks the updater to install the newest offered release by itself (owner's choice, 2026-11-16: publishing
+// a release is the approval). It asks once per version ever, marked in auto-requested.json before the request is
+// written, so a version is never asked twice whatever happens between; it asks nothing while the updater is absent (the
+// version stays unmarked and is asked once the updater is back) or while a request waits, and never a version whose
+// last installation failed. It returns the version asked, or "".
+func (u *Updates) AutoRequest() (string, error) {
+	offered, err := u.Offered()
+	if err != nil || len(offered) == 0 {
+		return "", err
+	}
+	newest := offered[0]
+	marks := filepath.Join(u.Requests, "auto-requested.json")
+	var asked struct {
+		Versions []string `json:"versions"`
+	}
+	if _, err := readSmall(marks, &asked); err != nil {
+		return "", err
+	}
+	for _, v := range asked.Versions {
+		if v == newest.Version {
+			return "", nil
+		}
+	}
+	if at, ok := u.updaterSeen(); !ok || u.Now().Sub(at) > updaterFresh {
+		return "", nil
+	}
+	if _, err := os.Stat(filepath.Join(u.Requests, "update-request.json")); err == nil {
+		return "", nil
+	}
+	var last struct {
+		Version string `json:"version"`
+		State   string `json:"state"`
+	}
+	if _, err := readSmall(filepath.Join(u.Requests, "update-result.json"), &last); err != nil {
+		return "", err
+	}
+	asked.Versions = append(asked.Versions, newest.Version)
+	raw, _ := json.Marshal(asked)
+	tmp := marks + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, marks); err != nil {
+		return "", err
+	}
+	if last.Version == newest.Version && last.State != "completed" {
+		return "", nil
+	}
+	if err := u.Request(autoDevice, newest.Version, newest.SHA256); err != nil {
+		return "", err
+	}
+	return newest.Version, nil
+}
+
 // Admin authenticates token and requires an administering device.
 func (s *Store) Admin(token string) (Device, error) {
 	s.mu.Lock()
