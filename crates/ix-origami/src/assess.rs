@@ -7,9 +7,7 @@
 use thiserror::Error;
 
 use crate::fold::Fold;
-use crate::layers::{
-    analyse_within, swap_census_within, CensusRow, Context, Report, Unchecked,
-};
+use crate::layers::{analyse_within, swap_census_within, CensusRow, Context, Report, Unchecked};
 use crate::limits::Limits;
 use crate::thickness::{stack, BadThickness, Stack};
 
@@ -64,9 +62,9 @@ pub fn assess(fold: &Fold, limits: &Limits, options: &Options) -> Result<Assessm
         None
     };
     let census = match (&ctx, options.census) {
-        (Some(ctx), true) => Some(
-            swap_census_within(fold, ctx, limits).map_err(Unchecked::OverLimit)?,
-        ),
+        (Some(ctx), true) => {
+            Some(swap_census_within(fold, ctx, limits).map_err(Unchecked::OverLimit)?)
+        }
         _ => None,
     };
     let stack = match (&ctx, options.thickness) {

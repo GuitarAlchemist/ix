@@ -17,8 +17,6 @@
 //! search for one, and they do not prove the sheet folds flat: global flat-foldability is
 //! NP-complete (Bern and Hayes 1996).
 
-
-
 use ix_origami::{
     assess, AssessError, Assessment, CensusTally, Checked, Fold, Limits, Options, Sequence,
     SequenceError, Unchecked,
@@ -151,7 +149,10 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
         Err(AssessError::Thickness(e)) => return Err(e.to_string()),
     };
     let sequence = sequence.map(|s| {
-        let report = assessed.as_ref().map(|a| a.report.clone()).map_err(Clone::clone);
+        let report = assessed
+            .as_ref()
+            .map(|a| a.report.clone())
+            .map_err(Clone::clone);
         sequence_answer(&s, &s.answer(fold.clone(), report))
     });
     let assessed: Assessment = match assessed {

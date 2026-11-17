@@ -133,6 +133,11 @@ pub fn stack(ctx: &Context, t: f64) -> Result<Stack, BadThickness> {
     }
     let n = ctx.faces();
     let ply = ctx.ply();
+    // A finite `t` can still overflow a height, which JSON would carry as null: refused before
+    // any work is done for it.
+    if !(ply as f64 * t).is_finite() {
+        return Err(BadThickness(t));
+    }
     let panel = panels(n, ctx.joints());
     // An arc from the lower panel to the upper one for every stated overlapping pair, and the
     // first stated pair behind each arc.
@@ -198,10 +203,9 @@ pub fn stack(ctx: &Context, t: f64) -> Result<Stack, BadThickness> {
             }
         }
     };
-    // A finite `t` can still overflow a height, which JSON would carry as null: the same as a
-    // cycle's missing height.
+    // The rigid height, `levels · t`, can overflow where `ply · t` did not; a cycle has no height.
     let ply_height = ply as f64 * t;
-    if !ply_height.is_finite() || rigid.height.is_some_and(|h| !h.is_finite()) {
+    if rigid.height.is_some_and(|h| !h.is_finite()) {
         return Err(BadThickness(t));
     }
     Ok(Stack {

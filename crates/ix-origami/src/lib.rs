@@ -73,8 +73,7 @@ pub mod thickness;
 pub use assess::{assess, AssessError, Assessment, Options};
 pub use fold::{Assignment, Fold, FoldError, FoldedFrame, Point};
 pub use layers::{
-    analyse, analyse_within, swap_census, swap_census_within, CensusRow,
-    CensusTally, Context,
+    analyse, analyse_within, swap_census, swap_census_within, CensusRow, CensusTally, Context,
     LayerChecks, Report, Rule, Unchecked,
 };
 #[cfg(feature = "test-support")]
