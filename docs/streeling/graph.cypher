@@ -1,8 +1,11 @@
-// Streeling University — graph queries (LadybugDB over the learnings catalog and the repo's git history).
+// Streeling University — graph queries (LadybugDB over the learnings catalog, the git history of ix and ga, and their
+// pull requests and issues).
 //
 // The graph is built by `go run ./cmd/ixforge-graph` (go/ixctl): Learning -IN_REPO-> Repo, Learning -TAGGED-> Tag,
-// Commit -CHANGED-> File, Learning -MENTIONS-> File (a file the learning's text names). Commits that change more than
-// 40 files are left out. The same questions in edge-list SQL are in graph-baseline.sql, to compare.
+// Commit -CHANGED-> File, Learning -MENTIONS-> File (a file the learning's text names), PR -TOUCHES-> File,
+// PR -CLOSES-> Issue, Issue -NAMES-> File. A file is known by its repo and path (File.id is repo:path). Commits that
+// change more than 40 files are left out. The Desktop runs these queries on its newest build; queries 1 to 5 in
+// edge-list SQL are in graph-baseline.sql, to compare.
 
 // 1) Related learnings: pairs that share at least two tags.
 MATCH (a:Learning)-[:TAGGED]->(t:Tag)<-[:TAGGED]-(b:Learning)
@@ -15,23 +18,24 @@ LIMIT 25;
 
 // 2) Files that change together: the pairs most often changed by the same commit.
 MATCH (a:File)<-[:CHANGED]-(c:Commit)-[:CHANGED]->(b:File)
-WHERE a.path < b.path
-RETURN a.path AS file, b.path AS with_file, count(c) AS together
-ORDER BY together DESC, file
+WHERE a.id < b.id
+RETURN a.repo AS repo, a.path AS file, b.path AS with_file, count(c) AS together
+ORDER BY together DESC, repo, file
 LIMIT 25;
 
 // 3) Files the learnings name most: where the hard-won knowledge is.
 MATCH (l:Learning)-[:MENTIONS]->(f:File)
-RETURN f.path AS file, count(l) AS learnings, collect(l.title) AS titles
-ORDER BY learnings DESC, file
+RETURN f.repo AS repo, f.path AS file, count(l) AS learnings, collect(l.title) AS titles
+ORDER BY learnings DESC, repo, file
 LIMIT 20;
 
 // 4) Read before you touch: learnings that name a file changing together (at least twice) with a file of the last 30 commits.
 MATCH (r:Commit)
-WITH r ORDER BY r.date DESC LIMIT 30
+WITH r ORDER BY r.date DESC, r.sha LIMIT 30
 MATCH (r)-[:CHANGED]->(f:File)
 WITH DISTINCT f
 MATCH (f)<-[:CHANGED]-(c:Commit)-[:CHANGED]->(g:File)
+WHERE g.id <> f.id
 WITH f, g, count(DISTINCT c) AS together
 WHERE together >= 2
 MATCH (l:Learning)-[:MENTIONS]->(g)
@@ -43,4 +47,32 @@ LIMIT 25;
 MATCH (:Repo {name: 'ix'})<-[:IN_REPO]-(a:Learning)-[:TAGGED]->(t:Tag)<-[:TAGGED]-(b:Learning)-[:IN_REPO]->(:Repo {name: 'ga'})
 RETURN t.name AS tag, count(DISTINCT a) AS ix_learnings, count(DISTINCT b) AS ga_learnings
 ORDER BY ix_learnings + ga_learnings DESC, tag
+LIMIT 20;
+
+// 6) Open pull requests that collide: pairs that touch the same files.
+MATCH (a:PR {state: 'OPEN'})-[:TOUCHES]->(f:File)<-[:TOUCHES]-(b:PR {state: 'OPEN'})
+WHERE a.id < b.id
+RETURN a.id AS pr, a.title AS title, b.id AS with_pr, b.title AS with_title, count(f) AS shared, collect(f.path) AS files
+ORDER BY shared DESC, pr
+LIMIT 25;
+
+// 7) What an open pull request should read first: the learnings that name a file it touches.
+MATCH (p:PR {state: 'OPEN'})-[:TOUCHES]->(f:File)<-[:MENTIONS]-(l:Learning)
+RETURN p.id AS pr, p.title AS title, l.title AS learning, l.path AS path, collect(f.path) AS files
+ORDER BY pr DESC, learning
+LIMIT 40;
+
+// 8) Open issues and the open pull requests that touch the files they name, without closing them.
+MATCH (i:Issue {state: 'OPEN'})-[:NAMES]->(f:File)<-[:TOUCHES]-(p:PR {state: 'OPEN'})
+WHERE NOT (p)-[:CLOSES]->(i)
+RETURN i.id AS issue, i.title AS title, p.id AS pr, p.title AS pr_title, collect(f.path) AS files
+ORDER BY issue DESC, pr
+LIMIT 25;
+
+// 9) Files fixed again and again: the files closed issues name, by how many issues, with the learnings that name them.
+MATCH (p:PR {state: 'MERGED'})-[:CLOSES]->(i:Issue)-[:NAMES]->(f:File)
+WITH f, count(DISTINCT i) AS issues
+OPTIONAL MATCH (l:Learning)-[:MENTIONS]->(f)
+RETURN f.repo AS repo, f.path AS file, issues, collect(DISTINCT l.title) AS learnings
+ORDER BY issues DESC, repo, file
 LIMIT 20;

@@ -103,6 +103,10 @@ func TestTheGraphLinksLearningsPullRequestsAndIssuesToTheFilesOfTheirRepo(t *tes
 	if len(commits) != 3 {
 		t.Fatalf("%d commits kept, want 3 (the one over the bound left out)", len(commits))
 	}
+	// Commit times are UTC to the second, so that "the last 30 commits" sorts the same in every engine.
+	if at, err := time.Parse(time.RFC3339, commits[0].Date); err != nil || !strings.HasSuffix(commits[0].Date, "Z") || at.IsZero() {
+		t.Errorf("commit date %q: want a UTC RFC 3339 time", commits[0].Date)
+	}
 	gaCommits, err := ReadCommits(ga, "ga", 100, 3)
 	if err != nil || len(gaCommits) != 1 || gaCommits[0].Repo != "ga" {
 		t.Fatalf("ga commits %+v, %v", gaCommits, err)
