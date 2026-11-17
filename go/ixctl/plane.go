@@ -700,7 +700,8 @@ func (p *Plane) waitForLaunch(ctx context.Context, epoch string, g uint64, name 
 		return WaitReply{}, badRequest("unknown generation %d", g)
 	}
 	head := p.hub.Head()
-	cur := p.hub.subscribe(s.ch, true, &head, epoch)
+	cur := p.hub.Subscribe(s.ch, &head, epoch)
+	cur.exactly()
 	if reply, done, err := p.launchResult(s, g); done || err != nil {
 		return reply, err
 	}
