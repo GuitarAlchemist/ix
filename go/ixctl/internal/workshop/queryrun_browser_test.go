@@ -3,6 +3,7 @@ package workshop
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,4 +69,36 @@ func TestNoRunButtonWhereTheDesktopRunsNoQueries(t *testing.T) {
 	if buttons != 0 {
 		t.Fatalf("no run button without queries on the Desktop: %d", buttons)
 	}
+}
+
+// TestAQueryWithoutAClearAnswerSaysWhy: when the Desktop's answer to a run is lost (here the connection drops), the app
+// says so and why, instead of a bare "no clear answer"; a graph query offers to copy the query, not "the SQL".
+func TestAQueryWithoutAClearAnswerSaysWhy(t *testing.T) {
+	repo := filepath.Join("testdata", "ix")
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &QueryRunner{Repo: abs, Files: DefaultQueryFiles,
+		Run: func(ctx context.Context, dir, sql string) ([]byte, []byte, error) {
+			panic(http.ErrAbortHandler) // the connection drops without an answer
+		}}
+	f := newBrowserFixture(t, WithQueries(runner))
+	entries := append(readTestQueries(t), QueryEntry{Title: "6) Open pull requests that touch the same files", Source: "docs/streeling/graph.cypher", SQL: "MATCH (p:PR) RETURN p.number;"})
+	widget, err := QueriesWidget("Requêtes", entries, testMade)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tablet := f.join("Tablette")
+	tablet.typeInto("new-name", string(widget))
+	tablet.press("#new-list")
+	tablet.until("the list", `document.querySelectorAll('#widget-host [data-query]').length===16`)
+
+	const first = `document.querySelector('#widget-host [data-query]')`
+	tablet.evalInto(`(()=>{`+first+`.querySelector('summary').click();`+first+`.querySelector('[data-query-run]').click();return true})()`, nil)
+	tablet.until("the cause", first+`.querySelector('[data-query-error]')?.textContent==='Pas de réponse claire du Desktop (connexion coupée) : relancez la requête.'`)
+
+	const graph = `[...document.querySelectorAll('#widget-host [data-query]')].at(-1)`
+	tablet.evalInto(`(()=>{`+graph+`.querySelector('summary').click();return true})()`, nil)
+	tablet.until("copy the query", graph+`.querySelector('[data-query-copy]')?.textContent.trim()==='Copier la requête' && `+first+`.querySelector('[data-query-copy]').textContent.trim()==='Copier le SQL'`)
 }
