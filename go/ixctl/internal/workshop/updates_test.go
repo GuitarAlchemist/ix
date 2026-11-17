@@ -182,3 +182,75 @@ func TestAnAdminAsksTheUpdaterToInstallARelease(t *testing.T) {
 		t.Fatalf("the updater's result is shown: %v", reply)
 	}
 }
+
+// TestTheDesktopInstallsAPublishedReleaseByItself: the owner chose (2026-11-16) that a published release installs by
+// itself, publishing being the owner's approval. The Desktop asks the updater for the newest offered release, under the
+// name "Desktop (automatique)", once per version ever: never while the updater is absent or a request waits, and never
+// again for a version already asked or whose installation failed (a failed install is not retried by itself).
+func TestTheDesktopInstallsAPublishedReleaseByItself(t *testing.T) {
+	u, _, _, _ := updatesFixture(t)
+	requested := filepath.Join(u.Requests, "update-request.json")
+	asked := func(want string) {
+		t.Helper()
+		got, err := u.AutoRequest()
+		if err != nil || got != want {
+			t.Fatalf("auto request: got %q %v, want %q", got, err, want)
+		}
+	}
+	read := func() map[string]string {
+		t.Helper()
+		var r map[string]string
+		raw, err := os.ReadFile(requested)
+		if err != nil || json.Unmarshal(raw, &r) != nil {
+			t.Fatalf("request: %v", err)
+		}
+		return r
+	}
+
+	asked("") // nothing published
+	seventeen := addRelease(t, u.Releases, "0.1.0-ixforge.17", "0.1.0-ixforge.17", []byte("seventeen"), "")
+	eighteen := addRelease(t, u.Releases, "0.1.0-ixforge.18", "0.1.0-ixforge.18", []byte("eighteen"), "")
+	asked("") // no updater seen: nobody would take it
+	if _, err := os.Stat(requested); err == nil {
+		t.Fatal("no request without an updater")
+	}
+	seenUpdater(t, u, updatesNow.Add(-30*time.Second))
+	asked("0.1.0-ixforge.18") // the newest, not each one
+	if r := read(); r["version"] != "0.1.0-ixforge.18" || r["sha256"] != eighteen || r["device_name"] != "Desktop (automatique)" || r["device_id"] != "auto" {
+		t.Fatalf("the request names the newest release and who asked: %v", r)
+	}
+	asked("") // it waits for the updater
+	_ = seventeen
+
+	// The updater took it and failed: the Desktop does not ask again.
+	if err := os.Remove(requested); err != nil {
+		t.Fatal(err)
+	}
+	result, _ := json.Marshal(map[string]string{"version": "0.1.0-ixforge.18", "state": "rolled_back", "error": "health check failed"})
+	if err := os.WriteFile(filepath.Join(u.Requests, "update-result.json"), result, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asked("")
+	if _, err := os.Stat(requested); err == nil {
+		t.Fatal("a failed version is not asked again")
+	}
+
+	// A version an admin asked by hand and that failed is not retried by the Desktop either.
+	addRelease(t, u.Releases, "0.1.0-ixforge.19", "0.1.0-ixforge.19", []byte("nineteen"), "")
+	result, _ = json.Marshal(map[string]string{"version": "0.1.0-ixforge.19", "state": "failed"})
+	if err := os.WriteFile(filepath.Join(u.Requests, "update-result.json"), result, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asked("")
+
+	// A newer release is asked once the updater is back, and only once.
+	addRelease(t, u.Releases, "0.1.0-ixforge.20", "0.1.0-ixforge.20", []byte("twenty"), "")
+	seenUpdater(t, u, updatesNow.Add(-10*time.Minute))
+	asked("")
+	seenUpdater(t, u, updatesNow.Add(-30*time.Second))
+	asked("0.1.0-ixforge.20")
+	if err := os.Remove(requested); err != nil {
+		t.Fatal(err)
+	}
+	asked("") // taken, no result yet: still never twice
+}
