@@ -3,6 +3,7 @@ package workshop
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 // clientBooted: the client is up and unlocked, whether or not its update check could reach the Desktop.
@@ -182,4 +183,43 @@ func TestLocalWorkGoesToTheDesktopWhenThePCIsLinked(t *testing.T) {
 	tablet := f.join("Tablette")
 	openTool(t, tablet, "Épicerie")
 	tablet.until("another device sees the list", shownList+`==='[x] Lait, [ ] Pain'`)
+}
+
+// TestALocalEditDuringActivationIsKept (Codex P1 on #544): a counter pressed on the PC while its activation is on its
+// way to the Desktop is not lost when the activation's reply arrives. The Desktop starts from the value that was sent;
+// the newer local value stays on this device, and the app says so.
+func TestALocalEditDuringActivationIsKept(t *testing.T) {
+	f := newBrowserFixture(t)
+	page, _ := startChromeIn(t, f.chrome, f.pin, t.TempDir())
+	page.navigate(f.origin + "/workshop/")
+	settle(t, page)
+	newTool(t, page, "Tasses", "new-counter")
+	pressCounter(page, "increment")
+	page.until("local counter", shownCounter+`==='1'`)
+
+	hold := make(chan struct{})
+	f.holdActions.Store(&hold)
+	link, err := f.store.NewLinkInvite(f.origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page.navigate(link.URL)
+	deadline := time.Now().Add(20 * time.Second)
+	for f.actions.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the activation never left")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	pressCounter(page, "increment")
+	page.until("the local edit while the activation is in flight", shownCounter+`==='2'`)
+	f.holdActions.Store(nil)
+	close(hold)
+
+	page.until("the Desktop holds the sent value and the local edit is kept", `document.querySelector('#widget-host [data-xlet-live]')!==null && `+shownCounter+`==='1' && !document.getElementById('local-kept').hidden`)
+	var local int
+	page.evalInto(`import('/workshop/sync.js').then(m=>m.Replica.open()).then(r=>r.read()).then(s=>(Object.values(s.localXlets||{})[0]||{}).value||0)`, &local)
+	if local != 2 {
+		t.Fatalf("the local value pressed during the activation must be kept: %d", local)
+	}
 }
