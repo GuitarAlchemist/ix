@@ -136,3 +136,34 @@ fn the_verdict_is_the_same_at_any_scale() {
         }
     }
 }
+
+#[test]
+fn a_rule_is_named_as_it_serializes() {
+    use ix_origami::Rule;
+    for rule in [
+        Rule::Adjacency,
+        Rule::Cells,
+        Rule::TacoTortilla,
+        Rule::TacoTaco,
+        Rule::TortillaTortilla,
+    ] {
+        assert_eq!(serde_json::to_value(rule).unwrap(), json!(rule.name()));
+    }
+}
+
+#[test]
+fn the_census_is_tallied_by_rule_set() {
+    use ix_origami::CensusTally;
+    let options = Options {
+        thickness: None,
+        census: true,
+    };
+    let rows = assess(&half_fold(1), &Limits::NONE, &options)
+        .unwrap()
+        .census
+        .unwrap();
+    let tally = CensusTally::of(&rows);
+    assert_eq!((tally.pairs, tally.rejected), (1, 1));
+    assert!(tally.accepted.is_empty());
+    assert_eq!(tally.by_rules.get("adjacent: adjacency"), Some(&1));
+}

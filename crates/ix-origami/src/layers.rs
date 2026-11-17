@@ -493,6 +493,19 @@ pub enum Rule {
     TortillaTortilla,
 }
 
+impl Rule {
+    /// The name the report uses (the serialized form).
+    pub fn name(self) -> &'static str {
+        match self {
+            Rule::Adjacency => "adjacency",
+            Rule::Cells => "cells",
+            Rule::TacoTortilla => "taco_tortilla",
+            Rule::TacoTaco => "taco_taco",
+            Rule::TortillaTortilla => "tortilla_tortilla",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LayerChecks {
     pub adjacency: Adjacency,
@@ -954,6 +967,7 @@ pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked>
 }
 
 /// The same fold with the stated order of faces `f` and `g` reversed: the faulty swap.
+#[cfg(feature = "test-support")]
 pub fn swap(fold: &Fold, f: usize, g: usize) -> Fold {
     let mut out = fold.clone();
     let (f, g) = (f as i64, g as i64);
@@ -1003,6 +1017,51 @@ pub fn swap_census(fold: &Fold, ctx: &Context) -> Vec<CensusRow> {
         .collect()
 }
 
+/// The census by rule set: how many flips each combination of rules rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CensusTally {
+    /// The stated pairs flipped.
+    pub pairs: usize,
+    /// The flips some rule rejected.
+    pub rejected: usize,
+    /// The pairs whose flip no rule rejected: a rule that cannot fail proves nothing.
+    pub accepted: Vec<[usize; 2]>,
+    /// Flips per rule set, keyed `"adjacent: rule + rule"` or `"non-adjacent: none"`.
+    pub by_rules: BTreeMap<String, usize>,
+}
+
+impl CensusTally {
+    /// Tallies the rows of a census.
+    pub fn of(rows: &[CensusRow]) -> Self {
+        let mut by_rules: BTreeMap<String, usize> = BTreeMap::new();
+        for row in rows {
+            let kind = if row.adjacent {
+                "adjacent"
+            } else {
+                "non-adjacent"
+            };
+            let rules = if row.rejected_by.is_empty() {
+                "none".to_string()
+            } else {
+                let names: Vec<&str> = row.rejected_by.iter().map(|r| r.name()).collect();
+                names.join(" + ")
+            };
+            *by_rules.entry(format!("{kind}: {rules}")).or_insert(0) += 1;
+        }
+        let accepted: Vec<[usize; 2]> = rows
+            .iter()
+            .filter(|r| r.rejected_by.is_empty())
+            .map(|r| r.pair)
+            .collect();
+        Self {
+            pairs: rows.len(),
+            rejected: rows.len() - accepted.len(),
+            accepted,
+            by_rules,
+        }
+    }
+}
+
 /// An upper bound on the steps [`swap_census`] takes: each flipped pair scans every crease,
 /// cell, tortilla, taco and tortilla pair, and looks for a cycle in the cells holding both its
 /// faces, at most (faces in the cell)² steps each.
@@ -1039,6 +1098,7 @@ pub fn swap_census_within(
 
 /// The first stated pair, in file order, whose flip `rule` rejects, among adjacent or
 /// non-adjacent pairs.
+#[cfg(feature = "test-support")]
 pub fn first_swap(fold: &Fold, ctx: &Context, rule: Rule, adjacent: bool) -> Option<[usize; 2]> {
     swap_census(fold, ctx)
         .into_iter()

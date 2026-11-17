@@ -17,10 +17,10 @@
 //! search for one, and they do not prove the sheet folds flat: global flat-foldability is
 //! NP-complete (Bern and Hayes 1996).
 
-use std::collections::BTreeMap;
+
 
 use ix_origami::{
-    assess, AssessError, Assessment, CensusRow, Checked, Fold, Limits, Options, Rule, Sequence,
+    assess, AssessError, Assessment, CensusTally, Checked, Fold, Limits, Options, Sequence,
     SequenceError, Unchecked,
 };
 use ix_tool_macros::ix_tool;
@@ -170,7 +170,7 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
         out["sequence"] = s;
     }
     if let Some(rows) = &assessed.census {
-        out["census"] = census_tally(rows);
+        out["census"] = serde_json::to_value(CensusTally::of(rows)).map_err(|e| e.to_string())?;
     }
     if let Some(stack) = &assessed.stack {
         let mut v = serde_json::to_value(stack).map_err(|e| e.to_string())?;
@@ -209,42 +209,6 @@ fn sequence_answer(sequence: &Sequence, checked: &Checked) -> Value {
 
 fn refused(e: &dyn std::fmt::Display) -> String {
     format!("refused, not checked: {e} (the limits of this tool)")
-}
-
-fn census_tally(rows: &[CensusRow]) -> Value {
-    let mut by_rules: BTreeMap<String, usize> = BTreeMap::new();
-    for row in rows {
-        let rules: Vec<String> = row.rejected_by.iter().map(|&r| rule_name(r)).collect();
-        let kind = if row.adjacent {
-            "adjacent"
-        } else {
-            "non-adjacent"
-        };
-        let rules = if rules.is_empty() {
-            "none".to_string()
-        } else {
-            rules.join(" + ")
-        };
-        *by_rules.entry(format!("{kind}: {rules}")).or_insert(0) += 1;
-    }
-    let accepted: Vec<[usize; 2]> = rows
-        .iter()
-        .filter(|r| r.rejected_by.is_empty())
-        .map(|r| r.pair)
-        .collect();
-    json!({
-        "pairs": rows.len(),
-        "rejected": rows.len() - accepted.len(),
-        "accepted": accepted,
-        "by_rules": by_rules,
-    })
-}
-
-fn rule_name(rule: Rule) -> String {
-    serde_json::to_value(rule)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| format!("{rule:?}"))
 }
 
 #[cfg(test)]
