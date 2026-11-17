@@ -154,6 +154,14 @@ func TestEveryOpOfTheTableIsRelayedOrRefusedByName(t *testing.T) {
 			t.Errorf("%s: forward said %v, want %q", name, err, want)
 		}
 	}
+	// A request naming a peer goes to forward before the table is consulted for anything else: a
+	// missing or unknown op is refused there as not forwardable, not as missing or unknown.
+	for _, op := range []string{"", "no.such.op"} {
+		_, err := a.Request(t.Context(), Request{Op: op, Peer: "b"})
+		if want := "op \"" + op + "\" cannot be forwarded"; err == nil || err.Error() != want {
+			t.Errorf("op %q naming a peer: %v, want %q", op, err, want)
+		}
+	}
 	// An op that owns its peer checks the request before it hands it on: a malformed wait naming
 	// the down peer is refused for its own fields here, never relayed.
 	if _, err := a.Request(t.Context(), Request{Op: "wait", Peer: "b"}); err == nil || !strings.Contains(err.Error(), "timeout_ms") {
