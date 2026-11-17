@@ -84,6 +84,8 @@ type workshopHost struct {
 	active    sync.WaitGroup
 	closeOnce sync.Once
 	lock      *os.File
+	stopAuto  chan struct{}  // closed by close() to stop autoUpdate
+	auto      sync.WaitGroup // autoUpdate, waited for by close()
 }
 
 func readWorkshopKey(path string) (string, error) {
@@ -105,7 +107,7 @@ func readWorkshopKey(path string) (string, error) {
 // workshopUpdates lets admin devices install a newer build from the app: releases are put in
 // %ProgramData%\IxForge\releases by Publish-IxForgeRelease.ps1; the requests go to <state>\workshop\updates, which the
 // updater task (Install-IxForgeUpdater.ps1, run as SYSTEM) reads. Without ProgramData, nothing is offered.
-func workshopUpdates(stateDir string) []workshop.Option {
+func workshopUpdates(stateDir string) *workshop.Updates {
 	data := os.Getenv("ProgramData")
 	if data == "" || !filepath.IsAbs(data) {
 		return nil
@@ -114,7 +116,30 @@ func workshopUpdates(stateDir string) []workshop.Option {
 	if err := os.MkdirAll(requests, 0o755); err != nil {
 		return nil
 	}
-	return []workshop.Option{workshop.WithUpdates(&workshop.Updates{Installed: version, Releases: filepath.Join(data, "IxForge", "releases"), Requests: requests, Now: time.Now})}
+	return &workshop.Updates{Installed: version, Releases: filepath.Join(data, "IxForge", "releases"), Requests: requests, Now: time.Now}
+}
+
+// autoUpdateEvery is how often the running Desktop looks for a newly published release to ask for by itself (the
+// owner's choice, 2026-11-16: publishing is the approval). The updater task runs every minute too.
+var autoUpdateEvery = time.Minute
+
+// autoUpdate asks for the newest published release now and then every autoUpdateEvery, until stop is closed. An error
+// is logged and not retried any faster: AutoRequest marks a version before asking, so it is asked at most once.
+func autoUpdate(u *workshop.Updates, stop <-chan struct{}) {
+	tick := time.NewTicker(autoUpdateEvery)
+	defer tick.Stop()
+	for {
+		if asked, err := u.AutoRequest(); err != nil {
+			fmt.Fprintf(os.Stderr, "ixctl: automatic update: %v\n", err)
+		} else if asked != "" {
+			fmt.Fprintf(os.Stderr, "ixctl: automatic update: asked the updater for %s\n", asked)
+		}
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 // workshopQueries lets every approved device run the listed DuckDB queries on the Desktop, once the owner has named the
@@ -180,7 +205,11 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 		return nil, err
 	}
 	h := &workshopHost{store: store, addr: listener.Addr().String(), ownerKey: key, statePath: filepath.Join(stateDir, name+".workshop.json"), lock: lock}
-	options := append(workshopUpdates(stateDir), workshop.WithVersion(version))
+	options := []workshop.Option{workshop.WithVersion(version)}
+	updates := workshopUpdates(stateDir)
+	if updates != nil {
+		options = append(options, workshop.WithUpdates(updates))
+	}
 	if data := os.Getenv("ProgramData"); filepath.IsAbs(data) {
 		if q := workshopQueries(data); q != nil {
 			options = append(options, workshop.WithQueries(q))
@@ -213,6 +242,11 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 		return nil, err
 	}
 	go h.server.Serve(listener)
+	if updates != nil {
+		h.stopAuto = make(chan struct{})
+		h.auto.Add(1)
+		go func() { defer h.auto.Done(); autoUpdate(updates, h.stopAuto) }()
+	}
 	success = true
 	return h, nil
 }
@@ -244,6 +278,10 @@ func (h *workshopHost) close() {
 	}
 	h.closeOnce.Do(func() {
 		h.stopAccepting()
+		if h.stopAuto != nil {
+			close(h.stopAuto)
+			h.auto.Wait()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = h.server.Shutdown(ctx)
 		cancel()
