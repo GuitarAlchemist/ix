@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -64,6 +65,9 @@ func TestAReleaseBuiltHereIsOfferedByTheDesktop(t *testing.T) {
 // it would do: a task run as SYSTEM every minute, the runner and the reviewed updater copied where only administrators
 // write (with the hashes of the files reviewed here), and who may write releases.
 func TestInstallingTheUpdaterShowsItsPlanFirst(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the updater is a Windows task run as SYSTEM; its plan reads ProgramData and ProgramFiles")
+	}
 	if _, err := exec.LookPath("pwsh"); err != nil {
 		t.Skip("pwsh 7.4+ not installed")
 	}
