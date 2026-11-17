@@ -275,3 +275,70 @@ func TestTheDesktopRunsQueriesOnlyWhereTheOwnerNamedThem(t *testing.T) {
 		t.Fatalf("the named repo and duckdb run the default query files: %+v", r)
 	}
 }
+
+// TestTheRunningDesktopAsksForAPublishedReleaseByItself: once started, the Desktop looks at the releases folder on its
+// own and asks the updater for the newest published release (owner's choice, 2026-11-16), and stops looking when closed.
+func TestTheRunningDesktopAsksForAPublishedReleaseByItself(t *testing.T) {
+	dir, data := t.TempDir(), t.TempDir()
+	t.Setenv("ProgramData", data)
+	installed, every := version, autoUpdateEvery
+	version, autoUpdateEvery = "0.1.0-ixforge.20", 20*time.Millisecond
+	t.Cleanup(func() { version, autoUpdateEvery = installed, every })
+
+	release := filepath.Join(data, "IxForge", "releases", "0.1.0-ixforge.21")
+	if err := os.MkdirAll(release, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := []byte("ixctl 21")
+	if err := os.WriteFile(filepath.Join(release, "ixctl.exe"), exe, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(exe)
+	manifest, _ := json.Marshal(map[string]string{"version": "0.1.0-ixforge.21", "sha256": strings.ToUpper(hex.EncodeToString(sum[:]))})
+	if err := os.WriteFile(filepath.Join(release, "release.json"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	updates := filepath.Join(dir, "workshop", "updates")
+	if err := os.MkdirAll(updates, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seen, _ := json.Marshal(map[string]string{"seen_at": time.Now().UTC().Format(time.RFC3339)})
+	if err := os.WriteFile(filepath.Join(updates, "updater-seen.json"), seen, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prepareWorkshopFixture(t, dir, "fixture")
+	runtime, err := startWorkshop(workshopSettings{Version: 1, Enabled: true, Origin: "https://workshop.invalid", Listen: "127.0.0.1:0"}, dir, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := filepath.Join(updates, "update-request.json")
+	var asked struct {
+		Version  string `json:"version"`
+		DeviceID string `json:"device_id"`
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if raw, err := os.ReadFile(request); err == nil && json.Unmarshal(raw, &asked) == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			runtime.close()
+			t.Fatal("the running Desktop never asked for the published release")
+		}
+	}
+	if asked.Version != "0.1.0-ixforge.21" || asked.DeviceID != "auto" {
+		t.Fatalf("asked %+v, want 0.1.0-ixforge.21 by the Desktop itself", asked)
+	}
+
+	// Closed, it looks no more: a version it has not asked yet stays unasked.
+	runtime.close()
+	for _, f := range []string{request, filepath.Join(updates, "auto-requested.json")} {
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(request); err == nil {
+		t.Fatal("a closed Desktop still asks for releases")
+	}
+}
