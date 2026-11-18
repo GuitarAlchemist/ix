@@ -27,6 +27,8 @@ type browserFixture struct {
 	loseReplies atomic.Bool
 	unreachable atomic.Bool  // every request's connection is dropped, as when the Desktop cannot be reached
 	desktopHTTP *http.Client // reaches the Desktop from Go, as a client outside the browser (the queries watcher)
+	// holdActions, when set, holds every action's reply until the channel is closed (the action has already run).
+	holdActions atomic.Pointer[chan struct{}]
 }
 
 func newBrowserFixture(t *testing.T, opts ...Option) *browserFixture {
@@ -59,6 +61,17 @@ func newBrowserFixture(t *testing.T, opts ...Option) *browserFixture {
 			if f.loseReplies.Load() {
 				handler.ServeHTTP(httptest.NewRecorder(), r)
 				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			if hold := f.holdActions.Load(); hold != nil {
+				reply := httptest.NewRecorder()
+				handler.ServeHTTP(reply, r)
+				<-*hold
+				for k, v := range reply.Header() {
+					w.Header()[k] = v
+				}
+				w.WriteHeader(reply.Code)
+				w.Write(reply.Body.Bytes())
 				return
 			}
 		}

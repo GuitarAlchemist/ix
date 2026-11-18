@@ -104,30 +104,41 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
+// terminalDevice is the device behind token, if it may use the terminal now.
+func (s *Store) terminalDevice(token string) (Device, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := authenticate(s.db, token)
+	if err != nil {
+		return d, err
+	}
+	allowed, err := s.hasTerminal(d.ID)
+	if err != nil {
+		return d, err
+	}
+	if !allowed || runtime.GOOS != "windows" {
+		return d, ErrNoTerminal
+	}
+	return d, nil
+}
+
 // RunTerminal runs command for the device behind token, if it has the terminal.
 func (s *Store) RunTerminal(ctx context.Context, token, command string) (TerminalResult, error) {
 	if !validCommand(command) {
 		return TerminalResult{}, ErrInvalid
 	}
-	s.mu.Lock()
-	d, err := authenticate(s.db, token)
-	allowed := false
-	if err == nil {
-		allowed, err = s.hasTerminal(d.ID)
-	}
-	s.mu.Unlock()
-	if err != nil {
+	if _, err := s.terminalDevice(token); err != nil {
 		return TerminalResult{}, err
-	}
-	if !allowed {
-		return TerminalResult{}, ErrNoTerminal
-	}
-	if runtime.GOOS != "windows" {
-		return TerminalResult{}, ErrNoTerminal
 	}
 
 	s.terminalRun.Lock()
 	defer s.terminalRun.Unlock()
+	// Checked again once it is this command's turn: the owner may have withdrawn the terminal, or revoked the device,
+	// while it waited for the previous command.
+	d, err := s.terminalDevice(token)
+	if err != nil {
+		return TerminalResult{}, err
+	}
 	dir := filepath.Join(filepath.Dir(s.path), "terminal")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return TerminalResult{}, err
