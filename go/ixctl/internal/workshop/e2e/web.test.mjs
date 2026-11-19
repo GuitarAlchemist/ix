@@ -93,7 +93,8 @@ test('a throwing recognizer reports its error name instead of a microphone denia
 test('simultaneous update checks share one negotiation and settle all waitUntil promises', async () => {
   const listeners={},prepared=[],waiting=[];let activated=0;
   const client={id:'fixture-client',url:'https://workshop.invalid/workshop/',postMessage:message=>prepared.push(message)};
-  const self={addEventListener:(type,fn)=>{listeners[type]=fn;},clients:{matchAll:async()=>[client]},skipWaiting:async()=>{activated++;}};
+  // The worker reads its own location and scope at load (SHELL_PATHS, workshopClients), as a registered worker can.
+  const self={location:new URL('https://workshop.invalid/workshop/sw.js'),registration:{scope:'https://workshop.invalid/workshop/'},addEventListener:(type,fn)=>{listeners[type]=fn;},clients:{matchAll:async()=>[client]},skipWaiting:async()=>{activated++;}};
   vm.runInNewContext(readFileSync(new URL('../web/sw.js',import.meta.url),'utf8'),{self,URL,crypto,setTimeout,clearTimeout,console});
   const event=data=>({data,source:client,waitUntil:promise=>waiting.push(promise)});
   listeners.message(event({type:'workshop-check-update'}));listeners.message(event({type:'workshop-check-update'}));
