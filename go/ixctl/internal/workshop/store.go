@@ -16,14 +16,17 @@ import (
 )
 
 type Store struct {
-	mu            sync.Mutex
-	db            *sql.DB
-	path          string
-	id            string
-	now           func() time.Time
-	inviteHash    string
-	inviteExpires time.Time
-	inviteErrors  int
+	mu              sync.Mutex
+	db              *sql.DB
+	path            string
+	id              string
+	now             func() time.Time
+	inviteHash      string
+	inviteExpires   time.Time
+	inviteErrors    int
+	inviteLinked    bool          // the current invite was issued by the owner to link the Desktop's own PC: its claim is approved
+	terminalRun     sync.Mutex    // one terminal command at a time (terminal.go)
+	terminalTimeout time.Duration // zero: defaultTerminalLimit
 }
 
 func randomID() (string, error) {
@@ -100,6 +103,19 @@ func Open(path string) (*Store, error) {
 		if err = tx.Commit(); err != nil {
 			return fail(err)
 		}
+	}
+	// Additive to version 1 (see xlet.go): created when absent, checked when present, never a version bump.
+	for _, create := range append(xletSchema, terminalSchema...) {
+		if _, err = db.Exec(create); err != nil {
+			return fail(err)
+		}
+	}
+	for _, check := range append(xletSchemaChecks, terminalSchemaChecks...) {
+		result, err := db.Query(check)
+		if err != nil {
+			return fail(fmt.Errorf("invalid Workshop schema: %w", err))
+		}
+		result.Close()
 	}
 	return s, nil
 }

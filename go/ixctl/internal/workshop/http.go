@@ -64,12 +64,60 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 		respond(w, http.StatusOK, map[string]any{"device": device, "token": token, "store_id": s.id})
 	})
 	mux.HandleFunc("GET /workshop/api/me", func(w http.ResponseWriter, r *http.Request) {
-		d, err := s.Authenticate(bearer(r))
+		d, err := s.Me(bearer(r))
 		if err != nil {
 			failure(w, err)
 			return
 		}
-		respond(w, http.StatusOK, map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected"})
+		respond(w, http.StatusOK, map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected", "admin": d.Admin, "terminal": d.Terminal})
+	})
+	mux.HandleFunc("POST /workshop/api/terminal", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Command string `json:"command"`
+		}
+		if err := decode(w, r, &body); err != nil {
+			failure(w, ErrInvalid)
+			return
+		}
+		result, err := s.RunTerminal(r.Context(), bearer(r), body.Command)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("GET /workshop/api/devices", func(w http.ResponseWriter, r *http.Request) {
+		devices, err := s.AdminDevices(bearer(r))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, http.StatusOK, map[string]any{"devices": devices})
+	})
+	mux.HandleFunc("POST /workshop/api/devices/invite", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{}
+		if err := decode(w, r, &body); err != nil {
+			failure(w, ErrInvalid)
+			return
+		}
+		invite, err := s.AdminInvite(bearer(r), origin)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, http.StatusOK, invite)
+	})
+	mux.HandleFunc("POST /workshop/api/devices/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{}
+		if err := decode(w, r, &body); err != nil || !identifier.MatchString(r.PathValue("id")) {
+			failure(w, ErrInvalid)
+			return
+		}
+		if err := s.AdminDecide(bearer(r), r.PathValue("id"), r.PathValue("decision")); err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("POST /workshop/api/operations", func(w http.ResponseWriter, r *http.Request) {
 		var op Operation
@@ -83,6 +131,27 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 			return
 		}
 		respond(w, http.StatusOK, receipt)
+	})
+	mux.HandleFunc("GET /workshop/api/xlets", func(w http.ResponseWriter, r *http.Request) {
+		states, err := s.Xlets(bearer(r))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, http.StatusOK, map[string]any{"store_id": s.id, "xlets": states})
+	})
+	mux.HandleFunc("POST /workshop/api/xlets/actions", func(w http.ResponseWriter, r *http.Request) {
+		var a XletAction
+		if err := decode(w, r, &a); err != nil {
+			failure(w, ErrInvalid)
+			return
+		}
+		state, err := s.Act(bearer(r), a)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, http.StatusOK, state)
 	})
 	mux.HandleFunc("GET /workshop/api/changes", func(w http.ResponseWriter, r *http.Request) {
 		since, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
@@ -107,7 +176,7 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 			return
 		}
 		switch r.URL.Path {
-		case "/workshop/", "/workshop/index.html", "/workshop/sw.js", "/workshop/manifest.webmanifest", "/workshop/app.js", "/workshop/sync.js", "/workshop/voice.js", "/workshop/updates.js", "/workshop/branding.json", "/workshop/style.css", "/workshop/icon-192.png", "/workshop/icon-512.png", "/workshop/vendor/i18next.min.js":
+		case "/workshop/", "/workshop/index.html", "/workshop/sw.js", "/workshop/manifest.webmanifest", "/workshop/app.js", "/workshop/sync.js", "/workshop/voice.js", "/workshop/updates.js", "/workshop/branding.json", "/workshop/style.css", "/workshop/icon-192.png", "/workshop/icon-512.png", "/workshop/vendor/i18next.min.js", "/workshop/widgets.js", "/workshop/ai.js", "/workshop/vendor/lit-all.min.js":
 			files.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
@@ -117,7 +186,7 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", clientCSP)
 		if r.Host != u.Host {
 			failureStatus(w, 403, "foreign_host")
 			return
@@ -179,7 +248,7 @@ func failure(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrUnauthorized):
 		status = 401
 		code = err.Error()
-	case errors.Is(err, ErrPending), errors.Is(err, ErrRefused), errors.Is(err, ErrRevoked):
+	case errors.Is(err, ErrPending), errors.Is(err, ErrRefused), errors.Is(err, ErrRevoked), errors.Is(err, ErrNotAdmin), errors.Is(err, ErrNoTerminal):
 		status = 403
 		code = err.Error()
 	case errors.Is(err, ErrConflict), errors.Is(err, ErrOpReuse):
@@ -190,6 +259,9 @@ func failure(w http.ResponseWriter, err error) {
 		code = err.Error()
 	case errors.Is(err, ErrInvalid):
 		status = 400
+		code = err.Error()
+	case errors.Is(err, ErrNotSaved), errors.Is(err, ErrNotActive), errors.Is(err, ErrNoItem):
+		status = 409
 		code = err.Error()
 	case errors.Is(err, ErrInvite):
 		status = 403

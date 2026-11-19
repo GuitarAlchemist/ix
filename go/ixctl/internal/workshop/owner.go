@@ -98,6 +98,45 @@ func OwnerHandler(s *Store, key, localOrigin, appOrigin string) (http.Handler, e
 		}
 		respond(w, 200, invite)
 	}))
+	mux.HandleFunc("POST /workshop-owner/api/link", authed(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{}
+		if err := decode(w, r, &body); err != nil {
+			failure(w, ErrInvalid)
+			return
+		}
+		invite, err := s.NewLinkInvite(appOrigin)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, map[string]any{"url": invite.URL, "expires": invite.Expires})
+	}))
+	for path, allowed := range map[string]bool{"terminal": true, "terminal-off": false} {
+		mux.HandleFunc("POST /workshop-owner/api/devices/{id}/"+path, authed(func(w http.ResponseWriter, r *http.Request) {
+			var body struct{}
+			if err := decode(w, r, &body); err != nil || !identifier.MatchString(r.PathValue("id")) {
+				failure(w, ErrInvalid)
+				return
+			}
+			if err := s.AllowTerminal(r.PathValue("id"), allowed); err != nil {
+				failure(w, err)
+				return
+			}
+			respond(w, 200, map[string]bool{"ok": true})
+		}))
+	}
+	mux.HandleFunc("POST /workshop-owner/api/devices/{id}/admin", authed(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{}
+		if err := decode(w, r, &body); err != nil || !identifier.MatchString(r.PathValue("id")) {
+			failure(w, ErrInvalid)
+			return
+		}
+		if err := s.GrantAdmin(r.PathValue("id")); err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
+	}))
 	mux.HandleFunc("POST /workshop-owner/api/devices/{id}/{decision}", authed(func(w http.ResponseWriter, r *http.Request) {
 		var body struct{}
 		if err := decode(w, r, &body); err != nil {

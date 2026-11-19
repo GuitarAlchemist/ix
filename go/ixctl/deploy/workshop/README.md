@@ -6,6 +6,8 @@ The candidate mounts IxForge in the existing ixctl process, behind an explicit `
 
 This source candidate does not validate or modify any installed service. Before deployment, the host owner must establish the current executable hash, command, instance/state directory, permissions, listeners and approved HTTPS origin. Supply those values explicitly; no machine-specific defaults are included. Preserve unrelated applications and routes. Deployment remains a separate human-approved action.
 
+Every Tailscale Serve route other than `/workshop` belongs to another owner and is out of scope. The updater treats these routes as neighbours that must stay as they were, without claiming to know what they serve (see [RECEIPTS.md](RECEIPTS.md)). No other application's file, database, key or route is part of these scripts.
+
 ## Concrete proposal to review
 
 | Item | Proposed target / change |
@@ -35,7 +37,7 @@ The Desktop shortcut may live in the owner's OneDrive-backed Bureau. The active 
    `tailscale serve --bg --https=443 --set-path=/workshop http://127.0.0.1:8761/workshop`
 
    The repeated path in the target is deliberate: current Tailscale source strips the mount prefix before joining the proxy target path and preserves the incoming Host. This proposal is based on [official Serve CLI documentation](https://tailscale.com/docs/reference/tailscale-cli/serve) and [the current proxy implementation](https://github.com/tailscale/tailscale/blob/main/ipn/ipnlocal/serve.go); it has not been proven against the installed version or live route configuration. Check the approved installed version before execution. Never run `serve reset`, replace `/`, or publish the owner path or `/v1`. The previous health/version/clock authorization does not authorize this writable application mount.
-6. **Confirm real pairing at the action.** Open the owner shortcut, press **Créer un QR de pairage**, scan on the real tablet in the same tailnet, request pairing, then explicitly approve the named pending device on Desktop. Creation of the real device credential is a new persistent access action. Install through the tablet browser. Verify offline/reconnect, a real client update and that device's supported microphone path. Draft creation never starts an IXLET.
+6. **Confirm real pairing at the action.** Open the owner shortcut, press **Créer un QR de pairage**, scan on the real tablet in the same tailnet, request pairing, then explicitly approve the named pending device on Desktop. Creation of the real device credential is a new persistent access action. Install through the tablet browser. Verify offline/reconnect, a real client update and that device's supported microphone path. Draft creation never starts an IXLET; only an explicit activation of a saved counter IXLET does.
 
 ## Rollback
 
@@ -43,7 +45,7 @@ If the newly approved `/workshop` mount was added, remove only that mount using 
 
 `tailscale serve --bg --https=443 --set-path=/workshop off`
 
-This is a separately confirmed network action. Do not reset Serve or alter Scribe's root mount. Then review `Rollback-IxForge.ps1` in its inert mode. Its `-Apply` checks the current candidate hash and expected service command and validates the complete binary/config backup before stopping ixctl. It restores the old binary/command and disabled config, restarts the same service, and moves only its recorded owner shortcut into its backup.
+This is a separately confirmed network action. Do not reset Serve or alter any route other than `/workshop`; the root route belongs to another owner. Then review `Rollback-IxForge.ps1` in its inert mode. Its `-Apply` checks the current candidate hash and expected service command and validates the complete binary/config backup before stopping ixctl. It restores the old binary/command and disabled config, restarts the same service, and moves only its recorded owner shortcut into its backup.
 
 Keep Workshop SQLite, its operation receipts and its owner/device credentials in place. Do not automatically rewind the database, delete browser storage/outbox, copy SQLite/WAL live, or restore a whole state directory. The old binary ignores Workshop; an approved later retry can resume the same store identity. Credential revocation/removal or restoring older project data requires a distinct, concrete decision. The server executable does not auto-update; only the client PWA has the tested automatic update cycle.
 

@@ -24,7 +24,7 @@ export class Updates {
       this.reloadPending = true; this.consider();
     });
     try {
-      this.registration = await navigator.serviceWorker.register('/workshop/sw.js', {scope: '/workshop/', updateViaCache: 'none'});
+      this.registration = await navigator.serviceWorker.register('sw.js', {scope: './', updateViaCache: 'none'});
       this.registration.addEventListener('updatefound', () => {
         this.onState('updateInstalling');
         this.registration.installing?.addEventListener('statechange', () => this.consider());

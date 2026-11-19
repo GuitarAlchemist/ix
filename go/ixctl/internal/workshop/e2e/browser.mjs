@@ -158,6 +158,31 @@ try {
   assert.equal(local.outbox.length,4); assert.equal(pc.requests.length,0); assert.equal(local.token,'');
   await pc.shot('project-button-unpaired-en');
   log('+ Project -> transcript -> workspace/widget -> rename/save -> reload in FR/EN; previous projects and exact outbox retained, no pairing or backend write');
+  // Real on-device availability from this Chrome, in French then English. The page's calls are recorded and install()
+  // is replaced, so the test never downloads a pack; dictation is clicked only when the pack is missing, so no audio starts.
+  await pc.eval(`(()=>{window.__asked=[];window.__installs=[];const R=globalThis.SpeechRecognition||globalThis.webkitSpeechRecognition;const available=R.available.bind(R);window.__realAvailable=available;R.available=o=>available(o).then(v=>{window.__asked.push(o.langs.join()+(o.processLocally===true?':local=':':remote=')+v);return v;});R.install=async o=>{window.__installs.push(o.langs.join()+(o.processLocally===true?':local':':remote'));return false;};})()`);
+  const voice = {};
+  for (const [language, lang, missing, refused] of [
+    ['fr', 'fr-FR', /pack de reconnaissance locale de cette langue/, 'pas installé le pack local'],
+    ['en', 'en-US', /no on-device recognition pack/, 'did not install']]) {
+    await pc.eval(`(()=>{const s=document.getElementById('language');s.value='${language}';s.dispatchEvent(new Event('change'))})()`);
+    await pc.until(`document.documentElement.lang==='${language}'`, `${language} interface before dictation`);
+    voice[lang] = await pc.eval(`window.__realAvailable({langs:['${lang}'],processLocally:true})`);
+    if (voice[lang] !== 'downloadable') continue;
+    await pc.eval('window.__asked=[];window.__installs=[]');
+    await pc.click('dictate');
+    await pc.until(`!document.getElementById('install-voice').hidden`, `${language}: missing pack offers an explicit install`);
+    assert.deepEqual(await pc.eval('window.__asked'), [`${lang}:local=downloadable`], 'only the on-device recognizer of the page language is asked');
+    assert.match(await pc.eval(`document.getElementById('voice-status').textContent`), missing);
+    assert.deepEqual(await pc.eval('window.__installs'), [], 'no download without a click');
+    assert.equal(await pc.eval(`document.getElementById('stop-dictation').hidden`), true, 'no listening started');
+    await pc.shot(`voice-pack-missing-${language}`);
+    await pc.click('install-voice');
+    await pc.until(`document.getElementById('voice-status').textContent.includes(${JSON.stringify(refused)})`, `${language}: refused install is reported`);
+    assert.deepEqual(await pc.eval('window.__installs'), [`${lang}:local`], 'one on-device install, for the page language, on click only');
+    assert.equal(await pc.eval(`document.getElementById('install-voice').hidden`), true);
+  }
+  log(`real Chrome on-device availability ${JSON.stringify(voice)}; for each missing pack, dictation asks only the page language on-device, names the missing pack, installs only on click (install stubbed, no audio)`);
   if (process.env.WORKSHOP_PROJECT_ONLY !== '1') {
   const a = await browser('tablet-A'); await connect(a, 'Fixture A');
   await a.until(`navigator.serviceWorker.controller!==null`, 'scoped worker installed');
