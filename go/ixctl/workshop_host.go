@@ -242,7 +242,7 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 	})
 	h.server = &http.Server{ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, Handler: h.admit(routes)}
 	state, _ := json.Marshal(map[string]any{"protocol": "workshop/1", "addr": h.addr, "origin": settings.Origin, "pid": os.Getpid(), "schema_version": 1})
-	if err := writeFileAtomic(h.statePath, state); err != nil {
+	if err := replaceFile(h.statePath, state); err != nil {
 		listener.Close()
 		store.Close()
 		return nil, err

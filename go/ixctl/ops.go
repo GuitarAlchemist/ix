@@ -9,7 +9,10 @@ import "context"
 // @ai:invariant the ops not relayed are exactly shutdown and need.*; every other op in the table reaches a named peer [P:assumed conf:0.8] (pinned by TestEveryOpOfTheTableIsRelayedOrRefusedByName)
 type planeOp struct {
 	relay bool // a request naming a peer is handed on to it (forward); otherwise refused by name
-	run   func(p *Plane, ctx context.Context, req Request) (any, error)
+	// ownsPeer: a request naming a peer runs here first, and run decides when to hand it on (wait
+	// checks its fields and takes a waiter slot before it relays); otherwise Request forwards at once.
+	ownsPeer bool
+	run      func(p *Plane, ctx context.Context, req Request) (any, error)
 }
 
 // planeOps is filled by init: its handlers call into the plane, which reads the table.
@@ -35,7 +38,7 @@ func init() {
 			r, _, err := p.Apply(req.Desired)
 			return r, err
 		}},
-		"wait": {relay: true, run: func(p *Plane, ctx context.Context, req Request) (any, error) { return p.Wait(ctx, req) }},
+		"wait": {relay: true, ownsPeer: true, run: func(p *Plane, ctx context.Context, req Request) (any, error) { return p.Wait(ctx, req) }},
 		"stop": {relay: true, run: func(p *Plane, ctx context.Context, req Request) (any, error) { return p.Stop(ctx, req.Service) }},
 		"shutdown": {run: func(p *Plane, _ context.Context, _ Request) (any, error) {
 			p.RequestShutdown()

@@ -90,13 +90,8 @@ func (l *genLedger) status() ledgerStatus {
 	return st
 }
 
-// result answers g's outcome if it has ended (done), and refuses a generation not yet admitted.
-func (l *genLedger) result(g uint64) (WaitReply, bool, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.resultLocked(g)
-}
-
+// resultLocked answers g's outcome if it has ended (done), and refuses a generation not yet
+// admitted. The caller holds l.mu.
 func (l *genLedger) resultLocked(g uint64) (WaitReply, bool, error) {
 	if g > l.gen {
 		return WaitReply{}, false, badRequest("unknown generation %d", g)
