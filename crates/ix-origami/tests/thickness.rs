@@ -2,7 +2,6 @@
 //! thickness, and the controls that must leave it unchanged.
 
 use ix_origami::controls::{move_folded, renumber, turn_over};
-use ix_origami::layers::above;
 use ix_origami::{analyse, stack, BadThickness, Context, Fold, Rule, Stack};
 use serde_json::{json, Value};
 
@@ -132,8 +131,8 @@ fn the_crane_is_28_layers_at_its_thickest_and_36_as_rigid_panels() {
     // The levels respect every stated pair.
     let level = r.face_levels.as_ref().unwrap();
     assert_eq!(level.len(), 59);
-    for &(f, g) in &ctx.geo.overlapping {
-        let f_above = above(&ctx.rel, &ctx.orient, f, g).unwrap();
+    for &(f, g) in ctx.overlapping() {
+        let f_above = ctx.above(f, g).unwrap();
         assert_eq!(level[f] > level[g], f_above, "{f} {g}");
     }
     // A chain of 36 faces, each stated above the one before: no stack has fewer levels.
@@ -144,14 +143,10 @@ fn the_crane_is_28_layers_at_its_thickest_and_36_as_rigid_panels() {
     for w in chain.windows(2) {
         let (lo, hi) = (w[0], w[1]);
         assert!(
-            ctx.geo.overlapping.contains(&(lo.min(hi), lo.max(hi))),
+            ctx.overlapping().contains(&(lo.min(hi), lo.max(hi))),
             "{lo} {hi}"
         );
-        assert_eq!(
-            above(&ctx.rel, &ctx.orient, hi, lo),
-            Some(true),
-            "{lo} {hi}"
-        );
+        assert_eq!(ctx.above(hi, lo), Some(true), "{lo} {hi}");
     }
 }
 

@@ -16,8 +16,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+[features]
+# Controls for the tests: the faulty swap and the renumbering, turning over and moving
+# of a folded state, which the tests use to show that a check can fail.
+test-support = []
+
 [dev-dependencies]
 sha2 = "0.10"
+ix-origami = { path = ".", features = ["test-support"] }
 
 [lib]
 path = "src/lib.rs"

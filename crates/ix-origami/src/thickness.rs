@@ -27,7 +27,7 @@ use ix_graph::graph::Graph;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::layers::{above, Context, Crease};
+use crate::layers::{Context, Crease};
 
 /// The stack a thickness implies.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -131,22 +131,21 @@ pub fn stack(ctx: &Context, t: f64) -> Result<Stack, BadThickness> {
     if !(t.is_finite() && t >= 0.0) {
         return Err(BadThickness(t));
     }
-    let n = ctx.orient.len();
-    let ply = ctx
-        .geo
-        .cells
-        .iter()
-        .map(|c| c.faces.len())
-        .max()
-        .unwrap_or(0);
-    let panel = panels(n, &ctx.geo.joints);
+    let n = ctx.faces();
+    let ply = ctx.ply();
+    // A finite `t` can still overflow a height, which JSON would carry as null: refused before
+    // any work is done for it.
+    if !(ply as f64 * t).is_finite() {
+        return Err(BadThickness(t));
+    }
+    let panel = panels(n, ctx.joints());
     // An arc from the lower panel to the upper one for every stated overlapping pair, and the
     // first stated pair behind each arc.
     let mut g = Graph::with_nodes(n);
     let mut witness: BTreeMap<(usize, usize), [usize; 2]> = BTreeMap::new();
     let mut undetermined_pairs = 0;
-    for &(f, h) in &ctx.geo.overlapping {
-        let Some(f_above) = above(&ctx.rel, &ctx.orient, f, h) else {
+    for &(f, h) in ctx.overlapping() {
+        let Some(f_above) = ctx.above(f, h) else {
             if panel[f] != panel[h] {
                 undetermined_pairs += 1;
             }
@@ -204,10 +203,9 @@ pub fn stack(ctx: &Context, t: f64) -> Result<Stack, BadThickness> {
             }
         }
     };
-    // A finite `t` can still overflow a height, which JSON would carry as null: the same as a
-    // cycle's missing height.
+    // The rigid height, `levels · t`, can overflow where `ply · t` did not; a cycle has no height.
     let ply_height = ply as f64 * t;
-    if !ply_height.is_finite() || rigid.height.is_some_and(|h| !h.is_finite()) {
+    if rigid.height.is_some_and(|h| !h.is_finite()) {
         return Err(BadThickness(t));
     }
     Ok(Stack {

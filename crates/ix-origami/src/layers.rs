@@ -23,7 +23,8 @@ use thiserror::Error;
 
 use crate::fold::{Assignment, Fold, Point};
 use crate::geometry::{
-    area, dist, inside_length, is_convex, overlay, Cell, AREA_TOL, INSIDE_TOL, LEN_TOL,
+    area, dist, inside_length, is_convex, overlay, Cell, ANGLE_TOL, AREA_TOL, INSIDE_TOL, LEN_TOL,
+    ON_LINE_TOL, OVERLAP_TOL,
 };
 use crate::limits::{within, Limits, OverLimit};
 use crate::local::{local_theorems, LocalTheorems};
@@ -113,7 +114,7 @@ pub fn relations(fold: &Fold, orient: &[i8]) -> (Relations, Vec<(usize, usize)>)
 }
 
 /// Whether `f` lies above `g` (towards +z, the viewer); `None` if not stated.
-pub fn above(rel: &Relations, orient: &[i8], f: usize, g: usize) -> Option<bool> {
+pub(crate) fn above(rel: &Relations, orient: &[i8], f: usize, g: usize) -> Option<bool> {
     rel.get(f, g).map(|s| s * orient[g] > 0)
 }
 
@@ -242,20 +243,20 @@ pub struct TortillaPair {
 /// without recomputing it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
-    pub cells: Vec<Cell>,
+    pub(crate) cells: Vec<Cell>,
     /// Face pairs `(f, g)`, `f < g`, that share a cell.
-    pub overlapping: BTreeSet<(usize, usize)>,
+    pub(crate) overlapping: BTreeSet<(usize, usize)>,
     /// Mountains and valleys between two faces, and unassigned edges whose two faces are turned
     /// over relative to each other: folded.
-    pub creases: Vec<Crease>,
+    pub(crate) creases: Vec<Crease>,
     /// Flat, join and unassigned edges whose two faces keep one orientation: not folded.
-    pub joints: Vec<Crease>,
-    pub tortillas: Vec<Tortilla>,
-    pub tacos: Vec<Taco>,
-    pub tortilla_pairs: Vec<TortillaPair>,
+    pub(crate) joints: Vec<Crease>,
+    pub(crate) tortillas: Vec<Tortilla>,
+    pub(crate) tacos: Vec<Taco>,
+    pub(crate) tortilla_pairs: Vec<TortillaPair>,
     /// Collinear crease pairs whose faces lie on opposite sides of the line: no rule applies.
-    pub opposite_tacos: usize,
-    pub assignment: Vec<Assignment>,
+    pub(crate) opposite_tacos: usize,
+    pub(crate) assignment: Vec<Assignment>,
 }
 
 /// The line through an edge's two folded ends.
@@ -281,16 +282,16 @@ impl Line {
         (c[0] - self.p[0]) * self.d[0] + (c[1] - self.p[1]) * self.d[1]
     }
 
-    /// Whether segment `r s` lies on the line and overlaps this edge by more than 1e-6.
+    /// Whether segment `r s` lies on the line and overlaps this edge by more than [`OVERLAP_TOL`].
     fn overlaps(&self, r: Point, s: Point) -> bool {
-        if self.side(r).abs() > 1e-9 || self.side(s).abs() > 1e-9 {
+        if self.side(r).abs() > ON_LINE_TOL || self.side(s).abs() > ON_LINE_TOL {
             return false;
         }
         let (a0, a1) = (
             self.along(r).min(self.along(s)),
             self.along(r).max(self.along(s)),
         );
-        self.len.min(a1) - a0.max(0.0) > 1e-6
+        self.len.min(a1) - a0.max(0.0) > OVERLAP_TOL
     }
 }
 
@@ -338,7 +339,7 @@ pub fn prepare(fold: &Fold, orient: &[i8], limits: &Limits) -> Result<Geometry, 
     for c in creases.iter().chain(&joints) {
         let (p, r) = ends(c);
         for (t, q) in polys.iter().enumerate() {
-            if !c.faces.contains(&t) && inside_length(p, r, q, INSIDE_TOL) > 1e-6 {
+            if !c.faces.contains(&t) && inside_length(p, r, q, INSIDE_TOL) > OVERLAP_TOL {
                 within(ITEMS, tortillas.len() + 1, limits.tacos)?;
                 tortillas.push(Tortilla {
                     crease: *c,
@@ -490,6 +491,19 @@ pub enum Rule {
     TacoTortilla,
     TacoTaco,
     TortillaTortilla,
+}
+
+impl Rule {
+    /// The name the report uses (the serialized form).
+    pub fn name(self) -> &'static str {
+        match self {
+            Rule::Adjacency => "adjacency",
+            Rule::Cells => "cells",
+            Rule::TacoTortilla => "taco_tortilla",
+            Rule::TacoTaco => "taco_taco",
+            Rule::TortillaTortilla => "tortilla_tortilla",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -830,12 +844,48 @@ fn usable(fold: &Fold, limits: &Limits) -> Result<(Fold, f64), Unchecked> {
 /// Orientation, relations and geometry of one fold, for swap experiments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Context {
-    pub orient: Vec<i8>,
-    pub rel: Relations,
-    pub geo: Geometry,
+    pub(crate) orient: Vec<i8>,
+    pub(crate) rel: Relations,
+    pub(crate) geo: Geometry,
 }
 
 impl Context {
+    /// The number of faces.
+    pub fn faces(&self) -> usize {
+        self.orient.len()
+    }
+
+    /// The most faces in one overlay cell.
+    pub fn ply(&self) -> usize {
+        self.geo
+            .cells
+            .iter()
+            .map(|c| c.faces.len())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Face pairs `(f, g)`, `f < g`, that share an overlay cell.
+    pub fn overlapping(&self) -> &BTreeSet<(usize, usize)> {
+        &self.geo.overlapping
+    }
+
+    /// The folded creases: mountains, valleys, and unassigned edges turned over.
+    pub fn creases(&self) -> &[Crease] {
+        &self.geo.creases
+    }
+
+    /// The flat joints: edges whose two faces keep one orientation.
+    pub fn joints(&self) -> &[Crease] {
+        &self.geo.joints
+    }
+
+    /// Whether face `f` lies above face `g` (towards the viewer); `None` if the fold does not
+    /// state it. The stated sign and the faces' orientations are paired here and nowhere else.
+    pub fn above(&self, f: usize, g: usize) -> Option<bool> {
+        above(&self.rel, &self.orient, f, g)
+    }
+
     /// [`Context::within`] with no limit.
     pub fn new(fold: &Fold) -> Result<Self, Unchecked> {
         Self::within(fold, &Limits::NONE)
@@ -878,7 +928,7 @@ pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked>
     // own factor is a power of two.
     isometry.scale *= t;
     let crease_orientation = crease_orientation(fold, &orient);
-    let local_theorems = local_theorems(fold, 1e-9);
+    let local_theorems = local_theorems(fold, ANGLE_TOL);
     let rejected_by = layers.rejected_by();
     let ok = conflicts.is_empty()
         && isometry.ok
@@ -917,6 +967,7 @@ pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked>
 }
 
 /// The same fold with the stated order of faces `f` and `g` reversed: the faulty swap.
+#[cfg(feature = "test-support")]
 pub fn swap(fold: &Fold, f: usize, g: usize) -> Fold {
     let mut out = fold.clone();
     let (f, g) = (f as i64, g as i64);
@@ -966,6 +1017,51 @@ pub fn swap_census(fold: &Fold, ctx: &Context) -> Vec<CensusRow> {
         .collect()
 }
 
+/// The census by rule set: how many flips each combination of rules rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CensusTally {
+    /// The stated pairs flipped.
+    pub pairs: usize,
+    /// The flips some rule rejected.
+    pub rejected: usize,
+    /// The pairs whose flip no rule rejected: a rule that cannot fail proves nothing.
+    pub accepted: Vec<[usize; 2]>,
+    /// Flips per rule set, keyed `"adjacent: rule + rule"` or `"non-adjacent: none"`.
+    pub by_rules: BTreeMap<String, usize>,
+}
+
+impl CensusTally {
+    /// Tallies the rows of a census.
+    pub fn of(rows: &[CensusRow]) -> Self {
+        let mut by_rules: BTreeMap<String, usize> = BTreeMap::new();
+        for row in rows {
+            let kind = if row.adjacent {
+                "adjacent"
+            } else {
+                "non-adjacent"
+            };
+            let rules = if row.rejected_by.is_empty() {
+                "none".to_string()
+            } else {
+                let names: Vec<&str> = row.rejected_by.iter().map(|r| r.name()).collect();
+                names.join(" + ")
+            };
+            *by_rules.entry(format!("{kind}: {rules}")).or_insert(0) += 1;
+        }
+        let accepted: Vec<[usize; 2]> = rows
+            .iter()
+            .filter(|r| r.rejected_by.is_empty())
+            .map(|r| r.pair)
+            .collect();
+        Self {
+            pairs: rows.len(),
+            rejected: rows.len() - accepted.len(),
+            accepted,
+            by_rules,
+        }
+    }
+}
+
 /// An upper bound on the steps [`swap_census`] takes: each flipped pair scans every crease,
 /// cell, tortilla, taco and tortilla pair, and looks for a cycle in the cells holding both its
 /// faces, at most (faces in the cell)² steps each.
@@ -1002,6 +1098,7 @@ pub fn swap_census_within(
 
 /// The first stated pair, in file order, whose flip `rule` rejects, among adjacent or
 /// non-adjacent pairs.
+#[cfg(feature = "test-support")]
 pub fn first_swap(fold: &Fold, ctx: &Context, rule: Rule, adjacent: bool) -> Option<[usize; 2]> {
     swap_census(fold, ctx)
         .into_iter()
