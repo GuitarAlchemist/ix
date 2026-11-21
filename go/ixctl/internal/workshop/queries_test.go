@@ -51,13 +51,18 @@ func TestTheDuckDBQueriesAreReadFromTheirFiles(t *testing.T) {
 // The generation the tests stamp on a queries widget: when, and from which ix commit (the one testdata/ix copies).
 var testMadeAt = time.Date(2026, 11, 15, 1, 2, 3, 0, time.UTC)
 
-const testSourceCommit = "8c97be79"
+const (
+	testSourceCommit = "8c97be79"
+	testSubject      = "docs: number our DuckDB queries"
+)
+
+var testMade = Generation{At: testMadeAt, Commit: testSourceCommit, Subject: testSubject}
 
 // TestTheQueriesWidgetIsAnIxForgeWidget: the generator writes an ixforge-widget/1 block of kind "queries", which
-// IxForge imports like any other widget. It says when it was made and from which ix commit, so a reader knows how
-// fresh the list is.
+// IxForge imports like any other widget. It says when it was made and from which ix commit (with its subject), so a
+// reader knows how fresh the list is.
 func TestTheQueriesWidgetIsAnIxForgeWidget(t *testing.T) {
-	raw, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMadeAt.In(time.FixedZone("EST", -5*3600)), testSourceCommit)
+	raw, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), Generation{At: testMadeAt.In(time.FixedZone("EST", -5*3600)), Commit: testSourceCommit, Subject: testSubject})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,17 +71,18 @@ func TestTheQueriesWidgetIsAnIxForgeWidget(t *testing.T) {
 		Entries             []QueryEntry
 		GeneratedAt         string `json:"generated_at"`
 		SourceCommit        string `json:"source_commit"`
+		SourceSubject       string `json:"source_subject"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil || data.Format != "ixforge-widget/1" || data.Kind != "queries" || data.Title != "Requêtes DuckDB" || len(data.Entries) != 15 {
 		t.Fatalf("%s %v", raw, err)
 	}
-	if data.GeneratedAt != "2026-11-15T01:02:03Z" || data.SourceCommit != testSourceCommit {
-		t.Errorf("made at %q (want UTC 2026-11-15T01:02:03Z) from %q", data.GeneratedAt, data.SourceCommit)
+	if data.GeneratedAt != "2026-11-15T01:02:03Z" || data.SourceCommit != testSourceCommit || data.SourceSubject != testSubject {
+		t.Errorf("made at %q (want UTC 2026-11-15T01:02:03Z) from %q (%q)", data.GeneratedAt, data.SourceCommit, data.SourceSubject)
 	}
-	if _, err := QueriesWidget("Vide", nil, testMadeAt, testSourceCommit); err == nil {
+	if _, err := QueriesWidget("Vide", nil, testMade); err == nil {
 		t.Error("a queries widget with no query must be refused")
 	}
-	if _, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), testMadeAt, "main"); err == nil {
+	if _, err := QueriesWidget("Requêtes DuckDB", readTestQueries(t), Generation{At: testMadeAt, Commit: "main"}); err == nil {
 		t.Error("a source that is not a commit must be refused")
 	}
 }
@@ -95,7 +101,7 @@ func TestTheDesktopKeepsAQueriesWidget(t *testing.T) {
 		t.Fatalf("a queries widget must be accepted: %v", err)
 	}
 	if err := validate(op(func(w *Widget, _ *Workspace) {
-		w.GeneratedAt, w.SourceCommit = "2026-11-15T01:02:03Z", testSourceCommit
+		w.GeneratedAt, w.SourceCommit, w.SourceSubject = "2026-11-15T01:02:03Z", testSourceCommit, testSubject
 	})); err != nil {
 		t.Fatalf("a queries widget that says when and from what it was made must be accepted: %v", err)
 	}
@@ -114,6 +120,11 @@ func TestTheDesktopKeepsAQueriesWidget(t *testing.T) {
 		"made at no time":      func(w *Widget, _ *Workspace) { w.GeneratedAt = "hier" },
 		"made at a local time": func(w *Widget, _ *Workspace) { w.GeneratedAt = "2026-11-14T20:02:03-05:00" },
 		"made from a branch":   func(w *Widget, _ *Workspace) { w.SourceCommit = "main" },
+		"a blank subject":      func(w *Widget, _ *Workspace) { w.SourceSubject = "  " },
+		"a subject over 240 B": func(w *Widget, _ *Workspace) { w.SourceSubject = strings.Repeat("x", 241) },
+		"a list's subject": func(w *Widget, _ *Workspace) {
+			w.Kind, w.Entries, w.SourceSubject = "checklist", nil, testSubject
+		},
 		"a list's generation": func(w *Widget, _ *Workspace) {
 			w.Kind, w.Entries, w.SourceCommit = "checklist", nil, testSourceCommit
 		},

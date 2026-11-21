@@ -11,7 +11,7 @@ const resources = {
     emptyTitle: 'Créez votre premier outil', emptyHelp: 'Tapez un nom dans le champ « nouvel outil », puis Liste ou Compteur. Vous pouvez aussi dicter, ou importer un widget.',
     toolTitle: 'Nom de l’outil', pin: 'Épingler sur la surface', export: 'Exporter (page autonome, artefact Claude)', detach: 'Détacher dans une fenêtre', reattach: 'Rattacher à IxForge', reattachHere: 'Ramener ici',
     detachedTitle: 'Cet outil est ouvert dans une autre fenêtre.', surfaceOpen: 'Ouvrir la surface', surfaceEmpty: 'Épinglez des outils depuis IxForge pour les voir ici, côte à côte.', unpin: 'Retirer de la surface',
-    devices: 'Appareils', close: 'Fermer', thisDevice: 'Cet appareil', otherDevices: 'Appareils reliés', invite: 'Inviter un appareil', inviteHelp: 'Scannez ce code avec l’autre appareil, ou ouvrez le lien. Valable deux minutes ; vous l’approuverez ensuite ici.', about: 'À propos',
+    devices: 'Appareils', close: 'Fermer', thisDevice: 'Cet appareil', otherDevices: 'Appareils reliés', interfaceVersion: 'interface {{version}}', desktopUpdate: 'Mise à jour du Desktop', desktopInstalled: 'Version installée : {{version}}', updaterRunning: 'Assistant de mise à jour actif', updaterAbsent: 'Assistant de mise à jour non installé : lancez une fois Install-IxForgeUpdater.ps1 sur le PC (administrateur).', updaterStale: 'Assistant de mise à jour arrêté (vu le {{date}}).', installRelease: 'Installer',noRelease: 'Aucune version plus récente sur ce PC.', updateRequested: 'Installation de {{version}} demandée le {{date}} : en attente de l’assistant.', updateDone: 'Dernière mise à jour : {{version}} installée le {{date}}.', updateNotDone: 'Dernière mise à jour : {{version}} non installée ({{state}}), le {{date}}.',invite: 'Inviter un appareil', inviteHelp: 'Scannez ce code avec l’autre appareil, ou ouvrez le lien. Valable deux minutes ; vous l’approuverez ensuite ici.', about: 'À propos',
     approve: 'Approuver', refuse: 'Refuser', revoke: 'Révoquer', thisDeviceShort: 'cet appareil', status_pending: 'en attente', status_approved: 'approuvé', status_refused: 'refusé', status_revoked: 'révoqué',
     language: 'Langue : français (changer)', theme: 'Apparence', system: 'système', light: 'claire', dark: 'sombre', install: 'Installer l’application', update: 'Appliquer la mise à jour',
     local: 'Sur cet appareil seulement', connecting: 'Synchronisation…', connected: 'Desktop connecté', offline: 'Hors ligne · vos modifications restent ici', device_pending: 'En attente d’approbation', device_refused: 'Accès refusé · données conservées', device_revoked: 'Accès révoqué · données conservées', store_changed: 'Base Desktop différente · synchronisation suspendue',
@@ -23,21 +23,21 @@ const resources = {
     pairHelp: 'Scannez le QR du Desktop ou saisissez son code temporaire ; l’appareil sera approuvé sur le Desktop.', deviceName: 'Nom de cet appareil', deviceNameHelp: 'Envoyé au Desktop une seule fois, avec la demande de pairage. D’ici là, il reste seulement sur cet appareil.', deviceNamePaired: 'Nom enregistré par le Desktop au pairage : « {{name}} ». Il ne peut pas être modifié ici.', deviceNamePairedUnknown: 'Nom envoyé au Desktop au pairage. Il ne peut pas être modifié ici.', pairCode: 'Code temporaire', pair: 'Demander le pairage', replaceAccess: 'Réappairer en conservant mes données',
     conflictHelp: 'Une autre version existe sur le Desktop. La vôtre est conservée. Laquelle garder ?', keepLocal: 'Garder la mienne', useDesktop: 'Prendre celle du Desktop', remoteTitle: 'Version Desktop : {{title}} (révision {{revision}})',
     increment: '+1', decrement: '−1', reset: 'Remettre à zéro', addItem: 'Ajouter', itemPlaceholder: 'Nouvel élément', removeItem: 'Retirer', checklistProgress: '{{done}}/{{total}} cochés', checklistEmpty: 'Liste vide pour l’instant.',
-    copySQL: 'Copier le SQL', queriesMade: 'Générée le {{date}} depuis ix {{commit}}', queriesMadeAt: 'Générée le {{date}}', copied: 'Copié', copyFailed: 'Copie refusée : sélectionnez le SQL.', queriesShared: '{{count}} requêtes · partagé par le Desktop',
+    copySQL: 'Copier le SQL', runOnDesktop: 'Exécuter sur le Desktop', queryRunning: 'Exécution sur le Desktop…', queryRows_one: '{{count}} ligne · {{ms}} ms', queryRows_other: '{{count}} lignes · {{ms}} ms', queryRowsShown: 'les {{count}} premières affichées', query_timed_out: 'Arrêtée : la requête a dépassé une minute.', query_result_too_large: 'Résultat trop grand pour être envoyé (plus de 1 Mo).', query_output_unreadable: 'Réponse de DuckDB illisible.', query_unknown: 'Cette requête n’est plus dans le dépôt du Desktop : régénérez la liste.', graph_missing: 'Le graphe n’est pas encore construit sur le Desktop (ixforge-graph).', graph_engine_missing: 'LadybugDB n’est pas installé sur le Desktop : les requêtes du graphe ne peuvent pas s’exécuter.', queryUncertain: 'Pas de réponse claire du Desktop ({{cause}}) : relancez la requête.', queryCauseNetwork: 'connexion coupée', queryCauseTimeout: 'aucune réponse en 75 s', copyQuery: 'Copier la requête', queriesMadeAt: 'Générée le {{date}}', queriesFrom: 'depuis ix', queriesSynced: 'Synchronisée le {{date}}', copied: 'Copié', copyFailed: 'Copie refusée : sélectionnez le SQL.', queriesShared: '{{count}} requêtes · partagé par le Desktop',
     exportCopy: 'Copier pour IxForge', exportCopied: 'Copié. Collez-le dans IxForge, champ « nouvel outil ».', exportCopyHere: 'Copiez ce texte, puis collez-le dans IxForge :', exportMade: 'Widget IxForge · fonctionne seul, sans réseau.',
     ixlet_uncertain: 'Résultat incertain : rien n’est renvoyé automatiquement, la valeur va être relue sur le Desktop.', ixlet_not_active: 'Cet outil n’est pas encore actif sur le Desktop.', ixlet_not_saved: 'Cet outil n’est pas encore enregistré sur le Desktop.', ixlet_not_connected: 'Connectez cet appareil au Desktop pour utiliser cet outil partagé.', ixlet_item_missing: 'Cet élément n’existe plus sur le Desktop.',
     voiceReady: '', voiceUnsupported: 'Dictée locale indisponible dans ce navigateur, aucune voix n’a été envoyée. Utilisez le micro de votre clavier : les guillemets sont facultatifs.', voiceDenied: 'Accès au microphone refusé ou indisponible.', voiceListening: 'Dictée locale en cours…', voicePackMissing: 'Le pack de reconnaissance locale de cette langue n’est pas installé dans ce navigateur. Rien n’a été téléchargé ni envoyé.', installVoice: 'Installer la reconnaissance locale', stopDictation: 'Arrêter la dictée', voicePackDownloading: 'Le navigateur télécharge le pack de reconnaissance locale…', voicePackFailed: 'Le navigateur n’a pas installé le pack local.', voiceNoSpeech: 'Aucune parole détectée. Réessayez ; aucune voix n’a été envoyée.', voiceNoMicrophone: 'Aucun microphone utilisable sur cet appareil.', voiceFailed: 'La dictée locale s’est arrêtée (erreur : {{code}}).',
     terminal: 'Terminal du PC', terminalWho: 'Commandes exécutées sur le PC du Desktop par Windows PowerShell, sous le compte du service IxForge.', terminalCommand: 'Commande', terminalRun: 'Exécuter', terminalHelp: 'Une commande à la fois, arrêtée après 30 secondes, sortie limitée à 256 Kio. Chaque commande est inscrite au journal du Desktop ; sa sortie n’est conservée nulle part, ni ici ni sur le Desktop.', terminalExit: 'Code de sortie : {{code}}', terminalTimedOut: 'Arrêtée après 30 secondes', terminalTruncated: 'sortie tronquée', terminal_not_allowed: 'Cet appareil n’a pas le terminal : seul le propriétaire peut l’autoriser, depuis la page propriétaire.', terminal_uncertain: 'Résultat incertain : la commande a pu s’exécuter sur le PC. Rien n’est renvoyé automatiquement.',
     settings: 'Réglages', aiTitle: 'IA (facultative)', aiHelp: 'Avec votre propre clé API Claude, une phrase devient un outil. La clé reste sur cet appareil ; la demande part directement de ce navigateur vers Claude, et son coût est facturé sur votre clé. Sans clé, IxForge fonctionne entièrement.', aiKey: 'Clé API Claude', aiSave: 'Enregistrer la clé', aiForget: 'Oublier la clé', aiKeyKept: 'Clé enregistrée sur cet appareil (…{{end}}).', aiNoKey: 'Aucune clé : l’IA est désactivée.', aiCreate: 'Créer avec l’IA', aiCreateHelp: 'Créer avec l’IA : décrivez l’outil dans le champ, Claude le fabrique', aiWorking: 'Claude fabrique l’outil…',
     ai_key_invalid: 'Claude refuse cette clé. Vérifiez-la ou remplacez-la.', ai_refused: 'Claude n’a pas fabriqué cet outil. Reformulez la demande.', ai_busy: 'Claude est occupé ou limité pour cette clé. Réessayez dans un moment ; rien n’a été créé.', ai_failed: 'Claude n’a pas rendu un outil utilisable. Rien n’a été créé.', ai_unreachable: 'Claude est injoignable (réseau). Rien n’a été créé.', ai_key_format: 'Cette clé ne ressemble pas à une clé API Claude (sk-ant-…).', ai_key_missing: 'Ajoutez d’abord votre clé Claude.',
-    import_invalid: 'Ce n’est pas un widget IxForge lisible (format ixforge-widget/1).', name_invalid: 'Nom vide ou trop long (240 octets au plus).', revision_conflict: 'Résolvez le conflit avant d’envoyer cette version.', access_already_present: 'Un accès existe déjà sur cet appareil.', invite_invalid_or_expired: 'Code expiré, invalide ou déjà utilisé. Demandez un nouveau QR au Desktop.', not_admin: 'Cet appareil n’administre pas les autres.', local_storage_unavailable: 'Le stockage local est indisponible : rien n’a pu être conservé.', error: 'Action impossible pour le moment. Vos données déjà gardées sont conservées.'
+    import_invalid: 'Ce n’est pas un widget IxForge lisible (format ixforge-widget/1).', name_invalid: 'Nom vide ou trop long (240 octets au plus).', revision_conflict: 'Résolvez le conflit avant d’envoyer cette version.', access_already_present: 'Un accès existe déjà sur cet appareil.', invite_invalid_or_expired: 'Code expiré, invalide ou déjà utilisé. Demandez un nouveau QR au Desktop.', not_admin: 'Cet appareil n’administre pas les autres.', updater_absent: 'L’assistant de mise à jour ne tourne pas : rien n’a été demandé.', update_pending: 'Une installation est déjà demandée.',local_storage_unavailable: 'Le stockage local est indisponible : rien n’a pu être conservé.', error: 'Action impossible pour le moment. Vos données déjà gardées sont conservées.'
   }},
   en: {translation: {
     tools: 'My tools', newName: 'New tool name, or a sentence', newList: 'List', newCounter: 'Counter', dictate: 'Dictate', import: 'Import a widget (file or pasted JSON)',
     emptyTitle: 'Create your first tool', emptyHelp: 'Type a name in the “new tool” field, then List or Counter. You can also dictate, or import a widget.',
     toolTitle: 'Tool name', pin: 'Pin to the surface', export: 'Export (standalone page, Claude artifact)', detach: 'Detach into a window', reattach: 'Reattach to IxForge', reattachHere: 'Bring it back here',
     detachedTitle: 'This tool is open in another window.', surfaceOpen: 'Open the surface', surfaceEmpty: 'Pin tools from IxForge to see them here, side by side.', unpin: 'Remove from the surface',
-    devices: 'Devices', close: 'Close', thisDevice: 'This device', otherDevices: 'Linked devices', invite: 'Invite a device', inviteHelp: 'Scan this code with the other device, or open the link. Valid for two minutes; then approve it here.', about: 'About',
+    devices: 'Devices', close: 'Close', thisDevice: 'This device', otherDevices: 'Linked devices', interfaceVersion: 'interface {{version}}', desktopUpdate: 'Desktop update', desktopInstalled: 'Installed version: {{version}}', updaterRunning: 'Update assistant running', updaterAbsent: 'Update assistant not installed: run Install-IxForgeUpdater.ps1 once on the PC (administrator).', updaterStale: 'Update assistant stopped (seen on {{date}}).', installRelease: 'Install',noRelease: 'No newer version on this PC.', updateRequested: 'Install of {{version}} requested on {{date}}: waiting for the assistant.', updateDone: 'Last update: {{version}} installed on {{date}}.', updateNotDone: 'Last update: {{version}} not installed ({{state}}), on {{date}}.',invite: 'Invite a device', inviteHelp: 'Scan this code with the other device, or open the link. Valid for two minutes; then approve it here.', about: 'About',
     approve: 'Approve', refuse: 'Refuse', revoke: 'Revoke', thisDeviceShort: 'this device', status_pending: 'waiting', status_approved: 'approved', status_refused: 'refused', status_revoked: 'revoked',
     language: 'Language: English (change)', theme: 'Appearance', system: 'system', light: 'light', dark: 'dark', install: 'Install the app', update: 'Apply update',
     local: 'On this device only', connecting: 'Syncing…', connected: 'Desktop connected', offline: 'Offline · your changes stay here', device_pending: 'Waiting for approval', device_refused: 'Access refused · data kept', device_revoked: 'Access revoked · data kept', store_changed: 'Different Desktop database · sync paused',
@@ -49,20 +49,20 @@ const resources = {
     pairHelp: 'Scan the Desktop QR or enter its temporary code; the device is then approved on Desktop.', deviceName: 'Device name', deviceNameHelp: 'Sent to Desktop once, with the pairing request. Until then it stays on this device only.', deviceNamePaired: 'Name Desktop registered at pairing: “{{name}}”. It cannot be changed here.', deviceNamePairedUnknown: 'Name sent to Desktop at pairing. It cannot be changed here.', pairCode: 'Temporary code', pair: 'Request pairing', replaceAccess: 'Pair again and keep my data',
     conflictHelp: 'Another version exists on Desktop. Yours is kept. Which one to keep?', keepLocal: 'Keep mine', useDesktop: 'Take Desktop’s', remoteTitle: 'Desktop version: {{title}} (revision {{revision}})',
     increment: '+1', decrement: '−1', reset: 'Reset to zero', addItem: 'Add', itemPlaceholder: 'New item', removeItem: 'Remove', checklistProgress: '{{done}}/{{total}} checked', checklistEmpty: 'Empty list for now.',
-    copySQL: 'Copy the SQL', queriesMade: 'Generated on {{date}} from ix {{commit}}', queriesMadeAt: 'Generated on {{date}}', copied: 'Copied', copyFailed: 'Copy refused: select the SQL.', queriesShared: '{{count}} queries · kept by the Desktop',
+    copySQL: 'Copy the SQL', runOnDesktop: 'Run on the Desktop', queryRunning: 'Running on the Desktop…', queryRows_one: '{{count}} row · {{ms}} ms', queryRows_other: '{{count}} rows · {{ms}} ms', queryRowsShown: 'the first {{count}} shown', query_timed_out: 'Stopped: the query ran over a minute.', query_result_too_large: 'Result too large to send (over 1 MB).', query_output_unreadable: 'DuckDB answered something unreadable.', query_unknown: 'This query is no longer in the Desktop repo: generate the list again.', graph_missing: 'The graph is not built on the Desktop yet (ixforge-graph).', graph_engine_missing: 'LadybugDB is not installed on the Desktop: the graph queries cannot run.', queryUncertain: 'No clear answer from the Desktop ({{cause}}): run the query again.', queryCauseNetwork: 'connection dropped', queryCauseTimeout: 'no answer within 75 s', copyQuery: 'Copy the query', queriesMadeAt: 'Generated on {{date}}', queriesFrom: 'from ix', queriesSynced: 'Synced on {{date}}', copied: 'Copied', copyFailed: 'Copy refused: select the SQL.', queriesShared: '{{count}} queries · kept by the Desktop',
     exportCopy: 'Copy for IxForge', exportCopied: 'Copied. Paste it into IxForge, “new tool” field.', exportCopyHere: 'Copy this text, then paste it into IxForge:', exportMade: 'IxForge widget · works on its own, offline.',
     ixlet_uncertain: 'Uncertain result: nothing is resent automatically; the value will be reread from Desktop.', ixlet_not_active: 'This tool is not active on Desktop yet.', ixlet_not_saved: 'This tool is not saved on Desktop yet.', ixlet_not_connected: 'Connect this device to Desktop to use this shared tool.', ixlet_item_missing: 'This item no longer exists on Desktop.',
     voiceReady: '', voiceUnsupported: 'On-device dictation is unavailable in this browser; no voice was sent. Use the keyboard microphone: quotes are optional.', voiceDenied: 'Microphone access denied or unavailable.', voiceListening: 'On-device dictation in progress…', voicePackMissing: 'This browser has no on-device recognition pack for this language. Nothing was downloaded or sent.', installVoice: 'Install on-device recognition', stopDictation: 'Stop dictation', voicePackDownloading: 'The browser is downloading the on-device recognition pack…', voicePackFailed: 'The browser did not install the on-device pack.', voiceNoSpeech: 'No speech detected. Try again; no voice was sent.', voiceNoMicrophone: 'No usable microphone on this device.', voiceFailed: 'On-device dictation stopped (error: {{code}}).',
     terminal: 'PC terminal', terminalWho: 'Commands run on the Desktop’s PC by Windows PowerShell, as the IxForge service’s account.', terminalCommand: 'Command', terminalRun: 'Run', terminalHelp: 'One command at a time, stopped after 30 seconds, output capped at 256 KiB. Each command is written to the Desktop’s journal; its output is kept nowhere, neither here nor on the Desktop.', terminalExit: 'Exit code: {{code}}', terminalTimedOut: 'Stopped after 30 seconds', terminalTruncated: 'output truncated', terminal_not_allowed: 'This device has no terminal: only the owner can allow it, from the owner page.', terminal_uncertain: 'Uncertain result: the command may have run on the PC. Nothing is resent automatically.',
     settings: 'Settings', aiTitle: 'AI (optional)', aiHelp: 'With your own Claude API key, a sentence becomes a tool. The key stays on this device; the request goes straight from this browser to Claude, and its cost is billed to your key. Without a key, IxForge works fully.', aiKey: 'Claude API key', aiSave: 'Save the key', aiForget: 'Forget the key', aiKeyKept: 'Key kept on this device (…{{end}}).', aiNoKey: 'No key: AI is off.', aiCreate: 'Create with AI', aiCreateHelp: 'Create with AI: describe the tool in the field, Claude makes it', aiWorking: 'Claude is making the tool…',
     ai_key_invalid: 'Claude refuses this key. Check or replace it.', ai_refused: 'Claude did not make this tool. Rephrase the request.', ai_busy: 'Claude is busy or rate-limited for this key. Try again in a moment; nothing was created.', ai_failed: 'Claude did not return a usable tool. Nothing was created.', ai_unreachable: 'Claude is unreachable (network). Nothing was created.', ai_key_format: 'This does not look like a Claude API key (sk-ant-…).', ai_key_missing: 'Add your Claude key first.',
-    import_invalid: 'This is not a readable IxForge widget (format ixforge-widget/1).', name_invalid: 'Empty or too long name (240 bytes at most).', revision_conflict: 'Resolve the conflict before sending this version.', access_already_present: 'This device already has access credentials.', invite_invalid_or_expired: 'Code expired, invalid or already used. Request a new Desktop QR.', not_admin: 'This device does not administer the others.', local_storage_unavailable: 'Local storage unavailable: nothing could be kept.', error: 'This action could not finish. Previously saved local data is retained.'
+    import_invalid: 'This is not a readable IxForge widget (format ixforge-widget/1).', name_invalid: 'Empty or too long name (240 bytes at most).', revision_conflict: 'Resolve the conflict before sending this version.', access_already_present: 'This device already has access credentials.', invite_invalid_or_expired: 'Code expired, invalid or already used. Request a new Desktop QR.', not_admin: 'This device does not administer the others.', updater_absent: 'The update assistant is not running: nothing was requested.', update_pending: 'An install is already requested.',local_storage_unavailable: 'Local storage unavailable: nothing could be kept.', error: 'This action could not finish. Previously saved local data is retained.'
   }}
 };
 const $ = id => document.getElementById(id);
 const t = (key, options) => globalThis.i18next.t(key, options);
 let replica, engine, voice = null, voiceStatus = 'voiceReady', voiceDetail = '', installPrompt = null, replaceAccess = false, updates = null, pendingActions = 0, pairCodeWaiting = false, updateState = '', branding;
-let view = {mode: 'app'}, adminDevices = [];
+let view = {mode: 'app'}, adminDevices = [], desktopUpdate = null;
 // The terminal's runs live in this page's memory only: never in the replica, never sent anywhere else.
 let terminalOpen = false, terminalRuns = [];
 const detached = {}; // tool key → last heartbeat of the window it is detached in
@@ -85,7 +85,7 @@ async function act(action) {
   try { await action(); await render(); return true; } catch (error) { message(error); return false; } finally { pendingActions--; updates?.consider(); }
 }
 const titleOK = s => s.trim() !== '' && new TextEncoder().encode(s).length <= 240;
-const intentFor = (kind, title, data) => kind === 'queries' ? {workspaceTitle: title, queriesTitle: title, entries: data.entries, made: {generated_at: data.generated_at, source_commit: data.source_commit}}
+const intentFor = (kind, title, data) => kind === 'queries' ? {workspaceTitle: title, queriesTitle: title, entries: data.entries, made: {generated_at: data.generated_at, source_commit: data.source_commit, source_subject: data.source_subject}}
   : kind === 'counter' ? {workspaceTitle: title, counterTitle: title} : {workspaceTitle: title, checklistTitle: title};
 
 // The IXLET behind a tool: hosted by the Desktop once activated (the authority), run here until then.
@@ -99,7 +99,9 @@ function runtime(state, tool) {
     : engine.act(tool.projectID, definition.id, action, fields));
   return {key, x, local, usable: local || engine.status === 'connected', run, kept: !local && Boolean((state.localXlets || {})[key])};
 }
-const widget = (tool, rt, lang, compact = false) => html`<ix-widget data-xlet-local=${rt.local ? tool.definition?.id || "" : nothing} data-xlet-live=${rt.local ? nothing : tool.definition.id} kind=${tool.widget.kind} .entries=${tool.widget.entries || []} .made=${tool.widget} .x=${rt.x} definition=${tool.definition?.id || ''} ?usable=${rt.usable} .run=${rt.run} .t=${t} lang=${lang} ?compact=${compact}></ix-widget>`;
+// A listed DuckDB query runs on the Desktop (queryrun.go) where it offers to, while this device is connected.
+const runQuery = (source, title) => engine.runQuery(source, title);
+const widget = (tool, rt, lang, compact = false) => html`<ix-widget data-xlet-local=${rt.local ? tool.definition?.id || "" : nothing} data-xlet-live=${rt.local ? nothing : tool.definition.id} kind=${tool.widget.kind} .entries=${tool.widget.entries || []} .made=${tool.widget} .synced=${syncedAt} .runQuery=${engine.queries && engine.status === 'connected' ? runQuery : null} .x=${rt.x} definition=${tool.definition?.id || ''} ?usable=${rt.usable} .run=${rt.run} .t=${t} lang=${lang} ?compact=${compact}></ix-widget>`;
 const badge = (tool, rt) => tool.widget.kind === 'queries' ? String((tool.widget.entries || []).length) : tool.widget.kind === 'counter' ? String(rt.x.value) : (rt.x.items || []).length ? `${rt.x.items.filter(i => i.done).length}/${rt.x.items.length}` : '';
 function currentTool(state, list) {
   if (view.mode === 'widget') return list.find(x => x.key === view.key);
@@ -110,8 +112,9 @@ const standalone = () => branding?.standalone === true;
 // The app's own folder: the Desktop's, or any folder of a static host.
 const home = () => location.pathname.replace(/[^/]*$/, '');
 
+let syncedAt = ''; // when this device last read the Desktop's changes, shown by a list of queries
 async function render() {
-  const state = await replica.read();
+  const state = await replica.read(); syncedAt = state.syncedAt || '';
   if (globalThis.i18next.language !== state.language) await globalThis.i18next.changeLanguage(state.language);
   document.documentElement.lang = state.language;
   document.documentElement.dataset.theme = state.theme;
@@ -124,7 +127,11 @@ async function render() {
   $('theme').title = t('theme') + ' : ' + t(state.theme); $('theme').setAttribute('aria-label', $('theme').title);
   $('voice-status').textContent = t(voiceStatus, {code: voiceDetail});
   $('update-status').textContent = updateState ? t(updateState) : '';
-  $('client-version').textContent = branding.name + ' · ' + branding.version;
+  // The Desktop's version (from /me) is the one that changes with each release; the interface's number does not.
+  const desktopVersion = state.token ? engine.desktopVersion : '';
+  $('desktop-version').hidden = !desktopVersion;
+  $('desktop-version').textContent = desktopVersion ? 'Desktop ' + desktopVersion : '';
+  $('client-version').textContent = branding.name + ' · ' + (desktopVersion ? 'Desktop ' + desktopVersion + ' · ' + t('interfaceVersion', {version: branding.version}) : branding.version);
 
   // One pill says where the data is: here only, syncing, shared, or why not.
   const status = !state.token ? 'local' : engine.status === 'notConnected' ? 'offline' : engine.status;
@@ -151,6 +158,24 @@ async function render() {
     ${!d.self && d.status === 'pending' ? html`<button data-decide="approved" @click=${() => decide(d.id, 'approved')}>${t('approve')}</button><button class="ghost" data-decide="refused" @click=${() => decide(d.id, 'refused')}>${t('refuse')}</button>` : nothing}
     ${!d.self && d.status === 'approved' ? html`<button class="ghost" data-decide="revoked" @click=${() => decide(d.id, 'revoked')}>${t('revoke')}</button>` : nothing}
   </li>`)}`, $('device-list'));
+
+  // Desktop update (updates.go): the releases built on this PC, installed by the updater task, never by the browser.
+  const up = desktopUpdate;
+  $('desktop-update').hidden = !engine.admin || standalone() || !up;
+  if (up) {
+    const when = at => new Date(at).toLocaleString(state.language, {dateStyle: 'medium', timeStyle: 'short'});
+    const running = up.updater?.running === true, waiting = Boolean(up.request);
+    $('desktop-installed').textContent = t('desktopInstalled', {version: up.installed});
+    $('updater-state').textContent = running ? t('updaterRunning') : up.updater ? t('updaterStale', {date: when(up.updater.seen_at)}) : t('updaterAbsent');
+    draw(html`${(up.releases || []).length ? up.releases.map(r => html`<li data-release=${r.version}>
+      <span class="name">${r.version}</span>${r.notes ? html`<span class="hint" data-release-notes>${r.notes}</span>` : nothing}
+      <button data-install ?disabled=${!running || waiting} @click=${() => installRelease(r)}>${t('installRelease')}</button></li>`)
+      : html`<li class="hint">${t('noRelease')}</li>`}`, $('release-list'));
+    const result = up.result;
+    draw(html`${waiting ? html`<p id="update-request" class="hint">${t('updateRequested', {version: up.request.version, date: when(up.request.requested_at)})}</p>` : nothing}
+      ${result ? html`<p id="update-result" class="hint">${result.state === 'completed' ? t('updateDone', {version: result.version, date: when(result.finished_at)})
+        : t('updateNotDone', {version: result.version, state: result.state, date: when(result.finished_at)})}</p>` : nothing}`, $('update-log'));
+  }
 
   // The terminal, for the device the owner allowed (terminal.go).
   const terminal = engine.terminal && !standalone() && view.mode === 'app';
@@ -202,9 +227,13 @@ async function render() {
 
 const select = key => act(() => replica.change(s => { s.tool = key; }));
 const decide = (id, status) => act(async () => { await engine.decide(id, status); await loadDevices(); });
+// The request names the hash this device was shown: the Desktop and the updater check it again.
+const installRelease = release => act(async () => { await engine.requestUpdate(release.version, release.sha256); await loadDevices(); });
 async function loadDevices() {
   if (!engine.admin || $('devices').hidden) return;
   try { adminDevices = (await engine.devices()).devices || []; } catch (error) { if (error.message === 'not_admin') adminDevices = []; }
+  // A Desktop without updates configured answers 404: the block stays hidden.
+  try { desktopUpdate = await engine.desktopUpdates(); } catch { desktopUpdate = null; }
   render().catch(message);
 }
 
@@ -314,8 +343,8 @@ async function boot() {
   };
   const linkThisPC = () => act(async () => {
     const state = await replica.read();
-    if (state.token) throw new Error('access_already_present');
-    await engine.pair($('pair-code').value.trim(), (state.deviceName || '').trim() || 'PC');
+    // The owner's link is the owner's approval: it replaces an access the Desktop revoked or refused, never one that works.
+    await engine.pair($('pair-code').value.trim(), (state.deviceName || '').trim() || 'PC', true);
     $('pair-code').value = '';
   });
   const linking = takePairing();

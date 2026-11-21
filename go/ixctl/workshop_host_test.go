@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GuitarAlchemist/ix/go/ixctl/internal/workshop"
 )
 
 func TestWorkshopHostDisabledAndExplicitMount(t *testing.T) {
@@ -231,5 +234,144 @@ func prepareWorkshopFixture(t *testing.T, dir, name string) {
 	}
 	if err := os.WriteFile(filepath.Join(root, name+".workshop-owner.key"), []byte(strings.Repeat("a", 64)), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestTheDesktopRunsQueriesOnlyWhereTheOwnerNamedThem: the listed queries run on the Desktop only once the owner has
+// written %ProgramData%\IxForge\queries.json, naming the ix repo and the duckdb executable, both existing absolute paths.
+// Without the file, or with a path that is not there, the Desktop offers no queries.
+func TestTheDesktopRunsQueriesOnlyWhereTheOwnerNamedThem(t *testing.T) {
+	data := t.TempDir()
+	repo := t.TempDir()
+	exe := filepath.Join(t.TempDir(), "duckdb.exe")
+	if err := os.WriteFile(exe, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if r := workshopQueries(data); r != nil {
+		t.Fatalf("no file, no queries: %+v", r)
+	}
+	write := func(v any) {
+		raw, _ := json.Marshal(v)
+		if err := os.MkdirAll(filepath.Join(data, "IxForge"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(data, "IxForge", "queries.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bad := range []map[string]string{
+		{"repo": repo},
+		{"repo": "relative", "duckdb": exe},
+		{"repo": filepath.Join(repo, "missing"), "duckdb": exe},
+		{"repo": repo, "duckdb": filepath.Join(repo, "missing.exe")},
+	} {
+		write(bad)
+		if r := workshopQueries(data); r != nil {
+			t.Fatalf("%v must offer no queries: %+v", bad, r)
+		}
+	}
+	write(map[string]string{"repo": repo, "duckdb": exe})
+	r := workshopQueries(data)
+	if r == nil || r.Repo != repo || r.DuckDB != exe || strings.Join(r.Files, ",") != strings.Join(workshop.DefaultQueryFiles, ",") {
+		t.Fatalf("the named repo and duckdb run the default query files: %+v", r)
+	}
+	if r.Lbug != "" {
+		t.Fatalf("no LadybugDB CLI named, none used: %+v", r)
+	}
+}
+
+// TestTheDesktopRunsGraphQueriesWithTheLbugTheOwnerNamed: queries.json may also name the LadybugDB CLI (lbug, an
+// existing absolute path); the graph queries then run on the builds of the repo's state\graph. A lbug that is not there
+// leaves the DuckDB queries as they are and the graph queries without an engine.
+func TestTheDesktopRunsGraphQueriesWithTheLbugTheOwnerNamed(t *testing.T) {
+	data, repo, bin := t.TempDir(), t.TempDir(), t.TempDir()
+	duck, lbug := filepath.Join(bin, "duckdb.exe"), filepath.Join(bin, "lbug.exe")
+	for _, exe := range []string{duck, lbug} {
+		if err := os.WriteFile(exe, []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(data, "IxForge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for named, want := range map[string]string{lbug: lbug, "lbug.exe": "", filepath.Join(bin, "missing.exe"): ""} {
+		raw, _ := json.Marshal(map[string]string{"repo": repo, "duckdb": duck, "lbug": named})
+		if err := os.WriteFile(filepath.Join(data, "IxForge", "queries.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := workshopQueries(data)
+		if r == nil || r.DuckDB != duck || r.Lbug != want || r.Graphs != filepath.Join(repo, "state", "graph") {
+			t.Fatalf("lbug %q: %+v, want lbug %q on %s", named, r, want, filepath.Join(repo, "state", "graph"))
+		}
+	}
+	if !slices.Contains(workshop.DefaultQueryFiles, "docs/streeling/graph.cypher") {
+		t.Fatalf("the graph queries are listed: %v", workshop.DefaultQueryFiles)
+	}
+}
+
+// TestTheRunningDesktopAsksForAPublishedReleaseByItself: once started, the Desktop looks at the releases folder on its
+// own and asks the updater for the newest published release (owner's choice, 2026-11-16), and stops looking when closed.
+func TestTheRunningDesktopAsksForAPublishedReleaseByItself(t *testing.T) {
+	dir, data := t.TempDir(), t.TempDir()
+	t.Setenv("ProgramData", data)
+	installed, every := version, autoUpdateEvery
+	version, autoUpdateEvery = "0.1.0-ixforge.20", 20*time.Millisecond
+	t.Cleanup(func() { version, autoUpdateEvery = installed, every })
+
+	release := filepath.Join(data, "IxForge", "releases", "0.1.0-ixforge.21")
+	if err := os.MkdirAll(release, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := []byte("ixctl 21")
+	if err := os.WriteFile(filepath.Join(release, "ixctl.exe"), exe, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(exe)
+	manifest, _ := json.Marshal(map[string]string{"version": "0.1.0-ixforge.21", "sha256": strings.ToUpper(hex.EncodeToString(sum[:]))})
+	if err := os.WriteFile(filepath.Join(release, "release.json"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	updates := filepath.Join(dir, "workshop", "updates")
+	if err := os.MkdirAll(updates, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seen, _ := json.Marshal(map[string]string{"seen_at": time.Now().UTC().Format(time.RFC3339)})
+	if err := os.WriteFile(filepath.Join(updates, "updater-seen.json"), seen, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prepareWorkshopFixture(t, dir, "fixture")
+	runtime, err := startWorkshop(workshopSettings{Version: 1, Enabled: true, Origin: "https://workshop.invalid", Listen: "127.0.0.1:0"}, dir, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := filepath.Join(updates, "update-request.json")
+	var asked struct {
+		Version  string `json:"version"`
+		DeviceID string `json:"device_id"`
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if raw, err := os.ReadFile(request); err == nil && json.Unmarshal(raw, &asked) == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			runtime.close()
+			t.Fatal("the running Desktop never asked for the published release")
+		}
+	}
+	if asked.Version != "0.1.0-ixforge.21" || asked.DeviceID != "auto" {
+		t.Fatalf("asked %+v, want 0.1.0-ixforge.21 by the Desktop itself", asked)
+	}
+
+	// Closed, it looks no more: a version it has not asked yet stays unasked.
+	runtime.close()
+	for _, f := range []string{request, filepath.Join(updates, "auto-requested.json")} {
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(request); err == nil {
+		t.Fatal("a closed Desktop still asks for releases")
 	}
 }

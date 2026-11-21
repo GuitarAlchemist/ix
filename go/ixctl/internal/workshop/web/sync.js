@@ -1,13 +1,56 @@
+// @ts-check
+// Types in JSDoc: the browser runs this file as it is, an editor checks it (no build step, no TypeScript compiler).
+
+/** @typedef {{id: string, text: string, done: boolean}} Item */
+/**
+ * A widget of a workspace. kind: 'counter', 'checklist' or 'queries' (a list of queries runs nothing).
+ * @typedef {{id: string, title: string, kind: string, initial_value: number, entries?: any[],
+ *   generated_at?: string, source_commit?: string, source_subject?: string}} Widget
+ */
+/** @typedef {{id: string, title: string, kind: string, status: string}} IxletDefinition */
+/** @typedef {{id: string, title: string, widgets: Widget[], ixlet_definitions: IxletDefinition[]}} Workspace */
+/** @typedef {{id: string, title: string, workspaces: Workspace[]}} ProjectDocument */
+/**
+ * A project as this device holds it: the document, the Desktop revision it starts from, and, while a newer Desktop
+ * revision conflicts with local changes, that revision (remote) and the conflict's code.
+ * @typedef {{document: ProjectDocument, revision: number, dirty: boolean, conflict?: string,
+ *   remote?: {revision: number, project: ProjectDocument}}} Project
+ */
+/** One save of a whole project, kept until the Desktop's receipt is recorded. @typedef {{op_id: string, base_revision: number, project: ProjectDocument}} Operation */
+/** An IXLET instance as the Desktop runs it. @typedef {{project_id: string, definition_id: string, kind: string, value: number, version: number, items?: Item[], seeded?: boolean}} Xlet */
+/** An IXLET run on this device before the Desktop has one. @typedef {{kind: string, value: number, version: number, items: Item[]}} LocalXlet */
+/**
+ * What a command or an import asks to create: a counter, a checklist, or a list of queries.
+ * @typedef {{workspaceTitle: string, counterTitle?: string, checklistTitle?: string, queriesTitle?: string,
+ *   entries?: any[], made?: {generated_at?: string, source_commit?: string, source_subject?: string}}} Intent
+ */
+/** @typedef {{key: string, projectID: string, project: Project, workspace: Workspace, widget: Widget, definition: IxletDefinition | undefined}} Tool */
+/**
+ * The replica: everything this device keeps, in one IndexedDB record.
+ * @typedef {{token: string, storeID: string, cursor: number, projects: Record<string, Project>, outbox: Operation[],
+ *   transcript: string, selected: string | null, tool: string | null, surface: string[], language: string,
+ *   theme: string, deviceName: string | null, pairedName: string, xlets: Record<string, Xlet>,
+ *   localXlets?: Record<string, LocalXlet>, refusedActivations?: Record<string, string>, syncedAt?: string,
+ *   ai?: any}} State
+ */
+
+/** @template T @param {T} value @returns {T} */
 const copy = value => structuredClone(value);
 // A queries widget's generation, without the fields it does not have.
-const madeOf = made => Object.fromEntries(['generated_at', 'source_commit'].filter(k => made?.[k]).map(k => [k, made[k]]));
+/** @param {Intent['made']} made @returns {Intent['made']} */
+const madeOf = made => Object.fromEntries(['generated_at', 'source_commit', 'source_subject'].filter(k => made?.[k]).map(k => [k, made[k]]));
+/** @param {unknown} a @param {unknown} b */
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** @returns {State} */
 export const initialState = () => ({token: '', storeID: '', cursor: 0, projects: {}, outbox: [], transcript: '', selected: null, tool: null, surface: [], language: 'fr', theme: 'system', deviceName: null, pairedName: '', xlets: {}});
+/** @param {string} projectID @param {string} definitionID */
 export const xletKey = (projectID, definitionID) => projectID + '/' + definitionID;
 
 // A tool is one widget of a project, with the IXLET definition it presents (same kind and title, the template's
 // pairing). Its key is "projectID/widgetID".
+/** @param {State} state @returns {Tool[]} */
 export function tools(state) {
+  /** @type {Tool[]} */
   const list = [];
   for (const [projectID, p] of Object.entries(state.projects)) for (const workspace of p.document.workspaces) for (const widget of workspace.widgets) {
     const definition = workspace.ixlet_definitions.find(d => d.kind === widget.kind && d.title === widget.title);
@@ -19,8 +62,15 @@ export function tools(state) {
 // While the Desktop holds no instance of a draft IXLET, this device runs it by itself, under the Desktop's own rules
 // (xlet.go): the state lives in this replica only (localXlets) and nothing is sent. Once the project is saved on the
 // Desktop, the sync activates the IXLET there and the local state goes with the activation as its seed.
+/** @param {State} state @param {string} projectID @param {IxletDefinition} definition @param {number} [initialValue] @returns {LocalXlet} */
 export const localXlet = (state, projectID, definition, initialValue = 0) =>
   (state.localXlets || {})[xletKey(projectID, definition.id)] || {kind: definition.kind, value: definition.kind === 'counter' ? initialValue : 0, version: 0, items: []};
+/**
+ * @param {LocalXlet} x
+ * @param {string} action 'increment', 'decrement', 'reset' (counter); 'add', 'check', 'uncheck', 'remove' (checklist)
+ * @param {{text?: string, item_id?: string}} [fields]
+ * @returns {LocalXlet}
+ */
 export function applyLocal(x, action, fields = {}) {
   const next = copy(x);
   if (x.kind === 'counter') {
@@ -44,13 +94,16 @@ export function applyLocal(x, action, fields = {}) {
 }
 
 // The local state of one IXLET as the seed of its activation on the Desktop, or undefined when there is nothing local.
+/** @param {LocalXlet | undefined} x @returns {{value: number} | {items: {text: string, done: boolean}[]} | undefined} */
 export function seedOf(x) {
   if (!x) return undefined;
   return x.kind === 'counter' ? {value: x.value} : {items: x.items.map(i => ({text: i.text, done: i.done}))};
 }
 // Whether the Desktop's instance already holds what this device had locally.
+/** @param {LocalXlet} local @param {Xlet} hosted */
 const sameContent = (local, hosted) => local.kind === 'counter' ? local.value === hosted.value
   : equal(local.items.map(i => [i.text, i.done]), (hosted.items || []).map(i => [i.text, i.done]));
+/** @param {State} state @param {string} id */
 const enqueueInto = (state, id) => {
   const p = state.projects[id];
   if (!p || p.conflict) throw new Error('revision_conflict');
@@ -61,8 +114,10 @@ const enqueueInto = (state, id) => {
 };
 
 export class Replica {
-  constructor(db) { this.db = db; this.onCommit = () => {}; }
+  /** @param {IDBDatabase} db */
+  constructor(db) { this.db = db; /** Called after each committed change. */ this.onCommit = () => {}; }
   static async open() {
+    /** @type {IDBDatabase} */
     const db = await new Promise((resolve, reject) => {
       const req = indexedDB.open('ix-workshop-replica', 1);
       req.onupgradeneeded = () => req.result.createObjectStore('state');
@@ -71,11 +126,19 @@ export class Replica {
     });
     return new Replica(db);
   }
+  /** @returns {Promise<State>} */
   read() { return this.change(() => {}, 'readonly'); }
+  /**
+   * Applies update to the stored state in one transaction and resolves with a copy of the result. A throw in update
+   * aborts the transaction: nothing is written.
+   * @param {(state: State) => void} update
+   * @param {IDBTransactionMode} [mode]
+   * @returns {Promise<State>}
+   */
   change(update, mode = 'readwrite') {
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction('state', mode), store = tx.objectStore('state');
-      const req = store.get('current'); let state;
+      const req = store.get('current'); /** @type {State} */ let state;
       req.onsuccess = () => {
         try { state = req.result || initialState(); update(state); if (mode === 'readwrite') store.put(state, 'current'); }
         catch (error) { tx.abort(); reject(error); }
@@ -84,6 +147,7 @@ export class Replica {
       tx.onabort = tx.onerror = () => reject(tx.error || new Error('local_storage_unavailable'));
     });
   }
+  /** @param {string} title */
   async newProject(title) {
     return this.change(state => {
       const document = {id: crypto.randomUUID(), title, workspaces: []};
@@ -92,6 +156,7 @@ export class Replica {
       state.outbox.push({op_id: crypto.randomUUID(), base_revision: 0, project: copy(document)});
     });
   }
+  /** @param {string} id @param {string} title */
   async rename(id, title) {
     return this.change(state => {
       const project = state.projects[id];
@@ -100,19 +165,21 @@ export class Replica {
       project.dirty = true;
     });
   }
+  /** @param {string} id */
   async enqueue(id) {
     return this.change(state => enqueueInto(state, id));
   }
   // create makes a new project holding one tool, from a command (interpret) or a name and a kind. A seed (an imported
   // widget's items or value) becomes the tool's local state until the Desktop runs it. A list of queries imported again
   // under the name of one already here replaces that one's queries: it is the same list, generated anew.
+  /** @param {Intent} intent @param {{value?: number, items?: {text: string, done: boolean}[]}} [seed] */
   async create(intent, seed) {
     return this.change(state => {
       const same = intent.queriesTitle && tools(state).find(x => x.widget.kind === 'queries' && x.widget.title === intent.queriesTitle && !x.project.conflict);
       if (same) {
         const widget = state.projects[same.projectID].document.workspaces.find(w => w.id === same.workspace.id).widgets.find(w => w.id === same.widget.id);
         widget.entries = copy(intent.entries);
-        delete widget.generated_at; delete widget.source_commit; Object.assign(widget, madeOf(intent.made));
+        delete widget.generated_at; delete widget.source_commit; delete widget.source_subject; Object.assign(widget, madeOf(intent.made));
         state.projects[same.projectID].dirty = true; enqueueInto(state, same.projectID);
         state.selected = same.projectID; state.tool = same.key;
         return;
@@ -132,6 +199,7 @@ export class Replica {
   }
   // renameTool renames a widget with its IXLET definition (they pair by title), and the project and its workspace too
   // when the tool is alone in it. An empty or too long name is not applied: the Desktop would refuse it.
+  /** @param {string} key @param {string} title */
   async renameTool(key, title) {
     if (!title.trim() || new TextEncoder().encode(title).length > 240) return this.read();
     return this.change(state => {
@@ -145,18 +213,21 @@ export class Replica {
       p.dirty = true;
     });
   }
+  /** @param {string} key @param {boolean} pinned */
   async pin(key, pinned) {
     return this.change(state => {
       state.surface = (state.surface || []).filter(k => k !== key);
       if (pinned) state.surface.push(key);
     });
   }
+  /** @param {string} projectID @param {IxletDefinition} definition @param {number} initialValue @param {string} action @param {{text?: string, item_id?: string}} [fields] */
   async actLocal(projectID, definition, initialValue, action, fields) {
     return this.change(state => {
       state.localXlets ??= {};
       state.localXlets[xletKey(projectID, definition.id)] = applyLocal(localXlet(state, projectID, definition, initialValue), action, fields);
     });
   }
+  /** Settles a conflict: keep this device's version, or take the Desktop's. @param {string} id @param {boolean} keepLocal */
   async resolve(id, keepLocal) {
     await this.change(state => {
       const p = state.projects[id]; if (!p?.remote) throw new Error('remote_revision_required');
@@ -171,17 +242,37 @@ export class Replica {
 }
 
 export class SyncEngine {
-  constructor(replica, onChange = () => {}) { this.replica = replica; this.onChange = onChange; this.status = 'notConnected'; this.deniedStatus = ''; this.running = null; this.admin = false; this.terminal = false; }
+  /** @param {Replica} replica @param {() => void} [onChange] */
+  constructor(replica, onChange = () => {}) { this.replica = replica; this.onChange = onChange; this.status = 'notConnected'; this.deniedStatus = ''; this.running = null; this.admin = false; this.terminal = false; this.desktopVersion = ''; this.queries = false; }
   // The device the owner linked (or granted) administers the others from the app (admin.go).
   devices() { return this.api('devices'); }
   invite() { return this.api('devices/invite', {method: 'POST', body: '{}'}); }
+  /** @param {string} id @param {string} status 'approved', 'refused' or 'revoked' */
   decide(id, status) { return this.api('devices/' + encodeURIComponent(id) + '/' + status, {method: 'POST', body: '{}'}); }
+  // Desktop update (updates.go): the releases offered, and the request for the updater task.
+  desktopUpdates() { return this.api('updates'); }
+  /** @param {string} version @param {string} sha256 */
+  requestUpdate(version, sha256) { return this.api('updates', {method: 'POST', body: JSON.stringify({version, sha256})}); }
   // The terminal (terminal.go) runs a command on the Desktop's PC. A command is not repeatable: an uncertain reply is
   // reported as such and never sent again.
+  /**
+   * Runs a listed DuckDB query on the Desktop (queryrun.go), named by its file and title: the Desktop reads its SQL from
+   * the repo. Resolves with {sql, rows} or {sql, error}, DuckDB's own message or one of the Desktop's codes.
+   * @param {string} source @param {string} title
+   * @returns {Promise<{source: string, title: string, sql: string, rows?: Record<string, unknown>[], error?: string, ms: number}>}
+   */
+  runQuery(source, title) { return this.api('queries/run', {method: 'POST', body: JSON.stringify({source, title}), timeout: 75000}); }
+  /** @param {string} command */
   runTerminal(command) {
     return this.api('terminal', {method: 'POST', body: JSON.stringify({command}), timeout: 45000})
       .catch(error => { if (error instanceof HTTPError && error.status < 500) throw error; throw new Error('terminal_uncertain'); });
   }
+  /**
+   * One request to the Desktop's API with this device's token. A refusal throws an HTTPError named by the Desktop's code.
+   * @param {string} path
+   * @param {RequestInit & {timeout?: number}} [options]
+   * @returns {Promise<any>}
+   */
   async api(path, {timeout = 15000, ...options} = {}) {
     const state = await this.replica.read();
     const controller = new AbortController();
@@ -195,6 +286,7 @@ export class SyncEngine {
       return data;
     } finally { clearTimeout(timer); }
   }
+  /** @param {string} code @param {string} name @param {boolean} [replaceAccess] replaces an access the Desktop revoked or refused, never one that works */
   async pair(code, name, replaceAccess = false) {
     const state = await this.replica.read();
     if (state.token && !(replaceAccess && ['device_refused', 'device_revoked'].includes(this.deniedStatus))) throw new Error('access_already_present');
@@ -208,6 +300,7 @@ export class SyncEngine {
   }
   // One request to a counter IXLET hosted by the Desktop. It is sent once: a lost or unclear reply is reported as
   // uncertain and the next sync rereads the Desktop's value; nothing is resent automatically.
+  /** @param {string} projectID @param {string} definitionID @param {string} action @param {{text?: string, item_id?: string}} [fields] @returns {Promise<Xlet>} */
   async act(projectID, definitionID, action, fields = {}) {
     const state = await this.replica.read();
     if (!state.token) throw new Error('ixlet_not_connected');
@@ -238,6 +331,8 @@ export class SyncEngine {
       if (me.protocol !== 'workshop/1' || typeof me.store_id !== 'string') throw new Error('connection_uncertain');
       if (me.store_id !== state.storeID) throw new Error('store_changed');
       this.status = 'connected'; this.deniedStatus = ''; this.admin = me.admin === true; this.terminal = me.terminal === true;
+      this.desktopVersion = typeof me.version === 'string' ? me.version : '';
+      this.queries = me.queries === true;
       if (typeof me.device?.name === 'string' && me.device.name !== state.pairedName) await this.replica.change(s => { s.pairedName = me.device.name; });
       // Nothing to press: every changed project without a conflict is queued for the Desktop.
       state = await this.replica.change(s => { for (const [id, p] of Object.entries(s.projects)) if (p.dirty && !p.conflict) enqueueInto(s, id); });
@@ -270,7 +365,7 @@ export class SyncEngine {
               if (event.revision > p.revision) { p.remote = event; p.conflict = 'revision_conflict'; }
             } else s.projects[event.project.id] = {document: event.project, revision: event.revision, dirty: false};
           }
-          s.cursor = changes.cursor;
+          s.cursor = changes.cursor; s.syncedAt = new Date().toISOString(); // the last time this device read the Desktop's changes
           if (s.selected === null) s.selected = Object.keys(s.projects)[0] || null;
         });
         if (changes.events.length < 100) break;
@@ -328,9 +423,12 @@ SyncEngine.prototype.activateSaved = async function () {
   }
 };
 
+/** @param {any} i @returns {i is Item} */
 const validItem = i => i && typeof i.id === 'string' && typeof i.text === 'string' && typeof i.done === 'boolean';
+/** @param {any} x @returns {x is Xlet} */
 const validXlet = x => x && typeof x.project_id === 'string' && typeof x.definition_id === 'string' && Number.isSafeInteger(x.value) && Number.isSafeInteger(x.version) && x.version >= 1 &&
   (x.kind === 'counter' || (x.kind === 'checklist' && (x.items === undefined || (Array.isArray(x.items) && x.items.every(validItem)))));
+/** @param {State} state @param {Xlet} x */
 function keepNewer(state, x) {
   state.xlets ??= {};
   const key = xletKey(x.project_id, x.definition_id), known = state.xlets[key];
@@ -338,6 +436,7 @@ function keepNewer(state, x) {
 }
 
 class HTTPError extends Error {
+  /** @param {number} status @param {string} message */
   constructor(status, message) { super(message); this.status = status; }
 }
 
@@ -348,13 +447,16 @@ const COMMANDS = {
   fr: new RegExp(String.raw`^(?:créer|crée|creer|cree) un workspace ${NAME} avec (un compteur|une liste(?: à cocher| a cocher)?) ${NAME}[.!]?$`, 'i'),
   en: new RegExp(String.raw`^create a workspace ${NAME} with a (counter|checklist|check list|list) ${NAME}[.!]?$`, 'i'),
 };
+/** @param {string} name */
 const unquote = name => name.replace(/^["«“]|["»”]$/g, '').trim();
+/** @param {string} text @param {string} language @returns {Intent} */
 export function interpret(text, language) {
   const match = text.replace(/\s+/g, ' ').trim().match(COMMANDS[language === 'fr' ? 'fr' : 'en']);
   const workspaceTitle = match && unquote(match[1]), title = match && unquote(match[3]);
   if (!workspaceTitle || !title) throw new Error('command_unrecognized');
   return /^(?:un compteur|counter)$/i.test(match[2]) ? {workspaceTitle, counterTitle: title} : {workspaceTitle, checklistTitle: title};
 }
+/** @param {Intent} intent @param {ProjectDocument} [existing] @returns {ProjectDocument} */
 export function createDraft(intent, existing) {
   const project = existing ? copy(existing) : {id: crypto.randomUUID(), title: intent.workspaceTitle, workspaces: []};
   // A list of queries runs nothing: its queries are in the widget, and it has no IXLET.
