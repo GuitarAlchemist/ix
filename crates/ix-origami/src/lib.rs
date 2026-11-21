@@ -56,10 +56,15 @@
 //! (Rabbit Ear's layout before 2024) are rearranged into the 1.2 layout on load: places change,
 //! and `file_spec` becomes 1.2.
 //!
+//! [`cp::read_cp`] reads the plain-text `.cp` crease-pattern format into a [`Fold`] with no folded
+//! frame: only the crease-pattern checks ([`local::local_theorems`]) run on it, and
+//! [`Fold::structure`] refuses it.
+//!
 //! The test fixture is the traditional crane from Rabbit Ear (Robby Kraft), MIT, taken at a
 //! commit from before the project moved to GPL-3.0; see `tests/fixtures/NOTICE.md`.
 
 pub mod controls;
+pub mod cp;
 pub mod fold;
 pub mod geometry;
 pub mod layers;
