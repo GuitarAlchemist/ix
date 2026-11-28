@@ -59,6 +59,8 @@
 //! The test fixture is the traditional crane from Rabbit Ear (Robby Kraft), MIT, taken at a
 //! commit from before the project moved to GPL-3.0; see `tests/fixtures/NOTICE.md`.
 
+pub mod assess;
+#[cfg(feature = "test-support")]
 pub mod controls;
 pub mod fold;
 pub mod geometry;
@@ -68,11 +70,14 @@ pub mod local;
 pub mod sequence;
 pub mod thickness;
 
+pub use assess::{assess, AssessError, Assessment, Options};
 pub use fold::{Assignment, Fold, FoldError, FoldedFrame, Point};
 pub use layers::{
-    analyse, analyse_within, first_swap, swap, swap_census, swap_census_within, CensusRow, Context,
+    analyse, analyse_within, swap_census, swap_census_within, CensusRow, CensusTally, Context,
     LayerChecks, Report, Rule, Unchecked,
 };
+#[cfg(feature = "test-support")]
+pub use layers::{first_swap, swap};
 pub use limits::{Limits, OverLimit};
 pub use sequence::{Checked, Sequence, SequenceError, Verdict, GRAMMAR};
 pub use thickness::{stack, BadThickness, Rigid, Stack};

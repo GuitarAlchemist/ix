@@ -348,7 +348,7 @@ fn layers_positive_control() {
 
 #[test]
 fn layers_an_unstated_crease_is_reported_not_failed() {
-    let c = context().geo.creases[0];
+    let c = context().creases()[0];
     let [f, g] = c.faces.map(|x| x as i64);
     let mut other = crane().clone();
     other
