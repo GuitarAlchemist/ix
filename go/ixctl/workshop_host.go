@@ -84,6 +84,8 @@ type workshopHost struct {
 	active    sync.WaitGroup
 	closeOnce sync.Once
 	lock      *os.File
+	stopAuto  chan struct{}  // closed by close() to stop autoUpdate
+	auto      sync.WaitGroup // autoUpdate, waited for by close()
 }
 
 func readWorkshopKey(path string) (string, error) {
@@ -101,6 +103,76 @@ func readWorkshopKey(path string) (string, error) {
 	}
 	return "", fmt.Errorf("Workshop owner key must be explicitly provisioned before activation: %w", err)
 }
+
+// workshopUpdates lets admin devices install a newer build from the app: releases are put in
+// %ProgramData%\IxForge\releases by Publish-IxForgeRelease.ps1; the requests go to <state>\workshop\updates, which the
+// updater task (Install-IxForgeUpdater.ps1, run as SYSTEM) reads. Without ProgramData, nothing is offered.
+func workshopUpdates(stateDir string) *workshop.Updates {
+	data := os.Getenv("ProgramData")
+	if data == "" || !filepath.IsAbs(data) {
+		return nil
+	}
+	requests := filepath.Join(stateDir, "updates")
+	if err := os.MkdirAll(requests, 0o755); err != nil {
+		return nil
+	}
+	return &workshop.Updates{Installed: version, Releases: filepath.Join(data, "IxForge", "releases"), Requests: requests, Now: time.Now}
+}
+
+// autoUpdateEvery is how often the running Desktop looks for a newly published release to ask for by itself (the
+// owner's choice, 2026-11-16: publishing is the approval). The updater task runs every minute too.
+var autoUpdateEvery = time.Minute
+
+// autoUpdate asks for the newest published release now and then every autoUpdateEvery, until stop is closed. An error
+// is logged and not retried any faster: AutoRequest marks a version before asking, so it is asked at most once.
+func autoUpdate(u *workshop.Updates, stop <-chan struct{}) {
+	tick := time.NewTicker(autoUpdateEvery)
+	defer tick.Stop()
+	for {
+		if asked, err := u.AutoRequest(); err != nil {
+			fmt.Fprintf(os.Stderr, "ixctl: automatic update: %v\n", err)
+		} else if asked != "" {
+			fmt.Fprintf(os.Stderr, "ixctl: automatic update: asked the updater for %s\n", asked)
+		}
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// workshopQueries lets every approved device run the listed DuckDB queries on the Desktop, once the owner has named the
+// ix repo and the duckdb executable in <data>\IxForge\queries.json ({"repo": "...", "duckdb": "..."}, both absolute and
+// present). The service's account must be able to read them. Without the file, or with a path that is not there, the
+// Desktop offers no queries. The file may also name the LadybugDB CLI ("lbug", absolute and present): the graph queries
+// then run on the builds of the repo's state\graph; without it they answer that the Desktop has no graph engine.
+func workshopQueries(data string) *workshop.QueryRunner {
+	raw, err := os.ReadFile(filepath.Join(data, "IxForge", "queries.json"))
+	if err != nil {
+		return nil
+	}
+	var c struct {
+		Repo   string `json:"repo"`
+		DuckDB string `json:"duckdb"`
+		Lbug   string `json:"lbug"`
+	}
+	if json.Unmarshal(raw, &c) != nil || !filepath.IsAbs(c.Repo) || !filepath.IsAbs(c.DuckDB) {
+		return nil
+	}
+	if fi, err := os.Stat(c.Repo); err != nil || !fi.IsDir() {
+		return nil
+	}
+	if fi, err := os.Stat(c.DuckDB); err != nil || fi.IsDir() {
+		return nil
+	}
+	r := &workshop.QueryRunner{Repo: c.Repo, DuckDB: c.DuckDB, Files: workshop.DefaultQueryFiles, Graphs: filepath.Join(c.Repo, "state", "graph")}
+	if fi, err := os.Stat(c.Lbug); err == nil && !fi.IsDir() && filepath.IsAbs(c.Lbug) {
+		r.Lbug = c.Lbug
+	}
+	return r
+}
+
 func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopHost, error) {
 	if err := settings.validate(); err != nil {
 		return nil, err
@@ -139,7 +211,17 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 		return nil, err
 	}
 	h := &workshopHost{store: store, addr: listener.Addr().String(), ownerKey: key, statePath: filepath.Join(stateDir, name+".workshop.json"), lock: lock}
-	app, err := workshop.Handler(store, settings.Origin)
+	options := []workshop.Option{workshop.WithVersion(version)}
+	updates := workshopUpdates(stateDir)
+	if updates != nil {
+		options = append(options, workshop.WithUpdates(updates))
+	}
+	if data := os.Getenv("ProgramData"); filepath.IsAbs(data) {
+		if q := workshopQueries(data); q != nil {
+			options = append(options, workshop.WithQueries(q))
+		}
+	}
+	app, err := workshop.Handler(store, settings.Origin, options...)
 	if err != nil {
 		listener.Close()
 		store.Close()
@@ -166,6 +248,11 @@ func startWorkshop(settings workshopSettings, stateDir, name string) (*workshopH
 		return nil, err
 	}
 	go h.server.Serve(listener)
+	if updates != nil {
+		h.stopAuto = make(chan struct{})
+		h.auto.Add(1)
+		go func() { defer h.auto.Done(); autoUpdate(updates, h.stopAuto) }()
+	}
 	success = true
 	return h, nil
 }
@@ -197,6 +284,10 @@ func (h *workshopHost) close() {
 	}
 	h.closeOnce.Do(func() {
 		h.stopAccepting()
+		if h.stopAuto != nil {
+			close(h.stopAuto)
+			h.auto.Wait()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = h.server.Shutdown(ctx)
 		cancel()

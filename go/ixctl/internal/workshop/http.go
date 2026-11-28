@@ -19,9 +19,13 @@ var assets embed.FS
 
 // Handler is a separate application face for an explicitly configured same HTTPS origin.
 // Mount only /workshop/ on the future app-facing mux. Do not mount this behind or instead of ixctl's /v1 guard.
-func Handler(s *Store, origin string) (http.Handler, error) {
+func Handler(s *Store, origin string, opts ...Option) (http.Handler, error) {
 	if !validOrigin(origin) {
 		return nil, ErrInvalid
+	}
+	var o handlerOptions
+	for _, opt := range opts {
+		opt(&o)
 	}
 	u, _ := url.Parse(origin)
 	web, _ := fs.Sub(assets, "web")
@@ -69,7 +73,14 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 			failure(w, err)
 			return
 		}
-		respond(w, http.StatusOK, map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected", "admin": d.Admin, "terminal": d.Terminal})
+		me := map[string]any{"device": d, "store_id": s.id, "protocol": "workshop/1", "runtime": "not_connected", "admin": d.Admin, "terminal": d.Terminal}
+		if o.queries != nil {
+			me["queries"] = true
+		}
+		if o.version != "" {
+			me["version"] = o.version
+		}
+		respond(w, http.StatusOK, me)
 	})
 	mux.HandleFunc("POST /workshop/api/terminal", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -166,6 +177,12 @@ func Handler(s *Store, origin string) (http.Handler, error) {
 		}
 		respond(w, http.StatusOK, changes)
 	})
+	if o.queries != nil {
+		queryRoutes(mux, s, o.queries)
+	}
+	if o.updates != nil {
+		updateRoutes(mux, s, o.updates)
+	}
 	mux.HandleFunc("/workshop/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/workshop/api/") {
 			http.NotFound(w, r)

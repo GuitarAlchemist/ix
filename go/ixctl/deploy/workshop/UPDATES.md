@@ -23,6 +23,33 @@ After a failed replacement, the service restarts only on the verified previous e
 
 Explicit rollback uses `-Rollback -BackupDirectory <recorded-directory> -CandidateSHA256 <updated-hash> -ExpectedInstalledSHA256 <previous-hash>`. It preserves project data and access, verifies the backup and current host, and does not stop an already restored version again. It does not remove the application route or return to a pre-IxForge configuration. The older initial-release rollback is a separate fallback.
 
+## Updating from the app
+
+From R30 on, the owner can start the same reviewed update from the app, without a terminal or a UAC prompt each time. The browser never supplies a command or a path, only a version and a hash.
+
+1. `Publish-IxForgeRelease.ps1 -Version 0.1.0-ixforge.N -Notes "…"` builds `go/ixctl` from a committed checkout. It writes `%ProgramData%\IxForge\releases\<version>\{ixctl.exe, release.json}`, where `release.json` holds the version, SHA-256, commit, client version, build time and notes. It runs under the owner's account and never overwrites a published version.
+2. The Desktop shows admin devices only the releases that are newer than the one it runs and whose folder, manifest and file hash agree. It shows them in the Devices drawer under « Mise à jour du Desktop ».
+3. « Installer » writes `update-request.json` (version and hash) to `<state>\workshop\updates`. The Desktop refuses with:
+   - `updater_absent` when the updater has not been seen in the last five minutes;
+   - `update_pending` while another request waits;
+   - 400 for a release that is not offered or whose hash differs.
+4. The task « IxForge Updater » runs `Run-IxForgeUpdate.ps1` as SYSTEM every minute. On each run it writes a heartbeat. When a request is there, it:
+   - takes the request, so it is never run twice;
+   - checks the release again;
+   - copies `ixctl.exe` to `%ProgramData%\IxForge\staging` (SYSTEM and administrators only) and checks the copy's hash;
+   - runs `Update-IxForge.ps1 -Apply` with the PC's current installed hash, spec hash and service command;
+   - writes the receipt's state to `update-result.json`, which the drawer shows.
+
+   An uncertain or failed outcome is reported and never retried.
+5. `Install-IxForgeUpdater.ps1 -OwnerSid <sid>` prints its plan and changes nothing. With `-Apply`, it needs elevation and the owner's explicit order, and installs once:
+   - the three scripts in `C:\Program Files\ixctl\updater`, hash-checked against the plan;
+   - the ACLs of `%ProgramData%\IxForge`;
+   - the task.
+
+   `-Uninstall -Apply` removes the task and the scripts.
+
+Installing the updater is the owner's one approval for later updates. Each update is still the reviewed `Update-IxForge.ps1`, with its backup, health checks, neighbour checks and restore on failure.
+
 `Test-IxForgeUpdate.ps1` exercises seventeen synthetic cases:
 - the inert version and integrity plan;
 - a changed artifact;

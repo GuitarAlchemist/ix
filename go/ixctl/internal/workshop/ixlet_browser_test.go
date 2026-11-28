@@ -25,12 +25,13 @@ type browserFixture struct {
 	reader      string
 	actions     atomic.Int64
 	loseReplies atomic.Bool
-	unreachable atomic.Bool // every request's connection is dropped, as when the Desktop cannot be reached
+	unreachable atomic.Bool  // every request's connection is dropped, as when the Desktop cannot be reached
+	desktopHTTP *http.Client // reaches the Desktop from Go, as a client outside the browser (the queries watcher)
 	// holdActions, when set, holds every action's reply until the channel is closed (the action has already run).
 	holdActions atomic.Pointer[chan struct{}]
 }
 
-func newBrowserFixture(t *testing.T) *browserFixture {
+func newBrowserFixture(t *testing.T, opts ...Option) *browserFixture {
 	t.Helper()
 	if os.Getenv("WORKSHOP_CDP") != "1" {
 		t.Skip("set WORKSHOP_CDP=1 for the fresh-profile headless Chrome checks of the IXLET runtime")
@@ -82,9 +83,10 @@ func newBrowserFixture(t *testing.T) *browserFixture {
 		t.Fatal("production port refused")
 	}
 	f.origin = "https://workshop.invalid:" + u.Port()
-	if handler, err = Handler(f.store, f.origin); err != nil {
+	if handler, err = Handler(f.store, f.origin, opts...); err != nil {
 		t.Fatal(err)
 	}
+	f.desktopHTTP = testDesktopHTTP(server)
 	sum := sha256.Sum256(server.Certificate().RawSubjectPublicKeyInfo)
 	f.pin = base64.StdEncoding.EncodeToString(sum[:])
 	return f

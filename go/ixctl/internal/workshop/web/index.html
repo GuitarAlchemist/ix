@@ -4,6 +4,7 @@
 <header class="bar">
   <div class="brand"><span class="mark">W</span><h1 id="app-name">IxForge</h1></div>
   <button id="sync" class="pill" data-state="local"><span class="dot" aria-hidden="true"></span><span id="connection" role="status"></span></button>
+  <span id="desktop-version" class="version" hidden></span>
   <span id="pending" role="status"></span>
   <div class="preferences">
     <button id="update" class="icon" hidden data-icon="update" data-i18n-label="update"></button>
@@ -78,6 +79,13 @@
     <ul id="device-list"></ul>
     <button id="invite" data-i18n="invite"></button>
     <div id="invite-view" hidden><div id="invite-qr" class="qr"></div><p class="hint" data-i18n="inviteHelp"></p><a id="invite-link" target="_blank" rel="noopener"></a></div>
+  </section>
+  <section id="desktop-update" hidden>
+    <h3 data-i18n="desktopUpdate"></h3>
+    <p id="desktop-installed" class="hint"></p>
+    <p id="updater-state" class="hint"></p>
+    <ul id="release-list"></ul>
+    <div id="update-log"></div>
   </section>
   <section id="ai-panel">
     <h3 data-i18n="aiTitle"></h3>
